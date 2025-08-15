@@ -187,15 +187,43 @@ const categorySchema = new mongoose.Schema({
       }
     },
     
-    // Рабочие часы по умолчанию для новых партнеров
+    // ✅ ИСПРАВЛЕНО: Рабочие часы по умолчанию для новых партнеров
     default_working_hours: {
-      monday: { open: '09:00', close: '23:00', is_open: true },
-      tuesday: { open: '09:00', close: '23:00', is_open: true },
-      wednesday: { open: '09:00', close: '23:00', is_open: true },
-      thursday: { open: '09:00', close: '23:00', is_open: true },
-      friday: { open: '09:00', close: '23:00', is_open: true },
-      saturday: { open: '10:00', close: '22:00', is_open: true },
-      sunday: { open: '10:00', close: '22:00', is_open: true }
+      monday: { 
+        open: { type: String, default: '09:00' }, 
+        close: { type: String, default: '23:00' }, 
+        is_open: { type: Boolean, default: true } 
+      },
+      tuesday: { 
+        open: { type: String, default: '09:00' }, 
+        close: { type: String, default: '23:00' }, 
+        is_open: { type: Boolean, default: true } 
+      },
+      wednesday: { 
+        open: { type: String, default: '09:00' }, 
+        close: { type: String, default: '23:00' }, 
+        is_open: { type: Boolean, default: true } 
+      },
+      thursday: { 
+        open: { type: String, default: '09:00' }, 
+        close: { type: String, default: '23:00' }, 
+        is_open: { type: Boolean, default: true } 
+      },
+      friday: { 
+        open: { type: String, default: '09:00' }, 
+        close: { type: String, default: '23:00' }, 
+        is_open: { type: Boolean, default: true } 
+      },
+      saturday: { 
+        open: { type: String, default: '10:00' }, 
+        close: { type: String, default: '22:00' }, 
+        is_open: { type: Boolean, default: true } 
+      },
+      sunday: { 
+        open: { type: String, default: '10:00' }, 
+        close: { type: String, default: '22:00' }, 
+        is_open: { type: Boolean, default: true } 
+      }
     }
   },
   
