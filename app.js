@@ -12,7 +12,7 @@ const connectDB = require('./config/database');
 const { requestLogger, startupLogger } = require('./middleware/logger');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 
-const routes = require('./routes');
+const routes = require('./routes'); // Подключаем routes/index.js
 
 const app = express();
 
@@ -96,33 +96,48 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Используем роуты из routes/index.js
 app.use(config.API_PREFIX, routes);
 
+// Главная страница с информацией об API
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'API Агрегатора Армянских Ресторанов',
+    message: 'ESARGO API Server - Агрегатор Армянских Ресторанов',
     version: '1.0.0',
     environment: config.NODE_ENV,
     endpoints: {
       health: '/health',
-      api: config.API_PREFIX,
-      restaurants: `${config.API_PREFIX}/restaurants`,
-      menu: `${config.API_PREFIX}/menu`,
-      examples: {
-        restaurant_list: `${config.API_PREFIX}/api/restaurants`,
-        restaurant_detail: `${config.API_PREFIX}/restaurants/:id`,
-        restaurant_menu: `${config.API_PREFIX}/menu/restaurant/:id`,
-        menu_search: `${config.API_PREFIX}/menu/search?q=хоровац`,
-        menu_item: `${config.API_PREFIX}/menu/item/:id`,
-        cart_add: `${config.API_PREFIX}/cart/add`,
-        cart_get: `${config.API_PREFIX}/cart/:sessionId`,
-        cart_delivery: `${config.API_PREFIX}/cart/calculate-delivery`,
-        order_create: `${config.API_PREFIX}/orders`,
-        order_track: `${config.API_PREFIX}/orders/track/:phone`,
-        order_detail: `${config.API_PREFIX}/orders/:id`,
+      api_base: config.API_PREFIX,
+      partners: {
+        create_request: `POST ${config.API_PREFIX}/partners`,
+        list_requests: `GET ${config.API_PREFIX}/partners`,
+        get_request: `GET ${config.API_PREFIX}/partners/:id`,
+        update_status: `PUT ${config.API_PREFIX}/partners/:id/status`,
+        delete_request: `DELETE ${config.API_PREFIX}/partners/:id`
       },
-      docs: 'Coming soon...',
+      docs: {
+        partner_creation: 'Создание заявки на регистрацию ресторана/магазина',
+        authentication: 'Требуется Authorization: Bearer TOKEN для всех запросов',
+        categories: 'Поддерживаются: restaurant, store'
+      }
+    },
+    usage_examples: {
+      create_restaurant: {
+        method: 'POST',
+        url: `${config.API_PREFIX}/partners`,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer YOUR_TOKEN'
+        },
+        required_fields: [
+          'business_name', 'category', 'address', 'location', 
+          'phone', 'owner_name', 'owner_surname',
+          'legal_name', 'siret_number', 'legal_form', 
+          'legal_address', 'director_name', 'iban', 'bic', 
+          'legal_email', 'legal_phone'
+        ]
+      }
     },
     timestamp: new Date().toISOString(),
   });
