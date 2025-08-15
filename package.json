@@ -1,0 +1,47 @@
+{
+	"name": "armenian-restaurants-api",
+	"version": "1.0.0",
+	"description": "API для агрегатора армянских ресторанов во Франции",
+	"main": "app.js",
+	"scripts": {
+		"start": "node app.js",
+		"dev": "nodemon app.js",
+		"test": "jest",
+		"seed": "node scripts/seed.js"
+	},
+	"keywords": [
+		"restaurants",
+		"armenian",
+		"food",
+		"delivery",
+		"api",
+		"nodejs",
+		"express",
+		"mongodb"
+	],
+	"author": "Your Name",
+	"license": "MIT",
+	"dependencies": {
+		"bcryptjs": "^2.4.3",
+		"compression": "^1.7.4",
+		"cors": "^2.8.5",
+		"dotenv": "^16.3.1",
+		"express": "^4.18.2",
+		"express-mongo-sanitize": "^2.2.0",
+		"express-rate-limit": "^6.10.0",
+		"helmet": "^7.0.0",
+		"jsonwebtoken": "^9.0.2",
+		"mongoose": "^7.5.0",
+		"multer": "^2.0.1",
+		"uuid": "^11.1.0",
+		"validator": "^13.11.0"
+	},
+	"devDependencies": {
+		"jest": "^29.6.4",
+		"nodemon": "^3.0.1",
+		"supertest": "^6.3.3"
+	},
+	"engines": {
+		"node": ">=16.0.0"
+	}
+}
