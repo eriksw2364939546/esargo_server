@@ -76,20 +76,16 @@ const registerCustomer = async (req, res) => {
       });
     }
 
-    // Хэширование пароля
-    const salt = await bcrypt.genSalt(12);
-    const password_hash = await bcrypt.hash(password, salt);
-
-    // Создание пользователя
+    // Создание пользователя (БЕЗ хэширования - это делает User.model.js)
     const newUser = new User({
       email: email.toLowerCase(),
-      password_hash,
+      password_hash: password, // ← Передаем обычный пароль, хэширование в pre('save')
       role: 'customer',
       is_active: true,
-      is_email_verified: false, // Можно добавить подтверждение email позже
+      is_email_verified: false,
       gdpr_consent: {
         data_processing: true,
-        marketing: false, // По умолчанию отключено
+        marketing: false,
         analytics: false,
         consent_date: new Date()
       },
@@ -188,8 +184,8 @@ const loginUser = async (req, res) => {
       });
     }
 
-    // Проверка пароля
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    // Проверка пароля (используем метод из модели)
+    const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
       // Увеличиваем счетчик неудачных попыток
       await user.incrementLoginAttempts();
@@ -200,8 +196,8 @@ const loginUser = async (req, res) => {
       });
     }
 
-    // Сброс счетчика попыток при успешном входе
-    await user.resetLoginAttempts(req.ip);
+    // Сброс счетчика попыток при успешном входе (без параметра ip)
+    await user.resetLoginAttempts();
 
     // Получение профиля пользователя
     let profile = null;
