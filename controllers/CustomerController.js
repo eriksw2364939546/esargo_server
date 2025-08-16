@@ -1,20 +1,31 @@
-// controllers/AuthController.js
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { User, CustomerProfile } = require('../models');
+// controllers/CustomerController.js (обновленный с сервисным слоем)
+import { 
+  createCustomerAccount, 
+  loginCustomer, 
+  getUserById 
+} from '../services/auth.service.js';
+import { 
+  getCustomerProfile, 
+  updateCustomerProfile, 
+  deleteCustomer,
+  addDeliveryAddress,
+  updateDeliveryAddress,
+  removeDeliveryAddress
+} from '../services/customer.service.js';
+import { generateCustomerToken } from '../services/token.service.js';
+import mongoose from 'mongoose';
 
 // ===== РЕГИСТРАЦИЯ КЛИЕНТА =====
-const registerCustomer = async (req, res) => {
+export const register = async (req, res) => {
   try {
     const {
-      first_name,    // Имя
-      last_name,     // Фамилия  
-      email,         // E-mail
-      phone,         // Телефон
-      password,      // Пароль
-      confirm_password, // Подтвердите пароль
-      gdpr_consent = true // Согласие с условиями
+      first_name,
+      last_name,
+      email,
+      phone,
+      password,
+      confirm_password,
+      gdpr_consent = true
     } = req.body;
 
     // Валидация обязательных полей
@@ -67,72 +78,37 @@ const registerCustomer = async (req, res) => {
       });
     }
 
-    // Проверка на существующего пользователя
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
+    // Создаем аккаунт через сервис
+    const newCustomerData = await createCustomerAccount({
+      first_name,
+      last_name,
+      email,
+      phone,
+      password
+    });
+
+    // Проверяем, новый ли это клиент
+    if (!newCustomerData.isNewCustomer) {
       return res.status(400).json({
         result: false,
         message: "Пользователь с таким email уже существует"
       });
     }
 
-    // Создание пользователя (БЕЗ хэширования - это делает User.model.js)
-    const newUser = new User({
-      email: email.toLowerCase(),
-      password_hash: password, // ← Передаем обычный пароль, хэширование в pre('save')
-      role: 'customer',
-      is_active: true,
-      is_email_verified: false,
-      gdpr_consent: {
-        data_processing: true,
-        marketing: false,
-        analytics: false,
-        consent_date: new Date()
-      },
-      registration_source: 'web',
-      registration_ip: req.ip || 'unknown',
-      user_agent: req.get('User-Agent') || 'unknown'
-    });
-
-    await newUser.save();
-
-    // Создание профиля клиента
-    const customerProfile = new CustomerProfile({
-      user_id: newUser._id,
-      first_name,
-      last_name,
-      phone,
-      settings: {
-        notifications_enabled: true,
-        preferred_language: 'fr',
-        marketing_emails: false
-      }
-    });
-
-    await customerProfile.save();
-
-    // Создание JWT токена
-    const token = jwt.sign(
-      { 
-        user_id: newUser._id, 
-        email: newUser.email, 
-        role: newUser.role 
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '30d' }
-    );
+    // Генерируем токен
+    const token = generateCustomerToken(newCustomerData.customer, '30d');
 
     res.status(201).json({
       result: true,
       message: "Регистрация прошла успешно!",
       user: {
-        id: newUser._id,
-        email: newUser.email,
-        role: newUser.role,
+        id: newCustomerData.customer._id,
+        email: newCustomerData.customer.email,
+        role: newCustomerData.customer.role,
         profile: {
-          first_name: customerProfile.first_name,
-          last_name: customerProfile.last_name,
-          full_name: customerProfile.full_name
+          first_name: newCustomerData.customer.profile.first_name,
+          last_name: newCustomerData.customer.profile.last_name,
+          full_name: newCustomerData.customer.profile.full_name
         }
       },
       token
@@ -149,11 +125,11 @@ const registerCustomer = async (req, res) => {
 };
 
 // ===== АВТОРИЗАЦИЯ =====
-const loginUser = async (req, res) => {
+export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Валидация полей
+    // Базовая валидация
     if (!email || !password) {
       return res.status(400).json({
         result: false,
@@ -161,196 +137,278 @@ const loginUser = async (req, res) => {
       });
     }
 
-    // Поиск пользователя
-    const user = await User.findOne({ 
-      email: email.toLowerCase(),
-      is_active: true 
-    });
+    // Авторизация через сервис
+    const loginResult = await loginCustomer({ email, password });
 
-    if (!user) {
-      return res.status(401).json({
-        result: false,
-        message: "Неверный email или пароль"
-      });
-    }
-
-    // Проверка заблокирован ли аккаунт
-    if (user.login_attempts.blocked_until && user.login_attempts.blocked_until > new Date()) {
-      const blockedUntil = user.login_attempts.blocked_until;
-      return res.status(423).json({
-        result: false,
-        message: "Аккаунт временно заблокирован",
-        blocked_until: blockedUntil
-      });
-    }
-
-    // Проверка пароля (используем метод из модели)
-    const isPasswordValid = await user.comparePassword(password);
-    if (!isPasswordValid) {
-      // Увеличиваем счетчик неудачных попыток
-      await user.incrementLoginAttempts();
-      
-      return res.status(401).json({
-        result: false,
-        message: "Неверный email или пароль"
-      });
-    }
-
-    // Сброс счетчика попыток при успешном входе (БЕЗ параметра ip)
-    await user.resetLoginAttempts();
-
-    // Получение профиля пользователя
-    let profile = null;
-    if (user.role === 'customer') {
-      profile = await CustomerProfile.findOne({ user_id: user._id });
-    }
-
-    // Создание JWT токена
-    const token = jwt.sign(
-      { 
-        user_id: user._id, 
-        email: user.email, 
-        role: user.role 
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '30d' }
-    );
-
-    res.json({
+    res.status(200).json({
       result: true,
       message: "Вход выполнен успешно",
-      user: {
-        id: user._id,
-        email: user.email,
-        role: user.role,
-        profile: profile ? {
-          first_name: profile.first_name,
-          last_name: profile.last_name,
-          full_name: profile.full_name,
-          phone: profile.phone
-        } : null
-      },
-      token
+      user: loginResult.user,
+      token: loginResult.token
     });
 
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({
+    
+    // Используем статус код из ошибки если он есть
+    const statusCode = error.statusCode || 500;
+    
+    res.status(statusCode).json({
       result: false,
-      message: "Ошибка при входе",
+      message: error.message || "Ошибка при входе",
       error: error.message
     });
   }
 };
 
-// ===== ПОЛУЧЕНИЕ ПРОФИЛЯ =====
-const getProfile = async (req, res) => {
+// ===== ВЕРИФИКАЦИЯ ТОКЕНА =====
+export const verify = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
 
-    // 🔍 ВРЕМЕННАЯ ОТЛАДКА
-    console.log('🔍 DEBUG: Looking for user with ID:', user._id);
-
-    const userWithProfile = await User.findById(user._id).select('-password_hash');
-    
-    // 🔍 ОТЛАДКА РЕЗУЛЬТАТА ПОИСКА
-    console.log('🔍 DEBUG: Found user:', userWithProfile ? 'YES' : 'NO');
-    if (!userWithProfile) {
-      console.log('🔍 DEBUG: User not found in database');
+    if (!user) {
+      return res.status(404).json({
+        result: false,
+        message: "Пользователь не определен!"
+      });
     }
-    
-    // ✅ ПРОВЕРЯЕМ, ЧТО ПОЛЬЗОВАТЕЛЬ НАЙДЕН
+
+    // Получаем полную информацию о пользователе через сервис
+    const userWithProfile = await getUserById(user._id);
+
     if (!userWithProfile) {
       return res.status(404).json({
         result: false,
         message: "Пользователь не найден"
       });
     }
-    
-    let profile = null;
-    if (userWithProfile.role === 'customer') {
-      profile = await CustomerProfile.findOne({ user_id: user._id });
-    }
 
-    res.json({
+    res.status(200).json({
       result: true,
+      message: "Пользователь верифицирован",
       user: {
         id: userWithProfile._id,
         email: userWithProfile.email,
         role: userWithProfile.role,
         is_email_verified: userWithProfile.is_email_verified,
-        profile: profile ? {
-          first_name: profile.first_name,
-          last_name: profile.last_name,
-          full_name: profile.full_name,
-          phone: profile.phone,
-          avatar_url: profile.avatar_url,
-          delivery_addresses: profile.delivery_addresses,
-          settings: profile.settings
-        } : null
+        profile: userWithProfile.profile
       }
+    });
+
+  } catch (error) {
+    console.error('Verify error:', error);
+    res.status(500).json({
+      result: false,
+      message: "Ошибка при верификации",
+      error: error.message
+    });
+  }
+};
+
+// ===== ПОЛУЧЕНИЕ ПРОФИЛЯ =====
+export const getProfile = async (req, res) => {
+  try {
+    const { user } = req; // Из middleware аутентификации
+
+    if (!user) {
+      return res.status(404).json({
+        result: false,
+        message: "Пользователь не определен!"
+      });
+    }
+
+    // Получаем профиль через сервис
+    const profileData = await getCustomerProfile(user._id);
+
+    res.status(200).json({
+      result: true,
+      message: "Профиль получен",
+      user: profileData.user,
+      profile: profileData.profile
     });
 
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка при получении профиля"
+      message: error.message || "Ошибка при получении профиля"
     });
   }
 };
 
-// ===== ОБНОВЛЕНИЕ ПРОФИЛЯ =====
-const updateProfile = async (req, res) => {
+// ===== РЕДАКТИРОВАНИЕ ПРОФИЛЯ =====
+export const edit = async (req, res) => {
   try {
-    const { user } = req;
-    const { first_name, last_name, phone } = req.body;
+    const { id } = req.params;
+    const updateData = req.body;
+    const requester = req.user; // Из middleware
 
-    if (user.role !== 'customer') {
+    // Валидация ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        result: false,
+        message: "Некорректный ID пользователя"
+      });
+    }
+
+    // Проверка прав доступа - пользователь может редактировать только свой профиль
+    if (requester._id.toString() !== id) {
       return res.status(403).json({
         result: false,
-        message: "Доступно только для клиентов"
+        message: "Доступ запрещен: Вы можете редактировать только свой профиль"
       });
     }
 
-    const profile = await CustomerProfile.findOne({ user_id: user._id });
-    if (!profile) {
-      return res.status(404).json({
+    // Запрещаем изменение роли
+    if (updateData.role) {
+      return res.status(403).json({
         result: false,
-        message: "Профиль не найден"
+        message: "Доступ запрещен: Роль нельзя изменить"
       });
     }
 
-    // Обновляем поля если они переданы
-    if (first_name) profile.first_name = first_name;
-    if (last_name) profile.last_name = last_name;
-    if (phone !== undefined) profile.phone = phone;
+    // Обновляем профиль через сервис
+    const updatedData = await updateCustomerProfile(id, updateData);
 
-    await profile.save();
-
-    res.json({
+    res.status(200).json({
       result: true,
-      message: "Профиль обновлен",
-      profile: {
-        first_name: profile.first_name,
-        last_name: profile.last_name,
-        full_name: profile.full_name,
-        phone: profile.phone
-      }
+      message: "Профиль обновлен!",
+      user: updatedData.user,
+      profile: updatedData.profile
     });
 
   } catch (error) {
-    console.error('Update profile error:', error);
+    console.error('Edit profile error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка при обновлении профиля"
+      message: error.message || "Ошибка при обновлении профиля",
+      error: error.message
     });
   }
 };
 
-module.exports = {
-  registerCustomer,
-  loginUser,
+// ===== УДАЛЕНИЕ КЛИЕНТА =====
+export const delClient = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const requester = req.user; // Из middleware
+
+    // Валидация ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        result: false,
+        message: "Некорректный ID пользователя"
+      });
+    }
+
+    // Проверка прав доступа - пользователь может удалить только свой аккаунт
+    // или это должен быть админ
+    if (requester._id.toString() !== id && !requester.role.includes('admin')) {
+      return res.status(403).json({
+        result: false,
+        message: "Доступ запрещен: Вы можете удалить только свой аккаунт"
+      });
+    }
+
+    // Удаляем через сервис
+    const deleteResult = await deleteCustomer(id);
+
+    res.status(200).json({
+      result: true,
+      message: deleteResult.message,
+      deletedUserId: deleteResult.deletedUserId
+    });
+
+  } catch (error) {
+    console.error('Delete client error:', error);
+    res.status(500).json({
+      result: false,
+      message: error.message || "Ошибка при удалении клиента",
+      error: error.message
+    });
+  }
+};
+
+// ===== УПРАВЛЕНИЕ АДРЕСАМИ ДОСТАВКИ =====
+
+// Добавление адреса доставки
+export const addAddress = async (req, res) => {
+  try {
+    const { user } = req;
+    const addressData = req.body;
+
+    const updatedProfile = await addDeliveryAddress(user._id, addressData);
+
+    res.status(201).json({
+      result: true,
+      message: "Адрес доставки добавлен",
+      addresses: updatedProfile.delivery_addresses
+    });
+
+  } catch (error) {
+    console.error('Add address error:', error);
+    res.status(500).json({
+      result: false,
+      message: error.message || "Ошибка при добавлении адреса"
+    });
+  }
+};
+
+// Обновление адреса доставки
+export const updateAddress = async (req, res) => {
+  try {
+    const { user } = req;
+    const { addressId } = req.params;
+    const updateData = req.body;
+
+    const updatedProfile = await updateDeliveryAddress(user._id, addressId, updateData);
+
+    res.status(200).json({
+      result: true,
+      message: "Адрес доставки обновлен",
+      addresses: updatedProfile.delivery_addresses
+    });
+
+  } catch (error) {
+    console.error('Update address error:', error);
+    res.status(500).json({
+      result: false,
+      message: error.message || "Ошибка при обновлении адреса"
+    });
+  }
+};
+
+// Удаление адреса доставки
+export const removeAddress = async (req, res) => {
+  try {
+    const { user } = req;
+    const { addressId } = req.params;
+
+    const updatedProfile = await removeDeliveryAddress(user._id, addressId);
+
+    res.status(200).json({
+      result: true,
+      message: "Адрес доставки удален",
+      addresses: updatedProfile.delivery_addresses
+    });
+
+  } catch (error) {
+    console.error('Remove address error:', error);
+    res.status(500).json({
+      result: false,
+      message: error.message || "Ошибка при удалении адреса"
+    });
+  }
+};
+
+export default {
+  register,
+  login,
+  verify,
   getProfile,
-  updateProfile
+  edit,
+  delClient,
+  addAddress,
+  updateAddress,
+  removeAddress
 };

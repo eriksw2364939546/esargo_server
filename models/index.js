@@ -1,28 +1,29 @@
-// indexForModels.js
+// models/index.js (обновленный)
 module.exports = {
   // Базовая аутентификация
   User: require('./User.model'),
+  Meta: require('./Meta.model'), // ← НОВАЯ МОДЕЛЬ для безопасности
 
   // Профили пользователей
-  CustomerProfile: require('./CustomerProfile.model'),       // Профиль покупателя
-  PartnerProfile: require('./PartnerProfile.model'),         // Профиль ресторана/магазина
-  CourierProfile: require('./CourierProfile.model'),         // Профиль курьера
+  CustomerProfile: require('./CustomerProfile.model'),       
+  PartnerProfile: require('./PartnerProfile.model'),         
+  CourierProfile: require('./CourierProfile.model'),         
 
   // Товары и заказы
-  Product: require('./Product.model'),                       // Товары/блюда
-  Order: require('./Order.model'),                           // Заказы (один партнер)
-  Review: require('./Review.model'),                         // Отзывы (только рейтинг)
-  Message: require('./Message.model'),                       // Чат по заказам
+  Product: require('./Product.model'),                       
+  Order: require('./Order.model'),                           
+  Review: require('./Review.model'),                         
+  Message: require('./Message.model'),                       
 
   // Администрирование
-  AdminUser: require('./AdminUser.model'),                   // Администраторы
-  InitialPartnerRequest: require('./InitialPartnerRequest.model'), // Первичные заявки партнёров
-  PartnerLegalInfo: require('./PartnerLegalInfo.model'),     // Юридические данные партнёров
-  CourierApplication: require('./CourierApplication.model'), // Заявки курьеров
-  BlockList: require('./BlockList.model'),                   // Блокировки пользователей
-  AdminLog: require('./AdminLog.model'),                     // Логи действий админов
+  AdminUser: require('./AdminUser.model'),                   
+  InitialPartnerRequest: require('./InitialPartnerRequest.model'), 
+  PartnerLegalInfo: require('./PartnerLegalInfo.model'),     
+  CourierApplication: require('./CourierApplication.model'), 
+  BlockList: require('./BlockList.model'),                   
+  AdminLog: require('./AdminLog.model'),                     
 
   // Системные модели
-  Category: require('./Category.model'),                     // Категории (рестораны/магазины)
-  SystemStats: require('./SystemStats.model')                 // Статистика для dashboard
+  Category: require('./Category.model'),                     
+  SystemStats: require('./SystemStats.model')                 
 };
