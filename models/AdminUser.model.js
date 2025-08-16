@@ -1,6 +1,6 @@
-// models/AdminUser.js
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+// models/AdminUser.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
 
 const adminUserSchema = new mongoose.Schema({
   email: {
@@ -16,11 +16,13 @@ const adminUserSchema = new mongoose.Schema({
       message: 'Некорректный формат email'
     }
   },
+  
   password_hash: {
     type: String,
     required: true,
     minlength: 6
   },
+  
   full_name: {
     type: String,
     required: true,
@@ -32,7 +34,7 @@ const adminUserSchema = new mongoose.Schema({
   role: {
     type: String,
     required: true,
-    enum: ['admin', 'owner'], // owner может управлять админами
+    enum: ['admin', 'manager', 'owner', 'support', 'moderator'],
     default: 'admin',
     index: true
   },
@@ -44,76 +46,65 @@ const adminUserSchema = new mongoose.Schema({
     index: true
   },
   
-  // Разрешения (детализированные права доступа)
+  // Детализированные разрешения
   permissions: {
-    // Управление пользователями
-    users: {
-      view: { type: Boolean, default: true },
-      block: { type: Boolean, default: true },
-      delete: { type: Boolean, default: false }
+    dashboard: { 
+      read: { type: Boolean, default: false }, 
+      write: { type: Boolean, default: false } 
     },
-    
-    // Управление партнерами
-    partners: {
-      view: { type: Boolean, default: true },
-      approve: { type: Boolean, default: true },
-      reject: { type: Boolean, default: true },
-      edit: { type: Boolean, default: false },
-      delete: { type: Boolean, default: false }
+    users: { 
+      read: { type: Boolean, default: false }, 
+      write: { type: Boolean, default: false }, 
+      delete: { type: Boolean, default: false } 
     },
-    
-    // Управление курьерами
-    couriers: {
-      view: { type: Boolean, default: true },
-      approve: { type: Boolean, default: true },
-      reject: { type: Boolean, default: true },
-      block: { type: Boolean, default: true }
+    partners: { 
+      read: { type: Boolean, default: false }, 
+      write: { type: Boolean, default: false }, 
+      approve: { type: Boolean, default: false } 
     },
-    
-    // Управление заказами
-    orders: {
-      view: { type: Boolean, default: true },
-      cancel: { type: Boolean, default: true },
-      refund: { type: Boolean, default: false },
-      edit: { type: Boolean, default: false }
+    couriers: { 
+      read: { type: Boolean, default: false }, 
+      write: { type: Boolean, default: false }, 
+      approve: { type: Boolean, default: false } 
     },
-    
-    // Управление отзывами
-    reviews: {
-      view: { type: Boolean, default: true },
-      moderate: { type: Boolean, default: true },
-      delete: { type: Boolean, default: true }
+    orders: { 
+      read: { type: Boolean, default: false }, 
+      write: { type: Boolean, default: false }, 
+      cancel: { type: Boolean, default: false } 
     },
-    
-    // Управление чатами
-    chats: {
-      view: { type: Boolean, default: true },
-      moderate: { type: Boolean, default: true },
-      participate: { type: Boolean, default: true }
+    finance: { 
+      read: { type: Boolean, default: false }, 
+      write: { type: Boolean, default: false } 
     },
-    
-    // Системные настройки
-    system: {
-      view_stats: { type: Boolean, default: true },
-      manage_categories: { type: Boolean, default: false },
-      manage_admins: { type: Boolean, default: false }, // только для owner
-      system_settings: { type: Boolean, default: false } // только для owner
+    analytics: { 
+      read: { type: Boolean, default: false }, 
+      write: { type: Boolean, default: false } 
+    },
+    system: { 
+      read: { type: Boolean, default: false }, 
+      write: { type: Boolean, default: false }, 
+      maintain: { type: Boolean, default: false } 
     }
   },
   
-  // Информация о сессиях
-  last_login_at: {
-    type: Date
-  },
-  last_login_ip: {
-    type: String
-  },
-  last_activity_at: {
-    type: Date,
-    default: Date.now
+  // Контактная информация
+  contact_info: {
+    department: {
+      type: String,
+      enum: ['moderation', 'support', 'operations', 'finance', 'technical', 'general'],
+      default: 'general'
+    },
+    phone: String,
+    position: String
   },
   
-  // Безопасность
+  // Информация о создателе
+  created_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AdminUser'
+  },
+  
+  // Отслеживание входов
   login_attempts: {
     count: {
       type: Number,
@@ -127,55 +118,18 @@ const adminUserSchema = new mongoose.Schema({
     }
   },
   
-  // Настройки уведомлений
-  notification_settings: {
-    new_partner_requests: {
-      type: Boolean,
-      default: true
-    },
-    new_courier_applications: {
-      type: Boolean,
-      default: true
-    },
-    urgent_orders: {
-      type: Boolean,
-      default: true
-    },
-    system_alerts: {
-      type: Boolean,
-      default: true
-    },
-    daily_reports: {
-      type: Boolean,
-      default: false
-    },
-    weekly_reports: {
-      type: Boolean,
-      default: true
-    }
+  // Активность
+  last_login_at: {
+    type: Date
   },
   
-  // Контактная информация
-  contact_info: {
-    phone: {
-      type: String,
-      trim: true
-    },
-    telegram: {
-      type: String,
-      trim: true
-    },
-    department: {
-      type: String,
-      enum: ['moderation', 'support', 'operations', 'finance', 'technical'],
-      default: 'moderation'
-    }
+  last_activity_at: {
+    type: Date,
+    default: Date.now
   },
   
-  // Информация о создателе
-  created_by: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'AdminUser'
+  last_login_ip: {
+    type: String
   },
   
   // Статистика активности
@@ -236,7 +190,7 @@ adminUserSchema.pre('save', async function(next) {
   }
 });
 
-// Методы экземпляра
+// МЕТОДЫ ЭКЗЕМПЛЯРА
 
 // Проверка пароля
 adminUserSchema.methods.comparePassword = async function(candidatePassword) {
@@ -299,6 +253,11 @@ adminUserSchema.methods.hasPermission = function(section, action) {
   return this.permissions[section] && this.permissions[section][action];
 };
 
+// Проверка является ли администратором
+adminUserSchema.methods.isAdmin = function() {
+  return ['admin', 'manager', 'owner', 'support', 'moderator'].includes(this.role);
+};
+
 // Обновление активности
 adminUserSchema.methods.updateActivity = function() {
   this.last_activity_at = new Date();
@@ -306,6 +265,11 @@ adminUserSchema.methods.updateActivity = function() {
   this.activity_stats.last_action_at = new Date();
   
   return this.save();
+};
+
+// Запись активности (для совместимости)
+adminUserSchema.methods.recordActivity = function() {
+  return this.updateActivity();
 };
 
 // Приостановка аккаунта
@@ -348,7 +312,7 @@ adminUserSchema.methods.updatePermissions = function(newPermissions) {
   return this.save();
 };
 
-// Статические методы
+// СТАТИЧЕСКИЕ МЕТОДЫ
 
 // Поиск по email
 adminUserSchema.statics.findByEmail = function(email) {
@@ -433,11 +397,11 @@ adminUserSchema.statics.cleanInactiveAccounts = function(daysInactive = 90) {
   
   return this.updateMany({
     last_activity_at: { $lt: cutoffDate },
-    role: 'admin', // не трогаем owner
+    role: { $ne: 'owner' }, // не трогаем owner
     is_active: true
   }, {
     $set: { is_active: false }
   });
 };
 
-module.exports = mongoose.model('AdminUser', adminUserSchema);
+export default mongoose.model('AdminUser', adminUserSchema);
