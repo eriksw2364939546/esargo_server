@@ -248,7 +248,24 @@ const getProfile = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
 
+    // 🔍 ВРЕМЕННАЯ ОТЛАДКА
+    console.log('🔍 DEBUG: Looking for user with ID:', user._id);
+
     const userWithProfile = await User.findById(user._id).select('-password_hash');
+    
+    // 🔍 ОТЛАДКА РЕЗУЛЬТАТА ПОИСКА
+    console.log('🔍 DEBUG: Found user:', userWithProfile ? 'YES' : 'NO');
+    if (!userWithProfile) {
+      console.log('🔍 DEBUG: User not found in database');
+    }
+    
+    // ✅ ПРОВЕРЯЕМ, ЧТО ПОЛЬЗОВАТЕЛЬ НАЙДЕН
+    if (!userWithProfile) {
+      return res.status(404).json({
+        result: false,
+        message: "Пользователь не найден"
+      });
+    }
     
     let profile = null;
     if (userWithProfile.role === 'customer') {

@@ -1,6 +1,7 @@
-// routes/Auth.route.js
+// routes/Customer.route.js
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
 const {
   registerCustomer,
   loginUser,
@@ -8,7 +9,7 @@ const {
   updateProfile
 } = require('../controllers/CustomerController');
 
-// Временный middleware для аутентификации (замените на реальный JWT middleware)
+// ✅ РЕАЛЬНЫЙ JWT MIDDLEWARE С ОТЛАДКОЙ
 const authenticateUser = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   
@@ -19,41 +20,55 @@ const authenticateUser = (req, res, next) => {
     });
   }
   
-  // Временная заглушка для тестирования
-  // В реальном приложении здесь будет проверка JWT токена
-  req.user = {
-    _id: "64e8b2f0c2a4f91a12345678",
-    email: "test@example.com",
-    role: "customer"
-  };
-  
-  next();
+  try {
+    // Расшифровываем токен
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    
+    // 🔍 ВРЕМЕННАЯ ОТЛАДКА - ПОСМОТРИМ ЧТО В ТОКЕНЕ
+    console.log('🔍 DEBUG: Decoded token:', decoded);
+    console.log('🔍 DEBUG: User ID from token:', decoded.user_id);
+    
+    // Добавляем данные пользователя в req
+    req.user = {
+      _id: decoded.user_id,
+      email: decoded.email,
+      role: decoded.role
+    };
+    
+    next();
+  } catch (error) {
+    console.log('🚨 JWT Error:', error.message);
+    return res.status(401).json({
+      result: false,
+      message: "Недействительный токен"
+    });
+  }
 };
 
 // ================ РОУТЫ ================
 
-// POST /api/auth/register - Регистрация клиента
+// POST /api/customers/register - Регистрация клиента
 router.post('/register', registerCustomer);
 
-// POST /api/auth/login - Авторизация пользователя
+// POST /api/customers/login - Авторизация пользователя
 router.post('/login', loginUser);
 
-// GET /api/auth/profile - Получение профиля пользователя
+// GET /api/customers/profile - Получение профиля пользователя
 router.get('/profile', authenticateUser, getProfile);
 
-// PUT /api/auth/profile - Обновление профиля пользователя
+// PUT /api/customers/profile - Обновление профиля пользователя
 router.put('/profile', authenticateUser, updateProfile);
 
-// GET /api/auth/health - Проверка работы роутов
+// GET /api/customers/health - Проверка работы роутов
 router.get('/health', (req, res) => {
   res.json({
     result: true,
-    message: "Auth routes working",
+    message: "Customer routes working",
     available_endpoints: {
-      register: "POST /api/auth/register",
-      login: "POST /api/auth/login",
-      profile: "GET /api/auth/profile",
-      update_profile: "PUT /api/auth/profile"
+      register: "POST /api/customers/register",
+      login: "POST /api/customers/login",
+      profile: "GET /api/customers/profile",
+      update_profile: "PUT /api/customers/profile"
     },
     timestamp: new Date().toISOString()
   });
