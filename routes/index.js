@@ -2,8 +2,9 @@
 const express = require('express');
 const router = express.Router();
 
-// Import только тот роут, который у вас есть
+// Import роутов
 const partnerRoutes = require('./Partner.route');
+const customerRoutes = require('./Customer.route'); // ✅ ВАШ ФАЙЛ
 
 // Health check endpoint
 router.get('/health', (req, res) => {
@@ -13,6 +14,9 @@ router.get('/health', (req, res) => {
 		timestamp: new Date().toISOString()
 	});
 });
+
+// Customer routes (регистрация и авторизация клиентов)
+router.use('/customers', customerRoutes); // ✅ ПОДКЛЮЧЕНИЕ
 
 // Partner routes (для создания ресторанов/магазинов)
 router.use('/partners', partnerRoutes);
@@ -24,12 +28,17 @@ router.get('/', (req, res) => {
 		message: 'ESARGO API Server',
 		version: '1.0.0',
 		available_endpoints: {
+			customers: { // ✅ ОБНОВЛЕННЫЕ ENDPOINTS
+				register: 'POST /api/customers/register',
+				login: 'POST /api/customers/login',
+				profile: 'GET /api/customers/profile',
+				update_profile: 'PUT /api/customers/profile'
+			},
 			partners: {
-				create: 'POST /api/partners',
-				list: 'GET /api/partners',
-				details: 'GET /api/partners/:id',
-				update_status: 'PUT /api/partners/:id/status',
-				delete: 'DELETE /api/partners/:id'
+				initial_request: 'POST /api/partners/initial-request',
+				legal_info: 'POST /api/partners/:id/legal-info',
+				list_requests: 'GET /api/partners/requests',
+				update_status: 'PATCH /api/partners/:id/status'
 			}
 		},
 		timestamp: new Date().toISOString()
