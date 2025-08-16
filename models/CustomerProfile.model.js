@@ -1,32 +1,37 @@
-// models/CustomerProfile.js
-const mongoose = require('mongoose');
+// models/CustomerProfile.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const customerProfileSchema = new mongoose.Schema({
   user_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
-    unique: true
+    unique: true,
+    index: true
   },
+  
   first_name: {
     type: String,
     required: true,
     trim: true
   },
+  
   last_name: {
     type: String,
     required: true,
     trim: true
   },
+  
   phone: {
     type: String,
     trim: true
   },
+  
   avatar_url: {
     type: String
   },
   
-  // Сохраненные адреса доставки (из модального окна)
+  // Сохраненные адреса доставки
   delivery_addresses: [{
     label: {
       type: String,
@@ -53,7 +58,7 @@ const customerProfileSchema = new mongoose.Schema({
     }
   }],
   
-  // Избранные магазины/рестораны
+  // Избранные партнеры
   favorites: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'PartnerProfile'
@@ -100,14 +105,11 @@ const customerProfileSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Индекс для поиска по user_id
+// Индексы
 customerProfileSchema.index({ user_id: 1 });
-
-// Индекс для поиска по имени и фамилии
 customerProfileSchema.index({ first_name: 1, last_name: 1 });
-
-// Индекс для активных пользователей
 customerProfileSchema.index({ is_active: 1 });
+customerProfileSchema.index({ 'order_stats.total_orders': -1 });
 
 // Виртуальное поле для полного имени
 customerProfileSchema.virtual('full_name').get(function() {
@@ -144,4 +146,8 @@ customerProfileSchema.methods.removeFromFavorites = function(partnerId) {
   return this.save();
 };
 
-module.exports = mongoose.model('CustomerProfile', customerProfileSchema);
+// Настройка виртуальных полей в JSON
+customerProfileSchema.set('toJSON', { virtuals: true });
+customerProfileSchema.set('toObject', { virtuals: true });
+
+export default mongoose.model('CustomerProfile', customerProfileSchema);

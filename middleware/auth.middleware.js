@@ -1,7 +1,6 @@
-// middleware/auth.middleware.js
+// middleware/auth.middleware.js (исправленный)
 import { verifyJWTToken, extractTokenFromHeader } from '../services/token.service.js';
 import { getUserById } from '../services/auth.service.js';
-import { getAdminById, checkAdminPermission } from '../services/admin.auth.service.js';
 
 /**
  * Middleware для аутентификации пользователей
@@ -22,17 +21,8 @@ export const authenticateUser = async (req, res, next) => {
     // Верифицируем токен
     const decoded = verifyJWTToken(token);
     
-    // Получаем полную информацию о пользователе в зависимости от роли
-    let user;
-    if (decoded.role === 'admin') {
-      user = await getAdminById(decoded.user_id);
-      if (user) {
-        user.role = 'admin';
-        user.admin_role = decoded.admin_role;
-      }
-    } else {
-      user = await getUserById(decoded.user_id);
-    }
+    // Получаем полную информацию о пользователе
+    const user = await getUserById(decoded.user_id);
     
     if (!user) {
       return res.status(401).json({
@@ -112,7 +102,7 @@ export const requireRole = (allowedRoles) => {
 };
 
 /**
- * Middleware для проверки административных разрешений
+ * Упрощенная проверка админских разрешений (временно)
  * @param {string} section - Раздел (например, 'partners')
  * @param {string} action - Действие (например, 'read', 'write')
  */
@@ -121,24 +111,41 @@ export const requireAdminPermission = (section, action) => {
     try {
       const { user } = req;
       
-      if (!user || user.role !== 'admin') {
+      // Базовая проверка на админа
+      if (!user || !user.isAdmin()) {
         return res.status(403).json({
           result: false,
           message: "Доступ разрешен только для администраторов"
         });
       }
       
-      // Проверяем разрешение
-      const hasPermission = checkAdminPermission(user, section, action);
-      
-      if (!hasPermission) {
-        return res.status(403).json({
-          result: false,
-          message: `Недостаточно прав для выполнения действия ${action} в разделе ${section}`
-        });
+      // Владелец имеет все права
+      if (user.role === 'owner') {
+        return next();
       }
       
-      next();
+      // Менеджер имеет большинство прав
+      if (user.role === 'manager') {
+        const restrictedActions = ['delete', 'system'];
+        if (!restrictedActions.includes(action)) {
+          return next();
+        }
+      }
+      
+      // Обычный админ имеет ограниченные права
+      if (user.role === 'admin') {
+        const allowedSections = ['partners', 'customers', 'orders'];
+        const allowedActions = ['read', 'write'];
+        
+        if (allowedSections.includes(section) && allowedActions.includes(action)) {
+          return next();
+        }
+      }
+      
+      return res.status(403).json({
+        result: false,
+        message: `Недостаточно прав для выполнения действия ${action} в разделе ${section}`
+      });
       
     } catch (error) {
       console.error('Admin permission check error:', error);
@@ -165,7 +172,7 @@ export const requireEmailVerification = (req, res, next) => {
     }
     
     // Админы не требуют верификации email
-    if (user.role === 'admin') {
+    if (user.isAdmin()) {
       return next();
     }
     
@@ -198,17 +205,7 @@ export const optionalAuth = async (req, res, next) => {
     if (token) {
       try {
         const decoded = verifyJWTToken(token);
-        
-        let user;
-        if (decoded.role === 'admin') {
-          user = await getAdminById(decoded.user_id);
-          if (user) {
-            user.role = 'admin';
-            user.admin_role = decoded.admin_role;
-          }
-        } else {
-          user = await getUserById(decoded.user_id);
-        }
+        const user = await getUserById(decoded.user_id);
         
         if (user && user.is_active) {
           req.user = user;

@@ -1,29 +1,47 @@
-// models/index.js (обновленный)
-module.exports = {
-  // Базовая аутентификация
-  User: require('./User.model'),
-  Meta: require('./Meta.model'), // ← НОВАЯ МОДЕЛЬ для безопасности
+// models/index.js (исправленный - ES6 modules)
 
-  // Профили пользователей
-  CustomerProfile: require('./CustomerProfile.model'),       
-  PartnerProfile: require('./PartnerProfile.model'),         
-  CourierProfile: require('./CourierProfile.model'),         
+// Базовые модели
+export { default as User } from './User.model.js';
+export { default as Meta } from './Meta.model.js';
 
-  // Товары и заказы
-  Product: require('./Product.model'),                       
-  Order: require('./Order.model'),                           
-  Review: require('./Review.model'),                         
-  Message: require('./Message.model'),                       
+// Профили пользователей
+export { default as CustomerProfile } from './CustomerProfile.model.js';
+export { default as PartnerProfile } from './PartnerProfile.model.js';
+export { default as CourierProfile } from './CourierProfile.model.js';
 
-  // Администрирование
-  AdminUser: require('./AdminUser.model'),                   
-  InitialPartnerRequest: require('./InitialPartnerRequest.model'), 
-  PartnerLegalInfo: require('./PartnerLegalInfo.model'),     
-  CourierApplication: require('./CourierApplication.model'), 
-  BlockList: require('./BlockList.model'),                   
-  AdminLog: require('./AdminLog.model'),                     
+// Товары и заказы
+export { default as Product } from './Product.model.js';
+export { default as Order } from './Order.model.js';
+export { default as Review } from './Review.model.js';
+export { default as Message } from './Message.model.js';
 
-  // Системные модели
-  Category: require('./Category.model'),                     
-  SystemStats: require('./SystemStats.model')                 
+// Администрирование партнеров
+export { default as InitialPartnerRequest } from './InitialPartnerRequest.model.js';
+export { default as PartnerLegalInfo } from './PartnerLegalInfo.model.js';
+export { default as CourierApplication } from './CourierApplication.model.js';
+
+// Системные модели
+export { default as Category } from './Category.model.js';
+export { default as SystemStats } from './SystemStats.model.js';
+export { default as BlockList } from './BlockList.model.js';
+export { default as AdminLog } from './AdminLog.model.js';
+
+// Экспорт для совместимости (если где-то используется старый импорт)
+export default {
+  User,
+  Meta,
+  CustomerProfile,
+  PartnerProfile,
+  CourierProfile,
+  Product,
+  Order,
+  Review,
+  Message,
+  InitialPartnerRequest,
+  PartnerLegalInfo,
+  CourierApplication,
+  Category,
+  SystemStats,
+  BlockList,
+  AdminLog
 };

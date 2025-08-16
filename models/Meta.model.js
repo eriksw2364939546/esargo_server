@@ -1,37 +1,21 @@
-// models/Meta.model.js
-const mongoose = require('mongoose');
+// models/Meta.model.js (упрощенный и исправленный)
+import mongoose from 'mongoose';
 
 const metaSchema = new mongoose.Schema({
-  // Ссылки на пользователей в зависимости от роли
-  customer: {
+  // ЕДИНАЯ ссылка на пользователя (вместо отдельных полей)
+  user_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    default: null
-  },
-  
-  partner: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User', 
-    default: null
-  },
-  
-  courier: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    default: null
-  },
-  
-  admin: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'AdminUser', // Ссылка на AdminUser модель
-    default: null
+    required: true,
+    index: true
   },
   
   // Роль пользователя
   role: {
     type: String,
-    enum: ['customer', 'partner', 'courier', 'admin'],
-    required: true
+    enum: ['customer', 'partner', 'courier', 'admin', 'manager', 'owner'],
+    required: true,
+    index: true
   },
   
   // Хешированный email для безопасного поиска
@@ -42,33 +26,37 @@ const metaSchema = new mongoose.Schema({
     index: true
   },
   
-  // Дополнительные метаданные
+  // Статус активности
   is_active: {
     type: Boolean,
-    default: true
+    default: true,
+    index: true
   },
   
   // Информация о безопасности
   security_info: {
-    last_login_attempt: Date,
+    last_login_attempt: {
+      type: Date
+    },
     failed_login_attempts: {
       type: Number,
       default: 0
     },
-    account_locked_until: Date,
-    password_changed_at: Date
+    account_locked_until: {
+      type: Date
+    },
+    password_changed_at: {
+      type: Date
+    }
   }
 }, {
   timestamps: true
 });
 
-// Индексы для оптимизации поиска
+// Составные индексы для оптимизации поиска
 metaSchema.index({ em: 1, role: 1 });
-metaSchema.index({ customer: 1 });
-metaSchema.index({ partner: 1 });
-metaSchema.index({ courier: 1 });
-metaSchema.index({ admin: 1 });
-metaSchema.index({ is_active: 1 });
+metaSchema.index({ user_id: 1, role: 1 });
+metaSchema.index({ role: 1, is_active: 1 });
 
 // Методы для работы с безопасностью
 metaSchema.methods.incrementFailedAttempts = function() {
@@ -95,4 +83,26 @@ metaSchema.methods.isAccountLocked = function() {
          this.security_info.account_locked_until > new Date();
 };
 
-module.exports = mongoose.model('Meta', metaSchema);
+// Статические методы
+
+// Поиск по хешированному email и роли
+metaSchema.statics.findByEmailAndRole = function(hashedEmail, role) {
+  return this.findOne({ em: hashedEmail, role }).populate('user_id');
+};
+
+// Поиск всех Meta записей пользователя
+metaSchema.statics.findByUserId = function(userId) {
+  return this.find({ user_id: userId });
+};
+
+// Создание Meta записи
+metaSchema.statics.createMeta = function(userId, role, hashedEmail) {
+  return this.create({
+    user_id: userId,
+    role: role,
+    em: hashedEmail,
+    is_active: true
+  });
+};
+
+export default mongoose.model('Meta', metaSchema);
