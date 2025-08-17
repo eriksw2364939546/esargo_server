@@ -1,152 +1,116 @@
-// models/PartnerProfile.js
-const mongoose = require('mongoose');
+// models/PartnerProfile.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const partnerProfileSchema = new mongoose.Schema({
   user_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
-    unique: true
+    unique: true,
+    index: true
   },
   
-  // Основная информация о бизнесе
   business_name: {
     type: String,
     required: true,
-    trim: true
-  },
-  description: {
-    type: String,
-    trim: true
-  },
-  logo_url: {
-    type: String
-  },
-  cover_image_url: {
-    type: String
+    trim: true,
+    maxlength: 100
   },
   
-  // Адрес и геолокация
-  address: {
+  brand_name: {
+    type: String,
+    trim: true,
+    maxlength: 100
+  },
+  
+  category: {
     type: String,
     required: true,
-    trim: true
+    enum: ['restaurant', 'store'],
+    index: true
   },
+  
+  description: {
+    type: String,
+    trim: true,
+    maxlength: 500
+  },
+  
+  // Зашифрованные данные
+  address: {
+    type: String,
+    required: true
+  },
+  
   location: {
-    lat: {
-      type: Number,
+    type: {
+      type: String,
+      enum: ['Point'],
       required: true
     },
-    lng: {
-      type: Number,
+    coordinates: {
+      type: [Number],
       required: true
     }
   },
   
-  // ТОЛЬКО 2 КАТЕГОРИИ!
-  category: {
-    type: String,
-    required: true,
-    enum: ['restaurant', 'store']
-  },
-  
-  // Контактная информация
   phone: {
     type: String,
-    required: true,
-    trim: true
+    required: true
   },
+  
+  email: {
+    type: String,
+    required: true
+  },
+  
   owner_name: {
     type: String,
     required: true,
     trim: true
   },
+  
   owner_surname: {
     type: String,
     required: true,
     trim: true
   },
   
-  // Французская юридическая информация
-  legal_info: {
-    legal_name: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    siret_number: {
-      type: String,
-      required: true,
-      trim: true,
-      unique: true
-    },
-    legal_form: {
-      type: String,
-      required: true,
-      enum: ['SASU', 'SARL', 'SAS', 'EURL', 'Auto-entrepreneur', 'Autre']
-    },
-    tva_number: {
-      type: String,
-      trim: true
-    },
-    legal_address: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    director_name: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    iban: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    bic: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    legal_email: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    legal_phone: {
-      type: String,
-      required: true,
-      trim: true
-    }
+  floor_unit: {
+    type: String,
+    trim: true
   },
   
-  // Рабочие часы (как в макете)
+  cover_image_url: {
+    type: String
+  },
+  
+  // График работы
   working_hours: {
     monday: {
       is_open: { type: Boolean, default: true },
       open_time: { type: String, default: '09:00' },
-      close_time: { type: String, default: '23:00' }
+      close_time: { type: String, default: '21:00' }
     },
     tuesday: {
       is_open: { type: Boolean, default: true },
       open_time: { type: String, default: '09:00' },
-      close_time: { type: String, default: '23:00' }
+      close_time: { type: String, default: '21:00' }
     },
     wednesday: {
       is_open: { type: Boolean, default: true },
       open_time: { type: String, default: '09:00' },
-      close_time: { type: String, default: '23:00' }
+      close_time: { type: String, default: '21:00' }
     },
     thursday: {
       is_open: { type: Boolean, default: true },
       open_time: { type: String, default: '09:00' },
-      close_time: { type: String, default: '23:00' }
+      close_time: { type: String, default: '21:00' }
     },
     friday: {
       is_open: { type: Boolean, default: true },
       open_time: { type: String, default: '09:00' },
-      close_time: { type: String, default: '23:00' }
+      close_time: { type: String, default: '21:00' }
     },
     saturday: {
       is_open: { type: Boolean, default: true },
@@ -154,42 +118,36 @@ const partnerProfileSchema = new mongoose.Schema({
       close_time: { type: String, default: '22:00' }
     },
     sunday: {
-      is_open: { type: Boolean, default: true },
-      open_time: { type: String, default: '10:00' },
-      close_time: { type: String, default: '22:00' }
+      is_open: { type: Boolean, default: false },
+      open_time: { type: String, default: null },
+      close_time: { type: String, default: null }
     }
   },
   
-  // Статус модерации и активности
+  // Статус одобрения
   is_approved: {
     type: Boolean,
-    default: false
+    default: false,
+    index: true
   },
-  is_active: {
-    type: Boolean,
-    default: true
-  },
+  
   approved_by: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'AdminUser'
   },
+  
   approved_at: {
     type: Date
   },
+  
   rejection_reason: {
     type: String
   },
   
-  // Уведомления (как в макете)
-  notifications: {
-    new_orders: {
-      type: Boolean,
-      default: true
-    },
-    new_reviews: {
-      type: Boolean,
-      default: true
-    }
+  // Статус активности
+  is_active: {
+    type: Boolean,
+    default: true
   },
   
   // Рейтинг и статистика
@@ -265,9 +223,6 @@ partnerProfileSchema.index({
 // Индекс для рейтинга
 partnerProfileSchema.index({ 'ratings.avg_rating': -1 });
 
-// Индекс для SIRET номера
-partnerProfileSchema.index({ 'legal_info.siret_number': 1 });
-
 // Виртуальное поле для полного имени владельца
 partnerProfileSchema.virtual('owner_full_name').get(function() {
   return `${this.owner_name} ${this.owner_surname}`;
@@ -320,4 +275,9 @@ partnerProfileSchema.methods.reject = function(reason) {
   return this.save();
 };
 
-module.exports = mongoose.model('PartnerProfile', partnerProfileSchema);
+// Настройка виртуальных полей в JSON
+partnerProfileSchema.set('toJSON', { virtuals: true });
+partnerProfileSchema.set('toObject', { virtuals: true });
+
+// 🆕 ИСПРАВЛЕНО: ES6 export вместо module.exports
+export default mongoose.model('PartnerProfile', partnerProfileSchema);

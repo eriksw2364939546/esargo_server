@@ -1,5 +1,5 @@
-// models/BlockList.js
-const mongoose = require('mongoose');
+// models/BlockList.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const blockListSchema = new mongoose.Schema({
   user_id: {
@@ -88,42 +88,30 @@ const blockListSchema = new mongoose.Schema({
     }
   },
   
-  // Срок блокировки
+  // Длительность блокировки
   duration: {
-    block_until: {
-      type: Date // Если null - постоянная блокировка
-    },
     duration_days: {
       type: Number,
       min: 0
     },
+    block_until: {
+      type: Date
+    },
     auto_unblock: {
       type: Boolean,
-      default: false // Автоматическая разблокировка по истечении срока
+      default: true
     }
   },
   
   // Связанные данные
   related_data: {
-    // Связанные заказы (если блокировка связана с заказами)
-    related_orders: [{
+    order_ids: [{
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Order'
     }],
-    
-    // Связанные отзывы
-    related_reviews: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Review'
+    report_ids: [{
+      type: mongoose.Schema.Types.ObjectId
     }],
-    
-    // Связанные сообщения
-    related_messages: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Message'
-    }],
-    
-    // Жалобы от других пользователей
     complaints: [{
       complainant_id: {
         type: mongoose.Schema.Types.ObjectId,
@@ -131,7 +119,7 @@ const blockListSchema = new mongoose.Schema({
       },
       complainant_role: {
         type: String,
-        enum: ['customer', 'courier', 'partner']
+        enum: ['customer', 'courier', 'partner', 'admin']
       },
       complaint_text: {
         type: String,
@@ -145,7 +133,7 @@ const blockListSchema = new mongoose.Schema({
     }]
   },
   
-  // Уведомления
+  // Отправка уведомлений
   notification_sent: {
     email_sent: {
       type: Boolean,
@@ -409,22 +397,9 @@ blockListSchema.methods.sendNotification = function(channels = ['email']) {
 // Статические методы
 
 // Создание новой блокировки
-blockListSchema.statics.createBlock = async function(userId, userRole, reason, details, blockedBy, severity = 'temporary', durationDays = null) {
+blockListSchema.statics.createBlock = async function(userId, userRole, reason, details, adminId, options = {}) {
   // Проверяем предыдущие блокировки
-  const previousBlocks = await this.find({
-    user_id: userId,
-    user_role: userRole
-  }).sort({ blocked_at: -1 });
-  
-  const isRepeat = previousBlocks.length > 0;
-  const escalationLevel = Math.min(previousBlocks.length + 1, 5);
-  
-  // Рассчитываем срок блокировки
-  let blockUntil = null;
-  if (severity !== 'permanent' && durationDays) {
-    blockUntil = new Date();
-    blockUntil.setDate(blockUntil.getDate() + durationDays);
-  }
+  const previousBlocks = await this.countDocuments({ user_id: userId, user_role: userRole });
   
   const blockData = {
     user_id: userId,
@@ -432,94 +407,64 @@ blockListSchema.statics.createBlock = async function(userId, userRole, reason, d
     block_info: {
       reason,
       details,
-      severity
+      severity: options.severity || 'temporary'
     },
-    blocked_by: blockedBy,
+    blocked_by: adminId,
+    blocked_at: new Date(),
     duration: {
-      block_until: blockUntil,
-      duration_days: durationDays,
-      auto_unblock: severity === 'temporary' && durationDays
+      duration_days: options.duration_days,
+      block_until: options.block_until,
+      auto_unblock: options.auto_unblock !== false
     },
     repeat_offence: {
-      is_repeat: isRepeat,
-      previous_blocks_count: previousBlocks.length,
-      escalation_level: escalationLevel
+      is_repeat: previousBlocks > 0,
+      previous_blocks_count: previousBlocks,
+      escalation_level: Math.min(previousBlocks + 1, 5)
     },
+    related_data: {
+      order_ids: options.order_ids || [],
+      report_ids: options.report_ids || []
+    },
+    source: options.source || 'manual',
+    ip_address: options.ip_address,
     history: [{
       action: 'blocked',
-      performed_by: blockedBy,
-      notes: `Заблокирован за: ${reason}`
+      performed_by: adminId,
+      performed_at: new Date(),
+      notes: details
     }]
   };
+  
+  // Вычисляем срок блокировки если не указан
+  if (!blockData.duration.block_until && blockData.duration.duration_days) {
+    const blockUntil = new Date();
+    blockUntil.setDate(blockUntil.getDate() + blockData.duration.duration_days);
+    blockData.duration.block_until = blockUntil;
+  }
   
   return this.create(blockData);
 };
 
-// Поиск активных блокировок
-blockListSchema.statics.findActiveBlocks = function(userRole = null) {
-  const filter = { is_active: true };
-  if (userRole) {
-    filter.user_role = userRole;
-  }
-  return this.find(filter).sort({ blocked_at: -1 });
+// Получение активных блокировок
+blockListSchema.statics.findActiveBlocks = function(filters = {}) {
+  const query = { is_active: true, ...filters };
+  return this.find(query)
+    .populate('user_id', 'email')
+    .populate('blocked_by', 'email first_name last_name')
+    .sort({ blocked_at: -1 });
 };
 
-// Поиск блокировок пользователя
-blockListSchema.statics.findByUser = function(userId) {
-  return this.find({ user_id: userId }).sort({ blocked_at: -1 });
-};
-
-// Поиск блокировок админа
-blockListSchema.statics.findByAdmin = function(adminId) {
-  return this.find({ blocked_by: adminId }).sort({ blocked_at: -1 });
-};
-
-// Поиск по причине блокировки
-blockListSchema.statics.findByReason = function(reason) {
-  return this.find({ 'block_info.reason': reason }).sort({ blocked_at: -1 });
-};
-
-// Поиск по уровню серьезности
-blockListSchema.statics.findBySeverity = function(severity) {
-  return this.find({ 'block_info.severity': severity }).sort({ blocked_at: -1 });
-};
-
-// Поиск апелляций ожидающих рассмотрения
-blockListSchema.statics.findPendingAppeals = function() {
-  return this.find({
-    'appeal.has_appeal': true,
-    'appeal.appeal_status': 'pending'
-  }).sort({ 'appeal.appeal_date': 1 });
-};
-
-// Поиск истекших блокировок для автоматической разблокировки
+// Получение истекших блокировок для автоматической разблокировки
 blockListSchema.statics.findExpiredBlocks = function() {
   return this.find({
     is_active: true,
     'duration.auto_unblock': true,
-    'duration.block_until': { $lte: new Date() }
+    'duration.block_until': { $lt: new Date() }
   });
 };
 
-// Автоматическая разблокировка истекших блокировок
-blockListSchema.statics.autoUnblockExpired = async function() {
-  const expiredBlocks = await this.findExpiredBlocks();
-  
-  const results = [];
-  for (const block of expiredBlocks) {
-    try {
-      await block.unblock(null, 'Автоматическая разблокировка по истечении срока');
-      results.push({ success: true, blockId: block._id });
-    } catch (error) {
-      results.push({ success: false, blockId: block._id, error: error.message });
-    }
-  }
-  
-  return results;
-};
-
 // Статистика блокировок
-blockListSchema.statics.getStats = function(period = 30) {
+blockListSchema.statics.getBlockingStats = function(period = 30) {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - period);
   
@@ -533,33 +478,19 @@ blockListSchema.statics.getStats = function(period = 30) {
       $group: {
         _id: {
           user_role: '$user_role',
-          reason: '$block_info.reason',
-          severity: '$block_info.severity'
+          reason: '$block_info.reason'
         },
         count: { $sum: 1 },
-        active_blocks: {
-          $sum: { $cond: ['$is_active', 1, 0] }
-        }
+        active_count: { $sum: { $cond: ['$is_active', 1, 0] } }
       }
     },
     {
-      $group: {
-        _id: '$_id.user_role',
-        total_blocks: { $sum: '$count' },
-        active_blocks: { $sum: '$active_blocks' },
-        by_reason: {
-          $push: {
-            reason: '$_id.reason',
-            severity: '$_id.severity',
-            count: '$count'
-          }
-        }
-      }
+      $sort: { count: -1 }
     }
   ]);
 };
 
-// Поиск пользователей с множественными блокировками
+// Поиск повторных нарушителей
 blockListSchema.statics.findRepeatOffenders = function(minBlocks = 3) {
   return this.aggregate([
     {
@@ -640,4 +571,6 @@ blockListSchema.statics.isUserBlocked = async function(userId, userRole) {
   };
 };
 
-module.exports = mongoose.model('BlockList', blockListSchema);
+// 🆕 ИСПРАВЛЕНО: ES6 export
+const BlockList = mongoose.model('BlockList', blockListSchema);
+export default BlockList;

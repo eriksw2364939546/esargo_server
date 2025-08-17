@@ -1,5 +1,5 @@
-// models/CourierProfile.js
-const mongoose = require('mongoose');
+// models/CourierProfile.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const courierProfileSchema = new mongoose.Schema({
   user_id: {
@@ -354,4 +354,9 @@ courierProfileSchema.statics.findAvailableNearby = function(lat, lng, radiusKm =
   }).sort({ 'ratings.avg_rating': -1 });
 };
 
-module.exports = mongoose.model('CourierProfile', courierProfileSchema);
+// Настройка виртуальных полей в JSON
+courierProfileSchema.set('toJSON', { virtuals: true });
+courierProfileSchema.set('toObject', { virtuals: true });
+
+// 🆕 ИСПРАВЛЕНО: ES6 export вместо module.exports
+export default mongoose.model('CourierProfile', courierProfileSchema);

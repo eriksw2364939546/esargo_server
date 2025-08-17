@@ -1,7 +1,8 @@
-// models/Order.js
-const mongoose = require('mongoose');
+// models/Order.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const orderSchema = new mongoose.Schema({
+  // Уникальный номер заказа
   order_number: {
     type: String,
     required: true,
@@ -9,10 +10,10 @@ const orderSchema = new mongoose.Schema({
     index: true
   },
   
-  // ОДИН партнер на заказ!
+  // Ссылки на участников заказа
   customer_id: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'CustomerProfile',
+    ref: 'User',
     required: true,
     index: true
   },
@@ -38,71 +39,83 @@ const orderSchema = new mongoose.Schema({
     title: {
       type: String,
       required: true,
-      trim: true // Дублируется для истории
+      trim: true
     },
     price: {
       type: Number,
       required: true,
-      min: 0 // Цена на момент покупки
+      min: 0
     },
     quantity: {
       type: Number,
       required: true,
       min: 1
     },
-    
-    // Выбранные добавки (из модального окна)
+    // Выбранные опции (добавки, размер и т.д.)
     selected_options: [{
       group_name: {
         type: String,
-        required: true,
-        trim: true // "Добавки", "Соусы"
+        required: true
       },
       option_name: {
         type: String,
-        required: true,
-        trim: true // "Дополнительный сыр", "Кетчуп"
+        required: true
       },
-      price: {
+      option_price: {
         type: Number,
         required: true,
         min: 0
       }
     }],
-    
-    item_subtotal: {
+    item_total: {
       type: Number,
       required: true,
-      min: 0 // Общая стоимость позиции (цена + опции) * количество
+      min: 0
     },
-    
-    notes: {
+    special_requests: {
       type: String,
       trim: true,
-      maxlength: 200 // Комментарий к позиции
+      maxlength: 200
     }
   }],
   
-  // Расчеты стоимости
-  items_price: {
+  // Стоимость заказа
+  subtotal: {
     type: Number,
     required: true,
-    min: 0 // Сумма всех товаров
+    min: 0
   },
-  delivery_price: {
+  delivery_fee: {
     type: Number,
     required: true,
-    min: 0 // Стоимость доставки
+    min: 0,
+    default: 0
+  },
+  service_fee: {
+    type: Number,
+    required: true,
+    min: 0,
+    default: 0
+  },
+  discount_amount: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  tax_amount: {
+    type: Number,
+    min: 0,
+    default: 0
   },
   total_price: {
     type: Number,
     required: true,
-    min: 0 // Общая сумма (товары + доставка)
+    min: 0
   },
   
-  // Информация о доставке
+  // Адрес доставки
   delivery_address: {
-    text: {
+    address: {
       type: String,
       required: true,
       trim: true
@@ -116,10 +129,6 @@ const orderSchema = new mongoose.Schema({
       required: true
     },
     apartment: {
-      type: String,
-      trim: true
-    },
-    floor: {
       type: String,
       trim: true
     },
@@ -156,7 +165,7 @@ const orderSchema = new mongoose.Schema({
     }
   },
   
-  // Статусы заказа (из макетов)
+  // Статусы заказа
   status: {
     type: String,
     required: true,
@@ -516,43 +525,35 @@ orderSchema.statics.findByCourier = function(courierId, status = null) {
 };
 
 // Поиск доступных заказов для курьеров
-orderSchema.statics.findAvailableForCouriers = function(lat, lng, radiusKm = 5) {
-  const radiusInMeters = radiusKm * 1000;
+orderSchema.statics.findAvailableOrders = function(lat, lng, radiusKm = 10) {
+  const radiusInDegrees = radiusKm / 111; // Примерное преобразование км в градусы
   
   return this.find({
     status: 'ready',
-    courier_id: { $exists: false },
+    courier_id: null,
     'delivery_address.lat': {
-      $gte: lat - (radiusKm / 111), // примерное расстояние в градусах
-      $lte: lat + (radiusKm / 111)
+      $gte: lat - radiusInDegrees,
+      $lte: lat + radiusInDegrees
     },
     'delivery_address.lng': {
-      $gte: lng - (radiusKm / (111 * Math.cos(lat * Math.PI / 180))),
-      $lte: lng + (radiusKm / (111 * Math.cos(lat * Math.PI / 180)))
+      $gte: lng - radiusInDegrees,
+      $lte: lng + radiusInDegrees
     }
-  }).sort({ createdAt: 1 }); // старые заказы в приоритете
-};
-
-// Поиск просроченных заказов
-orderSchema.statics.findOverdue = function() {
-  return this.find({
-    estimated_delivery_time: { $lt: new Date() },
-    status: { $nin: ['delivered', 'cancelled'] }
-  });
+  }).sort({ createdAt: 1 }); // Сначала старые заказы
 };
 
 // Статистика заказов за период
 orderSchema.statics.getStatsForPeriod = function(startDate, endDate, partnerId = null) {
-  const filter = {
+  const matchFilter = {
     createdAt: { $gte: startDate, $lte: endDate }
   };
   
   if (partnerId) {
-    filter.partner_id = partnerId;
+    matchFilter.partner_id = partnerId;
   }
   
   return this.aggregate([
-    { $match: filter },
+    { $match: matchFilter },
     {
       $group: {
         _id: null,
@@ -571,4 +572,9 @@ orderSchema.statics.getStatsForPeriod = function(startDate, endDate, partnerId =
   ]);
 };
 
-module.exports = mongoose.model('Order', orderSchema);
+// Настройка виртуальных полей в JSON
+orderSchema.set('toJSON', { virtuals: true });
+orderSchema.set('toObject', { virtuals: true });
+
+// 🆕 ИСПРАВЛЕНО: ES6 export вместо module.exports
+export default mongoose.model('Order', orderSchema);

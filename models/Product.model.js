@@ -1,5 +1,5 @@
-// models/Product.js
-const mongoose = require('mongoose');
+// models/Product.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const productSchema = new mongoose.Schema({
   partner_id: {
@@ -472,4 +472,5 @@ productSchema.statics.resetMonthlyStats = function() {
 productSchema.set('toJSON', { virtuals: true });
 productSchema.set('toObject', { virtuals: true });
 
-module.exports = mongoose.model('Product', productSchema);
+// 🆕 ИСПРАВЛЕНО: ES6 export вместо module.exports
+export default mongoose.model('Product', productSchema);

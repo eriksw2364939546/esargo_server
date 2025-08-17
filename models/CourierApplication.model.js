@@ -1,5 +1,5 @@
-// models/CourierApplication.js
-const mongoose = require('mongoose');
+// models/CourierApplication.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const courierApplicationSchema = new mongoose.Schema({
   user_id: {
@@ -180,20 +180,18 @@ const courierApplicationSchema = new mongoose.Schema({
     vehicle_registration_url: {
       type: String,
       required: function() {
-        return this.vehicle_info.vehicle_type === 'car';
+        return this.vehicle_info.vehicle_type === 'motorbike' || 
+               this.vehicle_info.vehicle_type === 'car';
       }
     },
-    work_permit_url: {
-      type: String // Для не-граждан ЕС
-    },
-    criminal_record_url: {
-      type: String // Справка о несудимости
+    bank_rib_url: {
+      type: String,
+      required: true // RIB обязателен для выплат
     }
   },
   
-  // Проверка документов админом
+  // Проверка документов
   verification: {
-    // Проверка личности
     identity_verified: {
       type: Boolean,
       default: false
@@ -202,8 +200,6 @@ const courierApplicationSchema = new mongoose.Schema({
       type: String,
       trim: true
     },
-    
-    // Проверка водительских прав
     license_verified: {
       type: Boolean,
       default: false
@@ -212,8 +208,6 @@ const courierApplicationSchema = new mongoose.Schema({
       type: String,
       trim: true
     },
-    
-    // Проверка страховки
     insurance_verified: {
       type: Boolean,
       default: false
@@ -222,8 +216,6 @@ const courierApplicationSchema = new mongoose.Schema({
       type: String,
       trim: true
     },
-    
-    // Проверка транспорта
     vehicle_verified: {
       type: Boolean,
       default: false
@@ -232,52 +224,18 @@ const courierApplicationSchema = new mongoose.Schema({
       type: String,
       trim: true
     },
-    
-    // Общий статус проверки
     overall_verification_status: {
       type: String,
-      enum: ['pending', 'in_progress', 'completed', 'failed'],
-      default: 'pending'
+      enum: ['not_started', 'in_progress', 'completed', 'failed'],
+      default: 'not_started'
+    },
+    last_verification_update: {
+      type: Date,
+      default: Date.now
     }
   },
   
-  // Опыт работы
-  experience: {
-    has_delivery_experience: {
-      type: Boolean,
-      default: false
-    },
-    previous_companies: [{
-      company_name: {
-        type: String,
-        trim: true
-      },
-      duration_months: {
-        type: Number,
-        min: 0
-      },
-      position: {
-        type: String,
-        trim: true
-      }
-    }],
-    languages: [{
-      type: String,
-      enum: ['french', 'english', 'spanish', 'arabic', 'italian', 'other']
-    }],
-    availability: {
-      morning: { type: Boolean, default: false },   // 6:00-12:00
-      afternoon: { type: Boolean, default: false }, // 12:00-18:00
-      evening: { type: Boolean, default: false },   // 18:00-24:00
-      night: { type: Boolean, default: false }      // 00:00-6:00
-    },
-    preferred_zones: [{
-      type: String,
-      trim: true // Предпочитаемые районы работы
-    }]
-  },
-  
-  // Согласия и подтверждения
+  // Согласия (как в макете)
   consents: {
     terms_accepted: {
       type: Boolean,
@@ -602,4 +560,6 @@ courierApplicationSchema.statics.findOverdue = function(daysOld = 2) {
   }).sort({ submitted_at: 1 });
 };
 
-module.exports = mongoose.model('CourierApplication', courierApplicationSchema);
+// 🆕 ИСПРАВЛЕНО: ES6 export
+const CourierApplication = mongoose.model('CourierApplication', courierApplicationSchema);
+export default CourierApplication;

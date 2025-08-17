@@ -1,5 +1,5 @@
-// models/SystemStats.js
-const mongoose = require('mongoose');
+// models/SystemStats.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const systemStatsSchema = new mongoose.Schema({
   date: {
@@ -129,33 +129,29 @@ const systemStatsSchema = new mongoose.Schema({
     },
     net_revenue: {
       type: Number,
-      default: 0 // После вычета комиссий партнерам
+      default: 0
+    },
+    commission_earned: {
+      type: Number,
+      default: 0
     },
     delivery_fees: {
       type: Number,
       default: 0
     },
-    refunds_total: {
+    refunds_amount: {
       type: Number,
       default: 0
     },
-    partner_payouts: {
-      type: Number,
-      default: 0
-    },
-    courier_payments: {
+    taxes_amount: {
       type: Number,
       default: 0
     }
   },
   
-  // Статистика качества сервиса
+  // Статистика качества
   quality: {
-    avg_partner_rating: {
-      type: Number,
-      default: 0
-    },
-    avg_courier_rating: {
+    avg_customer_rating: {
       type: Number,
       default: 0
     },
@@ -165,102 +161,9 @@ const systemStatsSchema = new mongoose.Schema({
     },
     positive_reviews: {
       type: Number,
-      default: 0 // 4-5 звезд
+      default: 0
     },
     negative_reviews: {
-      type: Number,
-      default: 0 // 1-2 звезды
-    },
-    customer_satisfaction: {
-      type: Number,
-      default: 0 // Процент положительных отзывов
-    }
-  },
-  
-  // Активность по времени (почасовая статистика)
-  hourly_activity: [{
-    hour: {
-      type: Number,
-      min: 0,
-      max: 23
-    },
-    orders_count: {
-      type: Number,
-      default: 0
-    },
-    revenue: {
-      type: Number,
-      default: 0
-    },
-    active_couriers: {
-      type: Number,
-      default: 0
-    }
-  }],
-  
-  // География заказов (топ районы)
-  top_locations: [{
-    postal_code: {
-      type: String
-    },
-    city: {
-      type: String
-    },
-    orders_count: {
-      type: Number,
-      default: 0
-    },
-    revenue: {
-      type: Number,
-      default: 0
-    },
-    avg_delivery_time: {
-      type: Number,
-      default: 0
-    }
-  }],
-  
-  // Популярные продукты
-  top_products: [{
-    product_id: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product'
-    },
-    product_title: {
-      type: String
-    },
-    partner_name: {
-      type: String
-    },
-    category: {
-      type: String,
-      enum: ['restaurant', 'store']
-    },
-    orders_count: {
-      type: Number,
-      default: 0
-    },
-    revenue: {
-      type: Number,
-      default: 0
-    }
-  }],
-  
-  // Статистика проблем
-  issues: {
-    cancelled_orders_by_partner: {
-      type: Number,
-      default: 0
-    },
-    cancelled_orders_by_customer: {
-      type: Number,
-      default: 0
-    },
-    cancelled_orders_by_courier: {
-      type: Number,
-      default: 0
-    },
-    payment_failures: {
       type: Number,
       default: 0
     },
@@ -374,10 +277,6 @@ systemStatsSchema.statics.generateStatsForDate = async function(date) {
       delivery: await this.calculateDeliveryStats(date),
       finance: await this.calculateFinanceStats(date),
       quality: await this.calculateQualityStats(date),
-      hourly_activity: await this.calculateHourlyActivity(date),
-      top_locations: await this.calculateTopLocations(date),
-      top_products: await this.calculateTopProducts(date),
-      issues: await this.calculateIssueStats(date),
       marketing: await this.calculateMarketingStats(date),
       technical: await this.calculateTechnicalStats(date),
       calculation_info: {
@@ -392,8 +291,24 @@ systemStatsSchema.statics.generateStatsForDate = async function(date) {
     return this.create(stats);
     
   } catch (error) {
-    console.error('Error generating stats:', error);
-    throw error;
+    console.error('Error generating stats for date:', error);
+    
+    // Создаем запись с ошибкой
+    const errorStats = {
+      date: dateStr,
+      calculation_info: {
+        calculated_at: new Date(),
+        calculation_duration: Date.now() - startTime,
+        is_complete: false,
+        errors: [{
+          source: 'general',
+          error: error.message,
+          timestamp: new Date()
+        }]
+      }
+    };
+    
+    return this.create(errorStats);
   }
 };
 
@@ -424,10 +339,12 @@ systemStatsSchema.statics.calculateOrderStats = async function(date) {
         pending_orders: {
           $sum: { $cond: [{ $in: ['$status', ['pending', 'accepted', 'preparing']] }, 1, 0] }
         },
-        total_revenue: { $sum: '$total_price' },
+        total_revenue: {
+          $sum: { $cond: [{ $eq: ['$status', 'delivered'] }, '$total_price', 0] }
+        },
         avg_order_value: { $avg: '$total_price' },
         platform_commission: {
-          $sum: { $multiply: ['$total_price', 0.12] } // 12% комиссия
+          $sum: { $cond: [{ $eq: ['$status', 'delivered'] }, '$platform_fee', 0] }
         }
       }
     }
@@ -502,7 +419,6 @@ systemStatsSchema.statics.calculateUserStats = async function(date) {
 systemStatsSchema.statics.calculateCategoryStats = async function(date) {
   const Order = mongoose.model('Order');
   const PartnerProfile = mongoose.model('PartnerProfile');
-  const Review = mongoose.model('Review');
   
   const startOfDay = new Date(date);
   startOfDay.setHours(0, 0, 0, 0);
@@ -633,17 +549,16 @@ systemStatsSchema.statics.calculateFinanceStats = async function(date) {
       $group: {
         _id: null,
         gross_revenue: { $sum: '$total_price' },
-        delivery_fees: { $sum: '$delivery_price' },
-        platform_commission: {
-          $sum: { $multiply: ['$items_price', 0.12] }
-        }
+        commission_earned: { $sum: '$platform_fee' },
+        delivery_fees: { $sum: '$delivery_fee' },
+        refunds_amount: { $sum: '$refund_amount' }
       }
     }
   ]);
   
   const stats = financeStats[0] || {};
-  stats.net_revenue = (stats.gross_revenue || 0) - (stats.platform_commission || 0);
-  stats.partner_payouts = (stats.gross_revenue || 0) - (stats.delivery_fees || 0) - (stats.platform_commission || 0);
+  stats.net_revenue = (stats.gross_revenue || 0) - (stats.refunds_amount || 0);
+  stats.taxes_amount = (stats.commission_earned || 0) * 0.2; // 20% налог
   
   return stats;
 };
@@ -651,110 +566,61 @@ systemStatsSchema.statics.calculateFinanceStats = async function(date) {
 // Расчет статистики качества
 systemStatsSchema.statics.calculateQualityStats = async function(date) {
   const Review = mongoose.model('Review');
-  const PartnerProfile = mongoose.model('PartnerProfile');
-  const CourierProfile = mongoose.model('CourierProfile');
-  
   const startOfDay = new Date(date);
   startOfDay.setHours(0, 0, 0, 0);
   const endOfDay = new Date(date);
   endOfDay.setHours(23, 59, 59, 999);
   
-  const [reviewStats, partnerRating, courierRating] = await Promise.all([
-    Review.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: startOfDay, $lte: endOfDay }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          total_reviews: { $sum: 1 },
-          avg_rating: { $avg: '$rating' },
-          positive_reviews: {
-            $sum: { $cond: [{ $gte: ['$rating', 4] }, 1, 0] }
-          },
-          negative_reviews: {
-            $sum: { $cond: [{ $lte: ['$rating', 2] }, 1, 0] }
-          }
-        }
-      }
-    ]),
-    PartnerProfile.aggregate([
-      {
-        $match: { 'ratings.total_ratings': { $gt: 0 } }
-      },
-      {
-        $group: {
-          _id: null,
-          avg_partner_rating: { $avg: '$ratings.avg_rating' }
-        }
-      }
-    ]),
-    CourierProfile.aggregate([
-      {
-        $match: { 'ratings.total_ratings': { $gt: 0 } }
-      },
-      {
-        $group: {
-          _id: null,
-          avg_courier_rating: { $avg: '$ratings.avg_rating' }
-        }
-      }
-    ])
-  ]);
-  
-  const stats = reviewStats[0] || {};
-  stats.avg_partner_rating = partnerRating[0]?.avg_partner_rating || 0;
-  stats.avg_courier_rating = courierRating[0]?.avg_courier_rating || 0;
-  stats.customer_satisfaction = stats.total_reviews > 0 
-    ? (stats.positive_reviews / stats.total_reviews) * 100 
-    : 0;
-  
-  return stats;
-};
-
-// Расчет почасовой активности
-systemStatsSchema.statics.calculateHourlyActivity = async function(date) {
-  const Order = mongoose.model('Order');
-  const CourierProfile = mongoose.model('CourierProfile');
-  
-  const startOfDay = new Date(date);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(date);
-  endOfDay.setHours(23, 59, 59, 999);
-  
-  const hourlyStats = await Order.aggregate([
+  const qualityStats = await Review.aggregate([
     {
       $match: {
-        createdAt: { $gte: startOfDay, $lte: endOfDay }
+        createdAt: { $gte: startOfDay, $lte: endOfDay },
+        status: 'active'
       }
     },
     {
       $group: {
-        _id: { $hour: '$createdAt' },
-        orders_count: { $sum: 1 },
-        revenue: { $sum: '$total_price' }
+        _id: null,
+        total_reviews: { $sum: 1 },
+        avg_customer_rating: { $avg: '$rating' },
+        positive_reviews: {
+          $sum: { $cond: [{ $gte: ['$rating', 4] }, 1, 0] }
+        },
+        negative_reviews: {
+          $sum: { $cond: [{ $lte: ['$rating', 2] }, 1, 0] }
+        }
       }
-    },
-    {
-      $sort: { _id: 1 }
     }
   ]);
   
-  // Заполняем все 24 часа
-  const result = [];
-  for (let hour = 0; hour < 24; hour++) {
-    const hourData = hourlyStats.find(h => h._id === hour);
-    result.push({
-      hour,
-      orders_count: hourData?.orders_count || 0,
-      revenue: hourData?.revenue || 0,
-      active_couriers: 0 // Будет заполнено отдельно если нужно
-    });
-  }
+  const stats = qualityStats[0] || {};
+  stats.positive_percentage = stats.total_reviews > 0 ? 
+    (stats.positive_reviews / stats.total_reviews) * 100 : 0;
   
-  return result;
+  return stats;
+};
+
+// Расчет маркетинговых метрик
+systemStatsSchema.statics.calculateMarketingStats = async function(date) {
+  // Здесь можно добавить расчеты CAC, LTV, retention rate
+  return {
+    new_user_acquisition_cost: 0,
+    customer_lifetime_value: 0,
+    retention_rate: 0,
+    repeat_orders_rate: 0
+  };
+};
+
+// Расчет технических метрик
+systemStatsSchema.statics.calculateTechnicalStats = async function(date) {
+  // Здесь можно добавить мониторинг API, uptime и т.д.
+  return {
+    api_requests_total: 0,
+    api_errors_count: 0,
+    avg_response_time: 0,
+    uptime_percentage: 100,
+    peak_concurrent_users: 0
+  };
 };
 
 // Получение статистики за период
@@ -852,4 +718,6 @@ systemStatsSchema.statics.cleanOldStats = function(daysToKeep = 365) {
   return this.deleteMany({ date: { $lt: cutoffStr } });
 };
 
-module.exports = mongoose.model('SystemStats', systemStatsSchema);
+// 🆕 ИСПРАВЛЕНО: ES6 export
+const SystemStats = mongoose.model('SystemStats', systemStatsSchema);
+export default SystemStats;

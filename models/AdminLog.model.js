@@ -1,5 +1,5 @@
-// models/AdminLog.js
-const mongoose = require('mongoose');
+// models/AdminLog.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const adminLogSchema = new mongoose.Schema({
   admin_id: {
@@ -588,4 +588,6 @@ adminLogSchema.statics.cleanOldLogs = function(daysOld = 365) {
   });
 };
 
-module.exports = mongoose.model('AdminLog', adminLogSchema);
+// 🆕 ИСПРАВЛЕНО: ES6 export
+const AdminLog = mongoose.model('AdminLog', adminLogSchema);
+export default AdminLog;

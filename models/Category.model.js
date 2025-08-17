@@ -1,5 +1,5 @@
-// models/Category.js
-const mongoose = require('mongoose');
+// models/Category.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const categorySchema = new mongoose.Schema({
   name: {
@@ -151,67 +151,73 @@ const categorySchema = new mongoose.Schema({
     }
   },
   
-  // Настройки бизнес-логики
+  // Бизнес-настройки для категории
   business_settings: {
-    // Минимальная сумма заказа для категории
-    min_order_amount: {
-      type: Number,
-      default: 15,
-      min: 0
-    },
-    
-    // Комиссия платформы для категории (в процентах)
-    platform_commission: {
-      type: Number,
-      default: 12,
-      min: 0,
-      max: 50
-    },
-    
     // Настройки доставки
     delivery_settings: {
-      default_delivery_fee: {
+      min_order_amount: {
         type: Number,
-        default: 3,
-        min: 0
+        default: 15 // Минимальная сумма заказа
+      },
+      delivery_fee: {
+        type: Number,
+        default: 3.50 // Стандартная стоимость доставки
+      },
+      free_delivery_threshold: {
+        type: Number,
+        default: 35 // Бесплатная доставка от суммы
       },
       max_delivery_distance: {
         type: Number,
-        default: 15, // км
-        min: 1
+        default: 15 // Максимальное расстояние доставки в км
       },
       estimated_preparation_time: {
         type: Number,
-        default: 30, // минуты
-        min: 5
+        default: 30 // Среднее время приготовления в минутах
       }
     },
     
-    // ✅ ИСПРАВЛЕНО: Рабочие часы по умолчанию для новых партнеров
+    // Настройки заказов
+    order_settings: {
+      allow_pre_orders: {
+        type: Boolean,
+        default: true
+      },
+      max_items_per_order: {
+        type: Number,
+        default: 50
+      },
+      allow_special_instructions: {
+        type: Boolean,
+        default: true
+      }
+    },
+    
+    // Рабочие часы по умолчанию
     default_working_hours: {
       monday: { 
-        open: { type: String, default: '09:00' }, 
-        close: { type: String, default: '23:00' }, 
+        open: { type: String, default: '10:00' }, 
+        close: { type: String, default: '22:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       tuesday: { 
-        open: { type: String, default: '09:00' }, 
-        close: { type: String, default: '23:00' }, 
+        open: { type: String, default: '10:00' }, 
+        close: { type: String, default: '22:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       wednesday: { 
-        open: { type: String, default: '09:00' }, 
-        close: { type: String, default: '23:00' }, 
+        open: { type: String, default: '10:00' }, 
+        close: { type: String, default: '22:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       thursday: { 
-        open: { type: String, default: '09:00' }, 
-        close: { type: String, default: '23:00' }, 
+        open: { type: String, default: '10:00' }, 
+        close: { type: String, default: '22:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       friday: { 
-        open: { type: String, default: '09:00' }, 
-        close: { type: String, default: '23:00' }, 
+        open: { type: String, default: '10:00' }, 
+        close: { type: String, default: '22:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       saturday: { 
@@ -558,4 +564,6 @@ categorySchema.statics.updateAllStats = async function() {
 categorySchema.set('toJSON', { virtuals: true });
 categorySchema.set('toObject', { virtuals: true });
 
-module.exports = mongoose.model('Category', categorySchema);
+// 🆕 ИСПРАВЛЕНО: ES6 export
+const Category = mongoose.model('Category', categorySchema);
+export default Category;

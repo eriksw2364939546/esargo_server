@@ -1,5 +1,5 @@
-// models/Review.js
-const mongoose = require('mongoose');
+// models/Review.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const reviewSchema = new mongoose.Schema({
   customer_id: {
@@ -292,44 +292,20 @@ reviewSchema.methods.removeVote = function(userId) {
     }
     
     this.helpfulness.voted_by.splice(voteIndex, 1);
+    return this.save();
   }
   
-  return this.save();
-};
-
-// Расчет задержки между доставкой и отзывом
-reviewSchema.methods.calculateReviewDelay = function(deliveredAt) {
-  if (deliveredAt) {
-    const delayMs = this.createdAt - deliveredAt;
-    this.review_data.review_delay_hours = Math.round(delayMs / (1000 * 60 * 60 * 1000));
-  }
-  
-  return this.save();
+  return Promise.resolve(this);
 };
 
 // Статические методы
 
-// Поиск отзывов партнера
-reviewSchema.statics.findByPartner = function(partnerId, includeHidden = false) {
-  const filter = { partner_id: partnerId };
-  if (!includeHidden) {
-    filter.status = 'active';
-    filter['moderation.is_verified'] = true;
-  }
-  return this.find(filter).sort({ createdAt: -1 });
-};
-
-// Поиск отзывов клиента
-reviewSchema.statics.findByCustomer = function(customerId) {
-  return this.find({ customer_id: customerId }).sort({ createdAt: -1 });
-};
-
-// Расчет среднего рейтинга партнера
-reviewSchema.statics.calculatePartnerRating = async function(partnerId) {
-  const result = await this.aggregate([
+// Получение статистики рейтингов для партнера
+reviewSchema.statics.getPartnerRatingStats = async function(partnerId) {
+  const stats = await this.aggregate([
     {
-      $match: { 
-        partner_id: new mongoose.Types.ObjectId(partnerId),
+      $match: {
+        partner_id: mongoose.Types.ObjectId(partnerId),
         status: 'active',
         'moderation.is_verified': true
       }
@@ -339,25 +315,23 @@ reviewSchema.statics.calculatePartnerRating = async function(partnerId) {
         _id: null,
         avg_rating: { $avg: '$rating' },
         total_reviews: { $sum: 1 },
-        rating_distribution: {
-          $push: '$rating'
-        }
+        ratings: { $push: '$rating' }
       }
     }
   ]);
   
-  if (result.length > 0) {
-    const stats = result[0];
+  if (stats.length > 0) {
+    const { avg_rating, total_reviews, ratings } = stats[0];
     
-    // Подсчитываем распределение рейтингов
+    // Создаем распределение по рейтингам
     const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    stats.rating_distribution.forEach(rating => {
+    ratings.forEach(rating => {
       distribution[rating]++;
     });
     
     return {
-      avg_rating: Math.round(stats.avg_rating * 10) / 10, // округляем до 1 знака
-      total_reviews: stats.total_reviews,
+      avg_rating: Math.round(avg_rating * 10) / 10, // округляем до 1 знака
+      total_reviews: total_reviews,
       rating_distribution: distribution
     };
   }
@@ -430,4 +404,6 @@ reviewSchema.statics.findLowRatingReviews = function(partnerId, threshold = 2) {
   }).sort({ createdAt: -1 });
 };
 
-module.exports = mongoose.model('Review', reviewSchema);
+// 🆕 ИСПРАВЛЕНО: ES6 export
+const Review = mongoose.model('Review', reviewSchema);
+export default Review;

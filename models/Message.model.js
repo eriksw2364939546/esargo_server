@@ -1,15 +1,16 @@
-// models/Message.js
-const mongoose = require('mongoose');
+// models/Message.model.js (исправленный - ES6 modules)
+import mongoose from 'mongoose';
 
 const messageSchema = new mongoose.Schema({
+  // Привязка к заказу (основная группировка сообщений)
   order_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Order',
     required: true,
-    index: true // Привязка к заказу
+    index: true
   },
   
-  // Отправитель сообщения
+  // Отправитель
   sender_id: {
     type: mongoose.Schema.Types.ObjectId,
     required: true,
@@ -22,7 +23,7 @@ const messageSchema = new mongoose.Schema({
     index: true
   },
   
-  // Получатель сообщения
+  // Получатель
   receiver_id: {
     type: mongoose.Schema.Types.ObjectId,
     required: true,
@@ -31,7 +32,7 @@ const messageSchema = new mongoose.Schema({
   receiver_role: {
     type: String,
     required: true,
-    enum: ['customer', 'courier', 'partner', 'admin', 'support'],
+    enum: ['customer', 'courier', 'partner', 'admin'],
     index: true
   },
   
@@ -46,77 +47,44 @@ const messageSchema = new mongoose.Schema({
   // Тип сообщения
   message_type: {
     type: String,
-    required: true,
-    enum: [
-      'text',           // Обычное текстовое сообщение
-      'system',         // Системное сообщение (автоматическое)
-      'image',          // Изображение
-      'location',       // Геолокация
-      'order_update',   // Обновление статуса заказа
-      'notification'    // Уведомление
-    ],
+    enum: ['text', 'image', 'location', 'system', 'order_update'],
     default: 'text',
     index: true
   },
   
-  // Дополнительные данные в зависимости от типа сообщения
+  // Дополнительные данные сообщения
   message_data: {
     // Для изображений
     image_url: {
       type: String
     },
-    image_thumbnail_url: {
+    image_thumbnail: {
       type: String
     },
     
     // Для геолокации
     location: {
-      lat: {
+      latitude: {
         type: Number
       },
-      lng: {
+      longitude: {
         type: Number
       },
       address: {
-        type: String,
-        trim: true
+        type: String
       }
     },
     
-    // Для системных сообщений об обновлении заказа
+    // Для системных сообщений и обновлений заказа
     order_update: {
       old_status: {
-        type: String,
-        enum: [
-          'pending', 'accepted', 'preparing', 'ready', 
-          'picked_up', 'on_the_way', 'delivered', 'cancelled'
-        ]
-      },
-      new_status: {
-        type: String,
-        enum: [
-          'pending', 'accepted', 'preparing', 'ready', 
-          'picked_up', 'on_the_way', 'delivered', 'cancelled'
-        ]
-      },
-      estimated_time: {
-        type: String // "15 минут", "Скоро"
-      }
-    },
-    
-    // Для уведомлений
-    notification_data: {
-      title: {
-        type: String,
-        trim: true
-      },
-      action_url: {
         type: String
       },
-      priority: {
-        type: String,
-        enum: ['low', 'normal', 'high', 'urgent'],
-        default: 'normal'
+      new_status: {
+        type: String
+      },
+      estimated_time: {
+        type: Number // в минутах
       }
     }
   },
@@ -131,18 +99,18 @@ const messageSchema = new mongoose.Schema({
     type: Date
   },
   
-  // Статус доставки (для мобильных приложений)
+  // Статус доставки
   delivery_status: {
     type: String,
-    enum: ['pending', 'sent', 'delivered', 'failed'],
-    default: 'pending',
+    enum: ['sent', 'delivered', 'failed'],
+    default: 'sent',
     index: true
   },
   delivered_at: {
     type: Date
   },
   
-  // Редактирование сообщения
+  // Редактирование и удаление
   is_edited: {
     type: Boolean,
     default: false
@@ -151,10 +119,9 @@ const messageSchema = new mongoose.Schema({
     type: Date
   },
   original_content: {
-    type: String // Сохраняем оригинал при редактировании
+    type: String
   },
   
-  // Удаление сообщения
   is_deleted: {
     type: Boolean,
     default: false,
@@ -163,15 +130,8 @@ const messageSchema = new mongoose.Schema({
   deleted_at: {
     type: Date
   },
-  deleted_by: {
-    type: mongoose.Schema.Types.ObjectId
-  },
-  delete_reason: {
-    type: String,
-    enum: ['user_request', 'admin_moderation', 'spam', 'inappropriate'],
-  },
   
-  // Модерация сообщения
+  // Модерация
   moderation: {
     is_flagged: {
       type: Boolean,
@@ -179,12 +139,11 @@ const messageSchema = new mongoose.Schema({
       index: true
     },
     flagged_by: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
+      type: mongoose.Schema.Types.ObjectId
     },
     flagged_reason: {
       type: String,
-      enum: ['spam', 'inappropriate', 'offensive', 'harassment']
+      enum: ['spam', 'inappropriate', 'harassment', 'fraud', 'other']
     },
     flagged_at: {
       type: Date
@@ -202,7 +161,7 @@ const messageSchema = new mongoose.Schema({
     },
     review_action: {
       type: String,
-      enum: ['approved', 'hidden', 'deleted', 'warning_sent']
+      enum: ['approved', 'hidden', 'warning_sent']
     }
   },
   
@@ -308,27 +267,14 @@ messageSchema.methods.editContent = function(newContent) {
 };
 
 // Удаление сообщения
-messageSchema.methods.deleteMessage = function(deletedBy, reason = 'user_request') {
+messageSchema.methods.deleteMessage = function() {
   this.is_deleted = true;
   this.deleted_at = new Date();
-  this.deleted_by = deletedBy;
-  this.delete_reason = reason;
-  
   return this.save();
 };
 
-// Восстановление сообщения
-messageSchema.methods.restoreMessage = function() {
-  this.is_deleted = false;
-  this.deleted_at = undefined;
-  this.deleted_by = undefined;
-  this.delete_reason = undefined;
-  
-  return this.save();
-};
-
-// Пометка как спам
-messageSchema.methods.flagAsSpam = function(flaggedBy, reason = 'spam') {
+// Флаг сообщения для модерации
+messageSchema.methods.flag = function(flaggedBy, reason) {
   this.moderation.is_flagged = true;
   this.moderation.flagged_by = flaggedBy;
   this.moderation.flagged_reason = reason;
@@ -337,36 +283,21 @@ messageSchema.methods.flagAsSpam = function(flaggedBy, reason = 'spam') {
   return this.save();
 };
 
-// Модерация сообщения
-messageSchema.methods.moderateMessage = function(reviewedBy, action) {
-  this.moderation.is_reviewed = true;
-  this.moderation.reviewed_by = reviewedBy;
-  this.moderation.reviewed_at = new Date();
-  this.moderation.review_action = action;
-  
-  if (action === 'deleted' || action === 'hidden') {
-    this.is_deleted = true;
-    this.deleted_at = new Date();
-    this.delete_reason = 'admin_moderation';
-  }
-  
-  return this.save();
-};
-
-// Добавление реакции
+// Добавление/изменение реакции
 messageSchema.methods.addReaction = function(userId, userRole, emoji) {
   // Проверяем есть ли уже реакция от этого пользователя
-  const existingReactionIndex = this.reactions.findIndex(r => 
-    r.user_id.equals(userId) && r.emoji === emoji
-  );
+  const existingReaction = this.reactions.find(r => r.user_id.equals(userId));
   
-  if (existingReactionIndex !== -1) {
-    // Удаляем существующую реакцию (toggle)
-    this.reactions.splice(existingReactionIndex, 1);
+  if (existingReaction) {
+    // Если та же эмодзи - удаляем реакцию
+    if (existingReaction.emoji === emoji) {
+      this.reactions = this.reactions.filter(r => !r.user_id.equals(userId));
+    } else {
+      // Меняем эмодзи
+      existingReaction.emoji = emoji;
+      existingReaction.reacted_at = new Date();
+    }
   } else {
-    // Удаляем другие реакции этого пользователя
-    this.reactions = this.reactions.filter(r => !r.user_id.equals(userId));
-    
     // Добавляем новую реакцию
     this.reactions.push({
       user_id: userId,
@@ -382,6 +313,7 @@ messageSchema.methods.addReaction = function(userId, userRole, emoji) {
 // Удаление реакции
 messageSchema.methods.removeReaction = function(userId, emoji = null) {
   if (emoji) {
+    // Удаляем конкретную эмодзи
     this.reactions = this.reactions.filter(r => 
       !(r.user_id.equals(userId) && r.emoji === emoji)
     );
@@ -526,83 +458,6 @@ messageSchema.statics.getStatsForPeriod = function(startDate, endDate) {
   ]);
 };
 
-// Поиск активных чатов
-messageSchema.statics.findActiveChats = function(userId, userRole, limit = 20) {
-  return this.aggregate([
-    {
-      $match: {
-        $or: [
-          { sender_id: userId, sender_role: userRole },
-          { receiver_id: userId, receiver_role: userRole }
-        ],
-        is_deleted: false
-      }
-    },
-    {
-      $sort: { createdAt: -1 }
-    },
-    {
-      $group: {
-        _id: '$order_id',
-        last_message: { $first: '$ROOT' },
-        unread_count: {
-          $sum: {
-            $cond: [
-              {
-                $and: [
-                  { $eq: ['$receiver_id', userId] },
-                  { $eq: ['$receiver_role', userRole] },
-                  { $eq: ['$is_read', false] }
-                ]
-              },
-              1,
-              0
-            ]
-          }
-        },
-        total_messages: { $sum: 1 }
-      }
-    },
-    {
-      $sort: { 'last_message.createdAt': -1 }
-    },
-    {
-      $limit: limit
-    },
-    {
-      $lookup: {
-        from: 'orders',
-        localField: '_id',
-        foreignField: '_id',
-        as: 'order'
-      }
-    },
-    {
-      $unwind: '$order'
-    }
-  ]);
-};
-
-// Очистка старых сообщений (для cron задач)
-messageSchema.statics.cleanOldMessages = function(daysOld = 90) {
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-  
-  return this.deleteMany({
-    createdAt: { $lt: cutoffDate },
-    is_deleted: true
-  });
-};
-
-// Очистка старых системных сообщений
-messageSchema.statics.cleanOldSystemMessages = function(daysOld = 30) {
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-  
-  return this.deleteMany({
-    createdAt: { $lt: cutoffDate },
-    message_type: 'system'
-  });
-};
-
-module.exports = mongoose.model('Message', messageSchema);
+// 🆕 ИСПРАВЛЕНО: ES6 export
+const Message = mongoose.model('Message', messageSchema);
+export default Message;

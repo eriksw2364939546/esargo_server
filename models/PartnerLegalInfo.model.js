@@ -1,9 +1,10 @@
+// models/PartnerLegalInfo.model.js (исправленный - ES6 modules)
 // ============================================
 // НОВАЯ МОДЕЛЬ: PartnerLegalInfo.model.js
 // Юридические данные (заполняются ПОСЛЕ одобрения)
 // ============================================
 
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const partnerLegalInfoSchema = new mongoose.Schema({
   partner_request_id: {
@@ -120,6 +121,14 @@ const partnerLegalInfoSchema = new mongoose.Schema({
     ref: 'AdminUser'
   },
   
+  rejected_at: Date,
+  rejected_by: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'AdminUser'
+  },
+  
+  rejection_reason: String,
+  
   // Примечания для исправлений
   correction_notes: String
 }, {
@@ -130,5 +139,30 @@ const partnerLegalInfoSchema = new mongoose.Schema({
 partnerLegalInfoSchema.index({ partner_request_id: 1 });
 partnerLegalInfoSchema.index({ user_id: 1 });
 partnerLegalInfoSchema.index({ 'legal_data.siret_number': 1 });
+partnerLegalInfoSchema.index({ verification_status: 1 });
 
-module.exports = mongoose.model('PartnerLegalInfo', partnerLegalInfoSchema);
+// Методы экземпляра
+partnerLegalInfoSchema.methods.verify = function(adminId) {
+  this.verification_status = 'verified';
+  this.verified_by = adminId;
+  this.verified_at = new Date();
+  return this.save();
+};
+
+partnerLegalInfoSchema.methods.reject = function(adminId, reason) {
+  this.verification_status = 'rejected';
+  this.rejected_by = adminId;
+  this.rejected_at = new Date();
+  this.rejection_reason = reason;
+  return this.save();
+};
+
+partnerLegalInfoSchema.methods.requestCorrection = function(adminId, notes) {
+  this.verification_status = 'needs_correction';
+  this.correction_notes = notes;
+  return this.save();
+};
+
+// 🆕 ИСПРАВЛЕНО: ES6 export
+const PartnerLegalInfo = mongoose.model('PartnerLegalInfo', partnerLegalInfoSchema);
+export default PartnerLegalInfo;
