@@ -1,8 +1,8 @@
-// services/partner.service.js
+// services/partner.service.js (исправленный)
 import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { cryptoString } from '../utils/crypto.js';
-import { hashString, hashMeta } from '../utils/hash.js';
+import { hashString, hashMeta, comparePassword } from '../utils/hash.js';
 import { generateCustomerToken } from './token.service.js';
 import mongoose from 'mongoose';
 
@@ -31,16 +31,13 @@ export const createPartnerAccount = async (partnerData) => {
       legal_info
     } = partnerData;
 
-    // Проверяем, есть ли уже партнер для этого пользователя
-    const existingMeta = await Meta.findOne({
-      partner: user_id,
-      role: 'partner'
-    });
+    // 🆕 ИСПРАВЛЕНО: Проверяем существование партнера через новый метод
+    const existingMeta = await Meta.findByUserId(user_id, 'partner');
 
-    if (existingMeta) {
+    if (existingMeta && existingMeta.length > 0) {
       return {
         isNewPartner: false,
-        partner: existingMeta
+        partner: existingMeta[0]
       };
     }
 
@@ -72,27 +69,24 @@ export const createPartnerAccount = async (partnerData) => {
         thursday: { is_open: true, open_time: '09:00', close_time: '21:00' },
         friday: { is_open: true, open_time: '09:00', close_time: '21:00' },
         saturday: { is_open: true, open_time: '10:00', close_time: '22:00' },
-        sunday: { is_open: false, open_time: '', close_time: '' }
+        sunday: { is_open: false, open_time: null, close_time: null }
       },
-      legal_info: legal_info || {},
-      is_approved: true, // Уже одобрен админом на этом этапе
-      is_active: true,
-      approved_at: new Date()
+      legal_info,
+      is_approved: true, // Партнер создается уже одобренным (после всех проверок)
+      is_active: true
     });
 
     await newPartnerProfile.save();
 
-    // Создаем Meta запись
-    const newMetaInfo = new Meta({
-      partner: user._id,
-      role: 'partner',
-      em: hashMeta(email) // Хешируем email для безопасного поиска
-    });
+    // 🆕 ИСПРАВЛЕНО: Обновляем роль пользователя
+    user.role = 'partner';
+    await user.save();
 
-    await newMetaInfo.save();
+    // 🆕 ИСПРАВЛЕНО: Создаем Meta запись через новый метод
+    const newMetaInfo = await Meta.createForPartner(user._id, hashMeta(user.email));
 
-    return {
-      isNewPartner: true,
+    return { 
+      isNewPartner: true, 
       partner: newPartnerProfile
     };
 
@@ -103,10 +97,129 @@ export const createPartnerAccount = async (partnerData) => {
 };
 
 /**
- * Финальное одобрение партнера админом (создание PartnerProfile + Meta)
- * @param {string} legalInfoId - ID записи PartnerLegalInfo
+ * 🆕 ИСПРАВЛЕНО: Авторизация партнера (аналогично клиенту, но для роли partner)
+ * @param {object} loginData - Данные для входа
+ * @returns {object} - Результат авторизации
+ */
+export const loginPartner = async ({ email, password }) => {
+  try {
+    // Валидация входных данных
+    if (!email || !password) {
+      const error = new Error('Email и пароль обязательны');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // Нормализация email
+    email = email.toLowerCase().trim();
+
+    // 🆕 ИСПРАВЛЕНО: Поиск Meta записи для партнера через новый метод
+    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(email), 'partner');
+
+    if (!metaInfo || !metaInfo.partner) {
+      const error = new Error('Партнер не найден');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    // 🆕 ИСПРАВЛЕНО: Получаем пользователя правильно
+    const user = metaInfo.partner; // Это уже пользователь из populate
+
+    // Проверяем, заблокирован ли аккаунт
+    if (metaInfo.isAccountLocked()) {
+      const error = new Error('Аккаунт временно заблокирован');
+      error.statusCode = 423;
+      throw error;
+    }
+
+    // Проверяем активность пользователя
+    if (!user.is_active) {
+      const error = new Error('Аккаунт деактивирован');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    // 🆕 ИСПРАВЛЕНО: Получаем профиль партнера
+    const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
+    
+    if (!partnerProfile) {
+      const error = new Error('Профиль партнера не найден');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    // Проверяем одобрение партнера
+    if (!partnerProfile.is_approved) {
+      const error = new Error('Партнерство не одобрено');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    // Проверяем пароль
+    const isPasswordValid = await comparePassword(password, user.password_hash);
+    if (!isPasswordValid) {
+      await metaInfo.incrementFailedAttempts();
+      const error = new Error('Неверный пароль');
+      error.statusCode = 401;
+      throw error;
+    }
+
+    // Сбрасываем счетчик неудачных попыток
+    await metaInfo.resetFailedAttempts();
+
+    // 🆕 ИСПРАВЛЕНО: Генерируем токен с правильными данными
+    const token = generateCustomerToken({
+      user_id: user._id,
+      _id: user._id,
+      email: user.email,
+      role: 'partner',
+      is_admin: false
+    }, '30d');
+
+    return { 
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        is_email_verified: user.is_email_verified,
+        profile: partnerProfile
+      }
+    };
+
+  } catch (error) {
+    console.error('Login partner error:', error);
+    throw error;
+  }
+};
+
+/**
+ * 🆕 ДОБАВЛЕНО: Получение партнера по ID (для middleware)
+ * @param {string} userId - ID пользователя
+ * @returns {object} - Партнер с профилем
+ */
+export const getPartnerById = async (userId) => {
+  try {
+    const user = await User.findById(userId).select('-password_hash');
+    if (!user || user.role !== 'partner') return null;
+
+    const profile = await PartnerProfile.findOne({ user_id: userId });
+
+    return {
+      ...user.toObject(),
+      profile
+    };
+  } catch (error) {
+    console.error('Get partner by ID error:', error);
+    return null;
+  }
+};
+
+/**
+ * Финальное одобрение партнера (создание PartnerProfile после одобрения юридических данных)
+ * @param {string} legalInfoId - ID юридической информации
  * @param {string} adminId - ID администратора
- * @returns {object} - Результат одобрения
+ * @returns {object} - Результат создания партнера
  */
 export const finalApprovePartner = async (legalInfoId, adminId) => {
   try {
@@ -114,18 +227,18 @@ export const finalApprovePartner = async (legalInfoId, adminId) => {
     
     try {
       const result = await session.withTransaction(async () => {
-        // Получаем юридическую информацию
+        // Получаем юридическую информацию с первичной заявкой
         const legalInfo = await PartnerLegalInfo.findById(legalInfoId)
-          .populate('partner_request_id')
           .populate('user_id')
+          .populate('partner_request_id')
           .session(session);
 
         if (!legalInfo) {
           throw new Error('Юридическая информация не найдена');
         }
 
-        if (legalInfo.verification_status === 'verified') {
-          throw new Error('Партнер уже одобрен');
+        if (legalInfo.verification_status !== 'pending') {
+          throw new Error('Юридические данные уже обработаны');
         }
 
         // Получаем первичную заявку
@@ -177,182 +290,6 @@ export const finalApprovePartner = async (legalInfoId, adminId) => {
 
   } catch (error) {
     console.error('Final approve partner error:', error);
-    throw error;
-  }
-};
-
-/**
- * Авторизация партнера (аналогично клиенту, но для роли partner)
- * @param {object} loginData - Данные для входа
- * @returns {object} - Результат авторизации
- */
-export const loginPartner = async ({ email, password }) => {
-  try {
-    // Валидация входных данных
-    if (!email || !password) {
-      const error = new Error('Email и пароль обязательны');
-      error.statusCode = 400;
-      throw error;
-    }
-
-    // Нормализация email
-    email = email.toLowerCase().trim();
-
-    // Поиск Meta записи для партнера
-    const metaInfo = await Meta.findOne({
-      em: hashMeta(email),
-      role: 'partner'
-    }).populate('partner');
-
-    if (!metaInfo || !metaInfo.partner) {
-      const error = new Error('Партнер не найден');
-      error.statusCode = 404;
-      throw error;
-    }
-
-    // Получаем пользователя
-    const user = await User.findById(metaInfo.partner.user_id);
-    if (!user) {
-      const error = new Error('Пользователь не найден');
-      error.statusCode = 404;
-      throw error;
-    }
-
-    // Проверяем, заблокирован ли аккаунт
-    if (metaInfo.isAccountLocked()) {
-      const error = new Error('Аккаунт временно заблокирован');
-      error.statusCode = 423;
-      throw error;
-    }
-
-    // Проверяем активность
-    if (!user.is_active || !metaInfo.partner.is_active) {
-      const error = new Error('Аккаунт деактивирован');
-      error.statusCode = 403;
-      throw error;
-    }
-
-    // Проверяем одобрение
-    if (!metaInfo.partner.is_approved) {
-      const error = new Error('Партнерство не одобрено');
-      error.statusCode = 403;
-      throw error;
-    }
-
-    // Проверяем пароль
-    const isPasswordValid = await user.comparePassword(password);
-    if (!isPasswordValid) {
-      await metaInfo.incrementFailedAttempts();
-      const error = new Error('Неверный пароль');
-      error.statusCode = 401;
-      throw error;
-    }
-
-    // Сбрасываем счетчик неудачных попыток
-    await metaInfo.resetFailedAttempts();
-
-    // Генерируем токен
-    const token = generateCustomerToken({
-      _id: user._id,
-      email: user.email,
-      role: 'partner'
-    }, '30d');
-
-    return {
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        role: 'partner',
-        partner_profile: metaInfo.partner
-      }
-    };
-
-  } catch (error) {
-    console.error('Login partner error:', error);
-    throw error;
-  }
-};
-
-/**
- * Получение профиля партнера по user_id
- * @param {string} userId - ID пользователя
- * @returns {object} - Профиль партнера
- */
-export const getPartnerProfile = async (userId) => {
-  try {
-    const metaInfo = await Meta.findOne({
-      partner: userId,
-      role: 'partner'
-    }).populate('partner');
-
-    if (!metaInfo || !metaInfo.partner) {
-      throw new Error('Профиль партнера не найден');
-    }
-
-    return metaInfo.partner;
-
-  } catch (error) {
-    console.error('Get partner profile error:', error);
-    throw error;
-  }
-};
-
-/**
- * Проверка статуса заявки партнера
- * @param {string} userId - ID пользователя  
- * @returns {object} - Статус заявки
- */
-export const getPartnerRequestStatus = async (userId) => {
-  try {
-    // Ищем первичную заявку
-    const initialRequest = await InitialPartnerRequest.findOne({
-      user_id: userId
-    }).sort({ submitted_at: -1 });
-
-    if (!initialRequest) {
-      return {
-        hasRequest: false,
-        status: null,
-        message: 'Заявка не найдена'
-      };
-    }
-
-    // Ищем юридическую информацию
-    let legalInfo = null;
-    if (initialRequest.status === 'approved') {
-      legalInfo = await PartnerLegalInfo.findOne({
-        partner_request_id: initialRequest._id
-      });
-    }
-
-    // Ищем профиль партнера
-    const partnerProfile = await PartnerProfile.findOne({
-      user_id: userId
-    });
-
-    return {
-      hasRequest: true,
-      initialRequest: {
-        id: initialRequest._id,
-        status: initialRequest.status,
-        submitted_at: initialRequest.submitted_at,
-        business_data: initialRequest.business_data
-      },
-      legalInfo: legalInfo ? {
-        id: legalInfo._id,
-        verification_status: legalInfo.verification_status,
-        submitted_at: legalInfo.submitted_at
-      } : null,
-      partnerProfile: partnerProfile ? {
-        id: partnerProfile._id,
-        is_approved: partnerProfile.is_approved,
-        is_active: partnerProfile.is_active
-      } : null
-    };
-
-  } catch (error) {
-    console.error('Get partner request status error:', error);
     throw error;
   }
 };

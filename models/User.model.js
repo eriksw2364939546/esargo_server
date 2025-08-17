@@ -1,4 +1,4 @@
-// models/User.model.js (упрощенный и исправленный)
+// models/User.model.js (исправленный)
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
@@ -105,32 +105,24 @@ userSchema.index({ email: 1, role: 1 });
 userSchema.index({ is_active: 1, role: 1 });
 userSchema.index({ last_activity_at: -1 });
 
-// Хэширование пароля перед сохранением
-userSchema.pre('save', async function(next) {
-  if (!this.isModified('password_hash')) {
-    return next();
-  }
-  
-  try {
-    // Добавляем соль из переменной окружения
-    const saltedPassword = this.password_hash + (process.env.HASH_KEY || 'default-salt');
-    const salt = await bcrypt.genSalt(12);
-    this.password_hash = await bcrypt.hash(saltedPassword, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
+// 🆕 ИСПРАВЛЕНО: Убираем pre hook - хеширование делается в сервисах
+// userSchema.pre('save', async function(next) {
+//   if (!this.isModified('password_hash')) {
+//     return next();
+//   }
+//   // ... код хеширования перенесен в сервисы
+// });
 
 // Методы экземпляра
 
-// Проверка пароля
+// 🆕 ИСПРАВЛЕНО: Простой метод сравнения - логика в utils/hash.js
 userSchema.methods.comparePassword = async function(candidatePassword) {
   try {
-    const saltedPassword = candidatePassword + (process.env.HASH_KEY || 'default-salt');
-    return await bcrypt.compare(saltedPassword, this.password_hash);
+    // Импортируем функцию из utils/hash.js для консистентности
+    const { comparePassword } = await import('../utils/hash.js');
+    return await comparePassword(candidatePassword, this.password_hash);
   } catch (error) {
-    console.error('Password comparison error:', error);
+    console.error('Password comparison error in User model:', error);
     return false;
   }
 };
