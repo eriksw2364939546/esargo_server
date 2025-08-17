@@ -3,6 +3,7 @@
 // Базовые модели
 export { default as User } from './User.model.js';
 export { default as Meta } from './Meta.model.js';
+export { default as AdminUser } from './AdminUser.model.js'; // 🆕 ИСПРАВЛЕНО
 
 // Профили пользователей
 export { default as CustomerProfile } from './CustomerProfile.model.js';
@@ -30,6 +31,7 @@ export { default as AdminLog } from './AdminLog.model.js';
 export default {
   User,
   Meta,
+  AdminUser, // 🆕 ДОБАВЛЕНО
   CustomerProfile,
   PartnerProfile,
   CourierProfile,

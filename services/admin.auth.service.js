@@ -1,4 +1,4 @@
-// services/admin.auth.service.js
+// services/admin.auth.service.js (исправленный)
 import { AdminUser } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { hashString, hashMeta, comparePassword } from '../utils/hash.js';
@@ -28,14 +28,8 @@ export const createAdminAccount = async (adminData) => {
     // Нормализация email
     email = email.toLowerCase().trim();
 
-    // Проверяем, существует ли уже админ
-    const metaInfo = await Meta.findOne({ 
-      em: hashMeta(email), 
-      role: 'admin' 
-    }).populate({
-      path: 'admin',
-      select: '-password_hash'
-    });
+    // 🆕 ИСПРАВЛЕНО: Используем новый метод поиска
+    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(email), 'admin');
 
     if (metaInfo) {
       return { 
@@ -53,8 +47,10 @@ export const createAdminAccount = async (adminData) => {
       email,
       password_hash: hashedPassword,
       role,
-      department: department || 'general',
-      contact_info: contact_info || {},
+      contact_info: {
+        department: department || 'general',
+        ...contact_info
+      },
       is_active: true,
       created_by: null, // Первый админ создается без ссылки
       permissions: getDefaultPermissions(role)
@@ -62,14 +58,10 @@ export const createAdminAccount = async (adminData) => {
 
     await newAdmin.save();
 
-    // Создаем Meta запись для безопасного поиска
-    const newMetaInfo = new Meta({
-      admin: newAdmin._id,
-      role: 'admin',
-      em: hashMeta(email)
-    });
+    // 🆕 ИСПРАВЛЕНО: Создаем Meta запись через статический метод
+    const newMetaInfo = await Meta.createForAdmin(newAdmin._id, hashMeta(email));
 
-    await newMetaInfo.save();
+    await newMetaInfo.save(); // Убираем так как createForAdmin уже сохраняет
 
     return { 
       isNewAdmin: true, 
@@ -99,11 +91,8 @@ export const loginAdmin = async ({ email, password }) => {
     // Нормализация email
     email = email.toLowerCase().trim();
 
-    // Поиск Meta записи
-    const metaInfo = await Meta.findOne({
-      em: hashMeta(email),
-      role: 'admin'
-    }).populate('admin');
+    // 🆕 ИСПРАВЛЕНО: Используем новый метод поиска с populate
+    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(email), 'admin');
 
     if (!metaInfo || !metaInfo.admin) {
       const error = new Error('Администратор не найден');
@@ -112,7 +101,7 @@ export const loginAdmin = async ({ email, password }) => {
     }
 
     // Проверяем, заблокирован ли аккаунт
-    if (metaInfo.isAccountLocked()) {
+    if (metaInfo.admin.isAccountLocked()) {
       const error = new Error('Аккаунт временно заблокирован из-за множественных неудачных попыток входа');
       error.statusCode = 423;
       throw error;
@@ -126,7 +115,7 @@ export const loginAdmin = async ({ email, password }) => {
     }
 
     // Проверяем приостановку
-    if (metaInfo.admin.suspension.is_suspended) {
+    if (metaInfo.admin.isSuspended()) {
       const error = new Error('Аккаунт администратора приостановлен');
       error.statusCode = 403;
       throw error;
@@ -137,7 +126,7 @@ export const loginAdmin = async ({ email, password }) => {
     
     if (!isPasswordValid) {
       // Увеличиваем счетчик неудачных попыток
-      await metaInfo.incrementFailedAttempts();
+      await metaInfo.admin.incrementLoginAttempts();
       
       const error = new Error('Неверный пароль');
       error.statusCode = 401;
@@ -145,17 +134,19 @@ export const loginAdmin = async ({ email, password }) => {
     }
 
     // Сбрасываем счетчик неудачных попыток при успешном входе
-    await metaInfo.resetFailedAttempts();
+    await metaInfo.admin.resetLoginAttempts();
 
     // Обновляем активность админа
     await metaInfo.admin.recordActivity();
 
-    // Генерируем токен
+    // 🆕 ИСПРАВЛЕНО: Генерируем токен с правильными данными
     const token = generateCustomerToken({
+      user_id: metaInfo.admin._id, // ИСПРАВЛЕНО: используем user_id
       _id: metaInfo.admin._id,
       email: metaInfo.admin.email,
-      role: 'admin',
-      admin_role: metaInfo.admin.role
+      role: 'admin', // 🆕 ИСПРАВЛЕНО: всегда 'admin' для проверки в middleware
+      admin_role: metaInfo.admin.role, // 🆕 ДОБАВЛЕНО: конкретная админская роль
+      is_admin: true // 🆕 ДОБАВЛЕНО: флаг для быстрой проверки
     }, '8h'); // Короткий срок для админов
 
     return { 
@@ -165,8 +156,9 @@ export const loginAdmin = async ({ email, password }) => {
         email: metaInfo.admin.email,
         full_name: metaInfo.admin.full_name,
         role: metaInfo.admin.role,
-        department: metaInfo.admin.department,
-        permissions: metaInfo.admin.permissions
+        department: metaInfo.admin.contact_info?.department,
+        permissions: metaInfo.admin.permissions,
+        is_admin: true // 🆕 ДОБАВЛЕНО
       }
     };
 
@@ -185,6 +177,11 @@ export const getAdminById = async (adminId) => {
   try {
     const admin = await AdminUser.findById(adminId).select('-password_hash');
     if (!admin) return null;
+
+    // 🆕 ДОБАВЛЕНО: Добавляем метод isAdmin для совместимости
+    admin.isAdmin = function() {
+      return ['admin', 'manager', 'owner', 'support', 'moderator'].includes(this.role);
+    };
 
     return admin;
   } catch (error) {
@@ -239,7 +236,7 @@ const getDefaultPermissions = (role) => {
 
   switch (role) {
     case 'owner':
-      // Владелец имеет все права (хотя они проверяются отдельно)
+      // Владелец имеет все права
       Object.keys(basePermissions).forEach(section => {
         Object.keys(basePermissions[section]).forEach(action => {
           basePermissions[section][action] = true;
@@ -255,6 +252,16 @@ const getDefaultPermissions = (role) => {
       basePermissions.couriers = { read: true, write: true, approve: true };
       basePermissions.orders = { read: true, write: true, cancel: true };
       basePermissions.finance = { read: true, write: false };
+      basePermissions.analytics = { read: true, write: false };
+      break;
+
+    case 'admin': // 🆕 ДОБАВЛЕНО: обычный админ
+      // Админ имеет базовые права
+      basePermissions.dashboard = { read: true, write: false };
+      basePermissions.users = { read: true, write: true, delete: false };
+      basePermissions.partners = { read: true, write: true, approve: true };
+      basePermissions.couriers = { read: true, write: false, approve: false };
+      basePermissions.orders = { read: true, write: true, cancel: true };
       basePermissions.analytics = { read: true, write: false };
       break;
 

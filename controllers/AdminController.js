@@ -1,4 +1,4 @@
-// controllers/AdminController.js
+// controllers/AdminController.js (исправленный)
 import { 
   createAdminAccount, 
   loginAdmin, 
@@ -59,14 +59,15 @@ export const createAdmin = async (req, res) => {
     } = req.body;
     const creator = req.user; // Из middleware
 
-    // Проверка прав создания админов
-    if (!creator || creator.role !== 'admin') {
+    // 🆕 ИСПРАВЛЕНО: Проверка что создатель - админ
+    if (!creator || !creator.is_admin_user) {
       return res.status(403).json({
         result: false,
         message: "Доступ запрещен"
       });
     }
 
+    // 🆕 ИСПРАВЛЕНО: Правильная проверка админской роли
     if (creator.admin_role !== 'owner' && creator.admin_role !== 'manager') {
       return res.status(403).json({
         result: false,
@@ -82,9 +83,11 @@ export const createAdmin = async (req, res) => {
       });
     }
 
-    // Проверка допустимых ролей
-    const allowedRoles = ['support', 'moderator'];
-    if (creator.admin_role === 'manager') {
+    // 🆕 ИСПРАВЛЕНО: Проверка допустимых ролей
+    const allowedRoles = ['support', 'moderator', 'admin'];
+    
+    // Owner может создавать manager'ов
+    if (creator.admin_role === 'owner') {
       allowedRoles.push('manager');
     }
     
@@ -92,6 +95,14 @@ export const createAdmin = async (req, res) => {
       return res.status(400).json({
         result: false,
         message: `Недопустимая роль. Доступные роли: ${allowedRoles.join(', ')}`
+      });
+    }
+
+    // 🆕 ДОБАВЛЕНО: Нельзя создавать owner'а
+    if (role === 'owner') {
+      return res.status(400).json({
+        result: false,
+        message: "Роль 'owner' не может быть назначена"
       });
     }
 
@@ -120,7 +131,7 @@ export const createAdmin = async (req, res) => {
         full_name: newAdminData.admin.full_name,
         email: newAdminData.admin.email,
         role: newAdminData.admin.role,
-        department: newAdminData.admin.department
+        department: newAdminData.admin.contact_info?.department
       }
     });
 
@@ -141,7 +152,8 @@ export const verify = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
 
-    if (!user || user.role !== 'admin') {
+    // 🆕 ИСПРАВЛЕНО: Проверка что это админ
+    if (!user || !user.is_admin_user) {
       return res.status(404).json({
         result: false,
         message: "Администратор не определен!"
@@ -150,15 +162,15 @@ export const verify = async (req, res) => {
 
     res.status(200).json({
       result: true,
-      message: "Администратор верифицирован",
+      message: "Токен администратора действителен",
       admin: {
         id: user._id,
-        full_name: user.full_name,
         email: user.email,
-        role: user.admin_role,
-        department: user.department,
+        full_name: user.full_name,
+        role: user.admin_role, // 🆕 ИСПРАВЛЕНО: используем admin_role
+        department: user.contact_info?.department,
         permissions: user.permissions,
-        is_active: user.is_active
+        last_activity: user.last_activity_at
       }
     });
 
@@ -166,8 +178,7 @@ export const verify = async (req, res) => {
     console.error('Admin verify error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка при верификации администратора",
-      error: error.message
+      message: "Ошибка при верификации администратора"
     });
   }
 };
@@ -179,20 +190,11 @@ export const getProfile = async (req, res) => {
   try {
     const { user } = req; // Из middleware
 
-    if (!user || user.role !== 'admin') {
+    // 🆕 ИСПРАВЛЕНО: Проверка что это админ
+    if (!user || !user.is_admin_user) {
       return res.status(403).json({
         result: false,
-        message: "Доступ разрешен только для администраторов"
-      });
-    }
-
-    // Получаем полную информацию через сервис
-    const adminProfile = await getAdminById(user._id);
-
-    if (!adminProfile) {
-      return res.status(404).json({
-        result: false,
-        message: "Профиль администратора не найден"
+        message: "Доступ запрещен"
       });
     }
 
@@ -200,15 +202,17 @@ export const getProfile = async (req, res) => {
       result: true,
       message: "Профиль администратора получен",
       admin: {
-        id: adminProfile._id,
-        full_name: adminProfile.full_name,
-        email: adminProfile.email,
-        role: adminProfile.role,
-        department: adminProfile.department,
-        contact_info: adminProfile.contact_info,
-        permissions: adminProfile.permissions,
-        activity_stats: adminProfile.activity_stats,
-        created_at: adminProfile.createdAt
+        id: user._id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.admin_role, // 🆕 ИСПРАВЛЕНО
+        department: user.contact_info?.department,
+        permissions: user.permissions,
+        is_active: user.is_active,
+        last_login_at: user.last_login_at,
+        last_activity_at: user.last_activity_at,
+        activity_stats: user.activity_stats,
+        created_at: user.createdAt
       }
     });
 
@@ -230,8 +234,8 @@ export const updatePermissions = async (req, res) => {
     const { permissions } = req.body;
     const updater = req.user; // Из middleware
 
-    // Проверка прав
-    if (!updater || updater.role !== 'admin') {
+    // 🆕 ИСПРАВЛЕНО: Проверка прав
+    if (!updater || !updater.is_admin_user) {
       return res.status(403).json({
         result: false,
         message: "Доступ запрещен"
@@ -262,6 +266,22 @@ export const updatePermissions = async (req, res) => {
       });
     }
 
+    // 🆕 ДОБАВЛЕНО: Нельзя изменять свои собственные разрешения
+    if (targetAdmin._id.toString() === updater._id.toString()) {
+      return res.status(403).json({
+        result: false,
+        message: "Нельзя изменить свои собственные разрешения"
+      });
+    }
+
+    // 🆕 ДОБАВЛЕНО: Manager не может изменять разрешения другого manager'а
+    if (updater.admin_role === 'manager' && targetAdmin.role === 'manager') {
+      return res.status(403).json({
+        result: false,
+        message: "Manager не может изменять разрешения другого manager'а"
+      });
+    }
+
     // Обновляем разрешения через метод модели
     await targetAdmin.updatePermissions(permissions);
 
@@ -271,6 +291,7 @@ export const updatePermissions = async (req, res) => {
       admin: {
         id: targetAdmin._id,
         full_name: targetAdmin.full_name,
+        role: targetAdmin.role,
         permissions: targetAdmin.permissions
       }
     });
@@ -293,8 +314,8 @@ export const getAdminsList = async (req, res) => {
     const { page = 1, limit = 10, role, department } = req.query;
     const requester = req.user; // Из middleware
 
-    // Проверка прав
-    if (!requester || requester.role !== 'admin') {
+    // 🆕 ИСПРАВЛЕНО: Проверка прав
+    if (!requester || !requester.is_admin_user) {
       return res.status(403).json({
         result: false,
         message: "Доступ запрещен"
@@ -311,7 +332,7 @@ export const getAdminsList = async (req, res) => {
     // Строим фильтр
     const filter = { is_active: true };
     if (role) filter.role = role;
-    if (department) filter.department = department;
+    if (department) filter['contact_info.department'] = department; // 🆕 ИСПРАВЛЕНО
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
@@ -329,7 +350,16 @@ export const getAdminsList = async (req, res) => {
     res.status(200).json({
       result: true,
       message: "Список администраторов получен",
-      admins,
+      admins: admins.map(admin => ({
+        id: admin._id,
+        email: admin.email,
+        full_name: admin.full_name,
+        role: admin.role,
+        department: admin.contact_info?.department,
+        is_active: admin.is_active,
+        last_login_at: admin.last_login_at,
+        created_at: admin.createdAt
+      })),
       pagination: {
         total: totalCount,
         page: parseInt(page),

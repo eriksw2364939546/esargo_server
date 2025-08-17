@@ -1,9 +1,10 @@
 // middleware/auth.middleware.js (исправленный)
 import { verifyJWTToken, extractTokenFromHeader } from '../services/token.service.js';
 import { getUserById } from '../services/auth.service.js';
+import { getAdminById } from '../services/admin.auth.service.js'; // 🆕 ДОБАВЛЕНО
 
 /**
- * Middleware для аутентификации пользователей
+ * Middleware для аутентификации пользователей (включая админов)
  */
 export const authenticateUser = async (req, res, next) => {
   try {
@@ -21,8 +22,25 @@ export const authenticateUser = async (req, res, next) => {
     // Верифицируем токен
     const decoded = verifyJWTToken(token);
     
-    // Получаем полную информацию о пользователе
-    const user = await getUserById(decoded.user_id);
+    let user = null;
+    
+    // 🆕 ИСПРАВЛЕНО: Проверяем, это админ или обычный пользователь
+    if (decoded.is_admin || decoded.role === 'admin') {
+      // Получаем данные админа
+      user = await getAdminById(decoded.user_id || decoded._id);
+      if (user) {
+        // Добавляем поля для совместимости с обычными пользователями
+        user.role = 'admin'; // Для проверок в requireRole
+        user.admin_role = decoded.admin_role || user.role; // Конкретная админская роль
+        user.is_admin_user = true; // Флаг что это админ
+      }
+    } else {
+      // Получаем обычного пользователя
+      user = await getUserById(decoded.user_id || decoded._id);
+      if (user) {
+        user.is_admin_user = false;
+      }
+    }
     
     if (!user) {
       return res.status(401).json({
@@ -38,9 +56,18 @@ export const authenticateUser = async (req, res, next) => {
       });
     }
     
+    // 🆕 ДОБАВЛЕНО: Дополнительная проверка для админов
+    if (user.is_admin_user && user.isSuspended && user.isSuspended()) {
+      return res.status(403).json({
+        result: false,
+        message: "Аккаунт администратора приостановлен"
+      });
+    }
+    
     // Добавляем пользователя в req для использования в контроллерах
     req.user = user;
     req.token = token;
+    req.decoded = decoded; // 🆕 ДОБАВЛЕНО: для отладки
     
     next();
     
@@ -82,11 +109,26 @@ export const requireRole = (allowedRoles) => {
       
       const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
       
-      if (!roles.includes(user.role)) {
-        return res.status(403).json({
-          result: false,
-          message: "Недостаточно прав доступа"
-        });
+      // 🆕 ИСПРАВЛЕНО: Проверка ролей для админов
+      if (user.is_admin_user) {
+        // Для админов проверяем как обычную роль 'admin', так и конкретную админскую роль
+        const hasAdminRole = roles.includes('admin');
+        const hasSpecificRole = roles.includes(user.admin_role);
+        
+        if (!hasAdminRole && !hasSpecificRole) {
+          return res.status(403).json({
+            result: false,
+            message: "Недостаточно прав доступа"
+          });
+        }
+      } else {
+        // Для обычных пользователей стандартная проверка
+        if (!roles.includes(user.role)) {
+          return res.status(403).json({
+            result: false,
+            message: "Недостаточно прав доступа"
+          });
+        }
       }
       
       next();
@@ -102,7 +144,7 @@ export const requireRole = (allowedRoles) => {
 };
 
 /**
- * Упрощенная проверка админских разрешений (временно)
+ * 🆕 ИСПРАВЛЕНО: Улучшенная проверка админских разрешений
  * @param {string} section - Раздел (например, 'partners')
  * @param {string} action - Действие (например, 'read', 'write')
  */
@@ -111,8 +153,16 @@ export const requireAdminPermission = (section, action) => {
     try {
       const { user } = req;
       
-      // Базовая проверка на админа
-      if (!user || !user.isAdmin()) {
+      // Базовая проверка на аутентификацию
+      if (!user) {
+        return res.status(401).json({
+          result: false,
+          message: "Пользователь не аутентифицирован"
+        });
+      }
+      
+      // 🆕 ИСПРАВЛЕНО: Проверяем что это именно админ
+      if (!user.is_admin_user || user.role !== 'admin') {
         return res.status(403).json({
           result: false,
           message: "Доступ разрешен только для администраторов"
@@ -120,22 +170,47 @@ export const requireAdminPermission = (section, action) => {
       }
       
       // Владелец имеет все права
-      if (user.role === 'owner') {
+      if (user.admin_role === 'owner') {
         return next();
       }
       
       // Менеджер имеет большинство прав
-      if (user.role === 'manager') {
-        const restrictedActions = ['delete', 'system'];
-        if (!restrictedActions.includes(action)) {
+      if (user.admin_role === 'manager') {
+        const restrictedActions = ['delete', 'maintain'];
+        const restrictedSections = ['system'];
+        
+        if (!restrictedSections.includes(section) && !restrictedActions.includes(action)) {
           return next();
         }
       }
       
-      // Обычный админ имеет ограниченные права
-      if (user.role === 'admin') {
-        const allowedSections = ['partners', 'customers', 'orders'];
+      // 🆕 ДОБАВЛЕНО: Проверка через систему разрешений
+      if (user.hasPermission && user.hasPermission(section, action)) {
+        return next();
+      }
+      
+      // Упрощенная проверка для базовых ролей
+      if (user.admin_role === 'admin') {
+        const allowedSections = ['partners', 'customers', 'orders', 'users'];
+        const allowedActions = ['read', 'write', 'approve'];
+        
+        if (allowedSections.includes(section) && allowedActions.includes(action)) {
+          return next();
+        }
+      }
+      
+      if (user.admin_role === 'support') {
+        const allowedSections = ['customers', 'orders'];
         const allowedActions = ['read', 'write'];
+        
+        if (allowedSections.includes(section) && allowedActions.includes(action)) {
+          return next();
+        }
+      }
+      
+      if (user.admin_role === 'moderator') {
+        const allowedSections = ['partners', 'couriers'];
+        const allowedActions = ['read', 'write', 'approve'];
         
         if (allowedSections.includes(section) && allowedActions.includes(action)) {
           return next();
@@ -171,15 +246,15 @@ export const requireEmailVerification = (req, res, next) => {
       });
     }
     
-    // Админы не требуют верификации email
-    if (user.isAdmin()) {
+    // 🆕 ИСПРАВЛЕНО: Админы не требуют верификации email
+    if (user.is_admin_user || (user.isAdmin && user.isAdmin())) {
       return next();
     }
     
     if (!user.is_email_verified) {
       return res.status(403).json({
         result: false,
-        message: "Необходимо подтвердить email адрес"
+        message: "Необходимо подтвердить email для доступа к этой функции"
       });
     }
     
@@ -195,32 +270,48 @@ export const requireEmailVerification = (req, res, next) => {
 };
 
 /**
- * Опциональная аутентификация (не требует обязательного токена)
+ * 🆕 ДОБАВЛЕНО: Опциональная аутентификация (для публичных роутов с дополнительными возможностями)
  */
 export const optionalAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
     const token = extractTokenFromHeader(authHeader);
     
-    if (token) {
-      try {
-        const decoded = verifyJWTToken(token);
-        const user = await getUserById(decoded.user_id);
-        
-        if (user && user.is_active) {
-          req.user = user;
-          req.token = token;
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+    
+    try {
+      const decoded = verifyJWTToken(token);
+      
+      let user = null;
+      if (decoded.is_admin || decoded.role === 'admin') {
+        user = await getAdminById(decoded.user_id || decoded._id);
+        if (user) {
+          user.role = 'admin';
+          user.admin_role = decoded.admin_role || user.role;
+          user.is_admin_user = true;
         }
-      } catch (error) {
-        // Игнорируем ошибки токена для опциональной аутентификации
-        console.log('Optional auth token error:', error.message);
+      } else {
+        user = await getUserById(decoded.user_id || decoded._id);
+        if (user) {
+          user.is_admin_user = false;
+        }
       }
+      
+      req.user = user;
+      req.token = token;
+    } catch (authError) {
+      // Игнорируем ошибки аутентификации для опционального middleware
+      req.user = null;
     }
     
     next();
     
   } catch (error) {
     console.error('Optional auth error:', error);
-    next(); // Продолжаем выполнение даже при ошибке
+    req.user = null;
+    next();
   }
 };
