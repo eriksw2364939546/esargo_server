@@ -1,17 +1,20 @@
-// controllers/PartnerController.js - ИСПРАВЛЕННЫЙ (основные функции партнеров)
+// controllers/PartnerController.js - БЕЗОПАСНЫЙ С КОНТРОЛЕМ ДОСТУПА 🔐
 import { 
   registerPartnerWithInitialRequest,
   getPartnerDashboardStatus,
-  checkPartnerAccess
-} from '../services/partner.register.service.js'; // ✅ используем существующий файл
+  checkPartnerAccess,
+  getDecryptedPartnerData,
+  encryptLegalData
+} from '../services/partner.register.service.js';
 import { InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
+import { cryptoString } from '../utils/crypto.js'; // 🔐 ДОБАВИЛИ
 import mongoose from 'mongoose';
 
 // ================ ПУБЛИЧНЫЕ МЕТОДЫ ================
 
 /**
- * ✅ ИСПРАВЛЕНО: Регистрация партнера (данные с изображения 1)
- * Создает User + InitialPartnerRequest, партнер может войти в кабинет
+ * ✅ БЕЗОПАСНАЯ РЕГИСТРАЦИЯ ПАРТНЕРА (данные с изображения 1)
+ * 🔐 Автоматическое шифрование персональных данных
  */
 export const registerPartner = async (req, res) => {
   try {
@@ -73,7 +76,7 @@ export const registerPartner = async (req, res) => {
       });
     }
 
-    // Регистрируем
+    // 🔐 РЕГИСТРИРУЕМ с автоматическим шифрованием
     const result = await registerPartnerWithInitialRequest({
       first_name,
       last_name,
@@ -95,7 +98,7 @@ export const registerPartner = async (req, res) => {
       result: true,
       message: "Регистрация успешна! Вы можете войти в личный кабинет.",
       user: result.user,
-      request: result.request,
+      request: result.request, // ✅ Только безопасные данные
       token: result.token,
       next_steps: [
         "Дождитесь одобрения первичной заявки администратором",
@@ -165,7 +168,8 @@ export const loginPartnerUser = async (req, res) => {
 };
 
 /**
- * 🆕 НОВОЕ: Получение статуса личного кабинета
+ * 🆕 БЕЗОПАСНЫЙ СТАТУС ЛИЧНОГО КАБИНЕТА
+ * ✅ Показывает только безопасные данные
  */
 export const getDashboardStatus = async (req, res) => {
   try {
@@ -183,7 +187,7 @@ export const getDashboardStatus = async (req, res) => {
     res.status(200).json({
       result: true,
       message: "Статус личного кабинета получен",
-      dashboard: status
+      dashboard: status // ✅ Только открытые данные
     });
 
   } catch (error) {
@@ -191,6 +195,51 @@ export const getDashboardStatus = async (req, res) => {
     res.status(500).json({
       result: false,
       message: "Ошибка получения статуса кабинета"
+    });
+  }
+};
+
+/**
+ * 🔓 БЕЗОПАСНОЕ ПОЛУЧЕНИЕ ПЕРСОНАЛЬНЫХ ДАННЫХ
+ * Только для владельца аккаунта или админа
+ */
+export const getPartnerPersonalData = async (req, res) => {
+  try {
+    const { user } = req;
+
+    if (!user || user.role !== 'partner') {
+      return res.status(403).json({
+        result: false,
+        message: "Доступ только для партнеров"
+      });
+    }
+
+    // 🔓 РАСШИФРОВЫВАЕМ данные (только для владельца)
+    const decryptedData = await getDecryptedPartnerData(
+      user._id, 
+      user._id, 
+      user.role
+    );
+
+    res.status(200).json({
+      result: true,
+      message: "Персональные данные получены",
+      data: decryptedData
+    });
+
+  } catch (error) {
+    console.error('Get partner personal data error:', error);
+    
+    if (error.message.includes('Нет прав')) {
+      return res.status(403).json({
+        result: false,
+        message: error.message
+      });
+    }
+    
+    res.status(500).json({
+      result: false,
+      message: "Ошибка получения персональных данных"
     });
   }
 };
@@ -259,8 +308,8 @@ export const checkFeatureAccess = async (req, res) => {
 };
 
 /**
- * ✅ Предоставление юридических данных (данные с изображения 2)
- * ТОЛЬКО ПОСЛЕ ОДОБРЕНИЯ первичной заявки администратором
+ * 🔐 БЕЗОПАСНАЯ ПОДАЧА ЮРИДИЧЕСКИХ ДАННЫХ (данные с изображения 2)
+ * Автоматическое шифрование всех чувствительных данных
  */
 export const submitPartnerLegalInfo = async (req, res) => {
   try {
@@ -328,10 +377,8 @@ export const submitPartnerLegalInfo = async (req, res) => {
       });
     }
 
-    // Создаем юридическую информацию
-    const legalInfo = new PartnerLegalInfo({
-      user_id: request.user_id,
-      partner_request_id: request_id,
+    // 🔐 ШИФРУЕМ ВСЕ ЮРИДИЧЕСКИЕ ДАННЫЕ
+    const encryptedLegalData = encryptLegalData({
       legal_name,
       siret_number,
       legal_form,
@@ -340,7 +387,17 @@ export const submitPartnerLegalInfo = async (req, res) => {
       contact_phone,
       bank_details,
       tax_number,
-      additional_info,
+      additional_info
+    });
+
+    // Создаем юридическую информацию
+    const legalInfo = new PartnerLegalInfo({
+      user_id: request.user_id,
+      partner_request_id: request_id,
+      
+      // 🔐 СОХРАНЯЕМ ЗАШИФРОВАННЫЕ ДАННЫЕ
+      legal_data: encryptedLegalData,
+      
       verification_status: 'pending',
       submitted_at: new Date()
     });
@@ -353,28 +410,26 @@ export const submitPartnerLegalInfo = async (req, res) => {
 
     res.status(201).json({
       result: true,
-      message: "Юридические данные успешно поданы. Ожидайте проверки документов.",
+      message: "Юридические данные успешно поданы и зашифрованы. Ожидайте проверки документов.",
       legal_info_id: legalInfo._id,
       request_status: request.status,
-      next_step: "Администратор проверит документы и одобрит создание полного профиля партнера"
+      next_step: "Администратор проверит документы и одобрит создание полного профиля партнера",
+      security_note: "Все данные зашифрованы и защищены" // 🔐 УВЕДОМЛЯЕМ О БЕЗОПАСНОСТИ
     });
 
   } catch (error) {
     console.error('Error in submitPartnerLegalInfo:', error);
     
     if (error.code === 11000) {
-      const duplicateField = Object.keys(error.keyPattern)[0];
-      let message = "Данная информация уже используется";
-      if (duplicateField.includes('siret_number')) {
-        message = "SIRET номер уже зарегистрирован в системе";
-      }
-      return res.status(400).json({ result: false, message });
+      return res.status(400).json({ 
+        result: false, 
+        message: "Данная информация уже используется в системе"
+      });
     }
     
     res.status(500).json({
       result: false,
-      message: "Ошибка при предоставлении юридических данных",
-      error: error.message
+      message: "Ошибка при предоставлении юридических данных"
     });
   }
 };
@@ -392,7 +447,8 @@ export const createInitialPartnerRequest = async (req, res) => {
 };
 
 /**
- * Получение профиля партнера (работает только после полного одобрения)
+ * 🔓 БЕЗОПАСНОЕ ПОЛУЧЕНИЕ ПРОФИЛЯ ПАРТНЕРА (работает только после полного одобрения)
+ * Расшифровывает данные только для владельца/админа
  */
 export const getPartnerProfileData = async (req, res) => {
   try {
@@ -435,7 +491,7 @@ export const getPartnerProfileData = async (req, res) => {
         role: partnerData.role,
         is_email_verified: partnerData.is_email_verified
       },
-      partner: partnerData.profile
+      partner: partnerData.profile // 🔓 Уже расшифрован в partner.service.js
     });
 
   } catch (error) {
@@ -451,18 +507,19 @@ export const getPartnerProfileData = async (req, res) => {
 export default {
   // ✅ ОСНОВНЫЕ ФУНКЦИИ ПАРТНЕРОВ (пошагово)
   
-  // 1️⃣ РЕГИСТРАЦИЯ
-  registerPartner, // Создает User + InitialPartnerRequest 
+  // 1️⃣ РЕГИСТРАЦИЯ И АВТОРИЗАЦИЯ
+  registerPartner, // 🔐 Создает User + зашифрованный InitialPartnerRequest 
   loginPartnerUser, // Авторизация партнера
   
-  // 2️⃣ ЛИЧНЫЙ КАБИНЕТ
-  getDashboardStatus, // Статус личного кабинета
-  getRequestStatus, // Статус заявки (старый метод)
+  // 2️⃣ ЛИЧНЫЙ КАБИНЕТ (БЕЗОПАСНЫЙ)
+  getDashboardStatus, // ✅ Статус кабинета (только открытые данные)
+  getPartnerPersonalData, // 🔓 Персональные данные (только для владельца)
+  getRequestStatus, // Старый метод (для совместимости)
   checkFeatureAccess, // Проверка доступа к функциям
   
   // 3️⃣ ЭТАПЫ РЕГИСТРАЦИИ
-  submitPartnerLegalInfo, // Юридические данные (после одобрения)
-  getPartnerProfileData, // Профиль (после полного одобрения)
+  submitPartnerLegalInfo, // 🔐 Юридические данные (автошифрование)
+  getPartnerProfileData, // 🔓 Профиль (после полного одобрения)
   
   // 4️⃣ УСТАРЕВШИЕ
   createInitialPartnerRequest // DEPRECATED
