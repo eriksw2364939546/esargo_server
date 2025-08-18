@@ -1,5 +1,5 @@
-// services/partner.register.service.js - ИСПРАВЛЕННАЯ ЛОГИКА 🎯
-import { User, InitialPartnerRequest } from '../models/index.js';
+// services/partner.register.service.js - ПОЛНЫЙ ИСПРАВЛЕННЫЙ ФАЙЛ 🎯
+import { User, InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { hashString, hashMeta } from '../utils/hash.js';
 import { cryptoString, decryptString } from '../utils/crypto.js';
@@ -50,6 +50,19 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
         throw error;
       }
 
+      // ✅ Преобразуем location в GeoJSON формат
+      let geoLocation;
+      if (location && location.lat && location.lng) {
+        geoLocation = {
+          type: 'Point',
+          coordinates: [location.lng, location.lat] // [longitude, latitude] - порядок важен!
+        };
+      } else {
+        const error = new Error('Координаты локации обязательны (lat, lng)');
+        error.statusCode = 400;
+        throw error;
+      }
+
       // 1️⃣ Создаем User с ролью 'partner'
       const newUser = new User({
         email: normalizedEmail, // ✅ ОТКРЫТО (нужно для авторизации)
@@ -75,84 +88,72 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
 
       // 3️⃣ Создаем ТОЛЬКО InitialPartnerRequest (заявка партнера)
       // ❌ НЕ СОЗДАЕМ PartnerProfile (создается только в ЭТАПЕ 3!)
-      const newPartnerRequest = new InitialPartnerRequest({
+      const newInitialRequest = new InitialPartnerRequest({
         user_id: newUser._id,
-        
-        // 🔐 ПЕРСОНАЛЬНЫЕ ДАННЫЕ - шифруем чувствительное
         personal_data: {
-          first_name, // ✅ Имена можно открыто
-          last_name,  // ✅ Имена можно открыто
-          phone: cryptoString(phone), // 🔐 ШИФРУЕМ ТЕЛЕФОН
-          email: normalizedEmail // ✅ Копия из User (открыто)
+          first_name,
+          last_name,
+          phone: cryptoString(phone), // 🔐 Шифруем телефон
+          email: normalizedEmail // ✅ Email открыто (копия из User)
         },
-        
-        // 🔐 БИЗНЕС ДАННЫЕ - микс открытого и зашифрованного
         business_data: {
-          business_name, // ✅ ОТКРЫТО (нужно для каталога)
-          brand_name: brand_name || business_name, // ✅ ОТКРЫТО
-          category, // ✅ ОТКРЫТО (нужно для фильтров)
-          description: `${category === 'restaurant' ? 'Ресторан' : 'Магазин'} ${business_name}`, // ✅ ОТКРЫТО
+          // ✅ ОТКРЫТЫЕ ДАННЫЕ (для каталога)
+          business_name,
+          brand_name: brand_name || business_name,
+          category,
+          description: `${category === 'restaurant' ? 'Ресторан' : 'Магазин'} ${business_name}`,
           
-          // 🔐 ШИФРУЕМ АДРЕСА И КОНТАКТЫ
-          address: cryptoString(address), // 🔐 АДРЕС ЗАШИФРОВАН
-          location, // ✅ Координаты можно открыто (неточные)
-          floor_unit: floor_unit ? cryptoString(floor_unit) : null, // 🔐 ЭТАЖ ЗАШИФРОВАН
+          // 🔐 ЗАШИФРОВАННЫЕ ДАННЫЕ (адреса и контакты)
+          address: cryptoString(address),
+          phone: cryptoString(phone),
+          email: cryptoString(normalizedEmail),
+          floor_unit: floor_unit ? cryptoString(floor_unit) : null,
           
-          // 🔐 КОНТАКТНЫЕ ДАННЫЕ ЗАШИФРОВАНЫ
-          phone: cryptoString(phone), // 🔐 ТЕЛЕФОН ЗАШИФРОВАН
-          email: cryptoString(normalizedEmail), // 🔐 EMAIL ЗАШИФРОВАН (копия для безопасности)
+          // ✅ ГЕОЛОКАЦИЯ (правильный GeoJSON формат)
+          location: geoLocation,
           
-          // Владелец (для админов)
-          owner_name: first_name, // ✅ ОТКРЫТО (имена не критичны)
-          owner_surname: last_name // ✅ ОТКРЫТО
+          // ✅ ВЛАДЕЛЕЦ (имена не критичны)
+          owner_name: first_name,
+          owner_surname: last_name
         },
-        
-        // Метаданные регистрации
         registration_info: {
           registration_ip,
           user_agent,
           whatsapp_consent,
           consent_date: new Date()
-        },
-        
-        status: 'pending', // 🎯 ЭТАП 1: Ждет одобрения админом
-        submitted_at: new Date()
+        }
       });
 
-      await newPartnerRequest.save({ session });
+      await newInitialRequest.save({ session });
 
-      // 4️⃣ Генерируем JWT токен 
+      // 4️⃣ Генерируем токен для входа в личный кабинет
       const token = generateCustomerToken({
         user_id: newUser._id,
+        _id: newUser._id,
         email: newUser.email,
-        role: newUser.role
-      });
+        role: 'partner',
+        is_admin: false
+      }, '30d');
 
-      // 🔐 ВАЖНО: В ответе возвращаем ТОЛЬКО безопасные данные
       return {
         success: true,
         user: {
           id: newUser._id,
-          email: newUser.email, // ✅ Email открыт (нужен для интерфейса)
+          email: newUser.email,
           role: newUser.role,
-          is_active: newUser.is_active,
           is_email_verified: newUser.is_email_verified
         },
         request: {
-          id: newPartnerRequest._id,
-          business_name: newPartnerRequest.business_data.business_name, // ✅ Открыто
-          category: newPartnerRequest.business_data.category, // ✅ Открыто
-          status: newPartnerRequest.status,
-          submitted_at: newPartnerRequest.submitted_at
-          // 🚫 НЕ ВОЗВРАЩАЕМ зашифрованные данные в ответе
+          _id: newInitialRequest._id,
+          status: newInitialRequest.status,
+          business_name: newInitialRequest.business_data.business_name,
+          category: newInitialRequest.business_data.category
         },
-        // ❌ НЕ ВОЗВРАЩАЕМ profile - его еще НЕТ!
         token,
         next_steps: [
-          "Дождитесь одобрения заявки администратором",
-          "После одобрения заполните юридические данные", 
-          "После одобрения документов получите доступ к управлению контентом",
-          "После модерации контента ваш бизнес появится на публичном сайте"
+          'Дождитесь одобрения заявки администратором',
+          'После одобрения вы сможете подать юридические данные',
+          'Войдите в личный кабинет для отслеживания статуса'
         ]
       };
     });
@@ -160,77 +161,74 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
   } catch (error) {
     console.error('Register partner with initial request error:', error);
     throw error;
+  } finally {
+    await session.endSession();
   }
 };
 
-// ================ ЛИЧНЫЙ КАБИНЕТ ================
+// ================ 📊 DASHBOARD И СТАТУСЫ ================
 
 /**
- * ✅ ИСПРАВЛЕННОЕ получение статуса личного кабинета партнера
- * 🎯 Полная поддержка нового workflow: pending → approved → under_review → legal_approved → content_review → completed
+ * ✅ Получение полного статуса дашборда партнера
  */
 export const getPartnerDashboardStatus = async (userId) => {
   try {
-    // Получаем первичную заявку партнера
+    // Получаем заявку партнера
     const request = await InitialPartnerRequest.findOne({ user_id: userId });
-    
     if (!request) {
-      return {
-        hasRequest: false,
-        dashboard_state: 'no_request',
-        message: 'Заявка на партнерство не найдена',
-        can_access_features: false,
-        show_legal_form: false,
-        show_content_management: false,
-        admin_action_needed: false
-      };
+      throw new Error('Заявка партнера не найдена');
     }
 
-    // 🔍 Проверяем есть ли PartnerProfile (создается только после одобрения юр.данных)
-    const { PartnerProfile } = await import('../models/index.js');
+    // Получаем юридическую информацию если есть
+    let legalInfo = null;
+    if (request.status !== 'pending') {
+      legalInfo = await PartnerLegalInfo.findOne({
+        partner_request_id: request._id
+      });
+    }
+
+    // Получаем профиль если создан
+    const PartnerProfile = (await import('../models/index.js')).PartnerProfile;
     const profile = await PartnerProfile.findOne({ user_id: userId });
 
-    // 🔍 Проверяем есть ли юридические данные
-    const { PartnerLegalInfo } = await import('../models/index.js');
-    const legalInfo = await PartnerLegalInfo.findOne({ user_id: userId });
-
-    // 🎯 ИСПРАВЛЕННАЯ КОНФИГУРАЦИЯ СТАТУСОВ (6 ЭТАПОВ)
+    // 🎯 КОНФИГУРАЦИЯ СТАТУСОВ ПО ЭТАПАМ
     const statusConfig = {
-      // ==================== ЭТАП 1: Ждем одобрения заявки ====================
+      // ==================== ЭТАП 1: ОЖИДАНИЕ ОДОБРЕНИЯ ====================
       'pending': {
-        dashboard_state: 'awaiting_initial_approval',
-        message: 'Ваша заявка на рассмотрении у администратора',
+        dashboard_state: 'waiting_admin_approval',
+        message: 'Ваша заявка отправлена администратору на рассмотрение',
         can_access_features: false,
         show_legal_form: false,
         show_content_management: false,
         admin_action_needed: true,
         has_profile: false,
-        has_legal_info: !!legalInfo,
+        has_legal_info: false,
         current_step: 1,
         total_steps: 6,
-        step_description: 'Администратор проверяет первичную заявку'
+        step_description: 'Администратор проверяет вашу первичную заявку',
+        call_to_action: 'Дождаться одобрения администратора'
       },
       
-      // ==================== ЭТАП 2: Заявка одобрена, нужны юр.данные ====================
+      // ==================== ЭТАП 2: МОЖНО ПОДАВАТЬ ЮР.ДАННЫЕ ====================
       'approved': {
-        dashboard_state: 'need_legal_info',
-        message: 'Заявка одобрена! Заполните юридические данные',
+        dashboard_state: 'can_submit_legal',
+        message: '🎉 Заявка одобрена! Теперь подайте юридические данные',
         can_access_features: false,
-        show_legal_form: true, // 🎯 ПОКАЗАТЬ ФОРМУ ЮРИДИЧЕСКИХ ДАННЫХ
+        show_legal_form: true, // ПОКАЗЫВАЕМ ФОРМУ ЮР.ДАННЫХ
         show_content_management: false,
         admin_action_needed: false,
         has_profile: false,
         has_legal_info: !!legalInfo,
         current_step: 2,
         total_steps: 6,
-        step_description: 'Заполните юридические данные для создания профиля',
-        call_to_action: !legalInfo ? 'Заполнить юридические данные' : 'Данные отправлены, ждите проверки'
+        step_description: 'Подача юридических данных для создания профиля',
+        call_to_action: 'Заполнить юридические данные'
       },
       
-      // ==================== ЭТАП 3: Юр.данные на проверке ====================
+      // ==================== ЭТАП 3: ЮР.ДАННЫЕ НА ПРОВЕРКЕ ====================
       'under_review': {
-        dashboard_state: 'legal_review',
-        message: 'Юридические данные на проверке у администратора',
+        dashboard_state: 'legal_under_review',
+        message: 'Юридические данные поданы и проверяются администратором',
         can_access_features: false,
         show_legal_form: false,
         show_content_management: false,
@@ -239,38 +237,32 @@ export const getPartnerDashboardStatus = async (userId) => {
         has_legal_info: !!legalInfo,
         current_step: 3,
         total_steps: 6,
-        step_description: 'Администратор проверяет ваши документы'
+        step_description: 'Администратор проверяет ваши юридические данные',
+        call_to_action: 'Дождаться одобрения документов'
       },
       
-      // ==================== 🆕 ЭТАП 4: Юр.данные одобрены, можно добавлять контент ====================
+      // ==================== ЭТАП 4: ПРОФИЛЬ СОЗДАН - НАПОЛНЕНИЕ КОНТЕНТА ====================
       'legal_approved': {
-        dashboard_state: 'content_management',
-        message: 'Документы одобрены! Добавьте меню, фото и описания',
-        can_access_features: true, // 🎉 УПРАВЛЕНИЕ КОНТЕНТОМ ДОСТУПНО
+        dashboard_state: 'profile_created',
+        message: '🎉 Документы одобрены! Профиль создан. Наполните контент',
+        can_access_features: true, // ДОСТУП К УПРАВЛЕНИЮ КОНТЕНТОМ
         show_legal_form: false,
-        show_content_management: true, // 🎯 ПОКАЗАТЬ УПРАВЛЕНИЕ КОНТЕНТОМ
+        show_content_management: true, // ПОКАЗЫВАЕМ УПРАВЛЕНИЕ КОНТЕНТОМ
         admin_action_needed: false,
         has_profile: !!profile,
         has_legal_info: !!legalInfo,
         profile_status: profile?.content_status || 'awaiting_content',
         current_step: 4,
         total_steps: 6,
-        step_description: 'Добавьте контент: меню, фотографии, описания',
-        call_to_action: 'Наполнить профиль контентом',
-        available_features: [
-          'menu_management',
-          'photo_upload', 
-          'description_editing',
-          'working_hours',
-          'contact_editing'
-        ]
+        step_description: 'Добавьте меню, фотографии и описание вашего бизнеса',
+        call_to_action: 'Наполнить контент профиля'
       },
       
-      // ==================== ЭТАП 5: Контент на модерации ====================
+      // ==================== ЭТАП 5: КОНТЕНТ НА МОДЕРАЦИИ ====================
       'content_review': {
-        dashboard_state: 'content_moderation',
-        message: 'Ваш контент на модерации у администратора',
-        can_access_features: true, // Можно редактировать контент
+        dashboard_state: 'content_under_review',
+        message: 'Контент отправлен на модерацию администратору',
+        can_access_features: true,
         show_legal_form: false,
         show_content_management: true,
         admin_action_needed: true,
@@ -332,74 +324,20 @@ export const getPartnerDashboardStatus = async (userId) => {
     // 🆕 ДОБАВЛЯЕМ ДОПОЛНИТЕЛЬНУЮ ЛОГИКУ ДЛЯ ОСОБЫХ СЛУЧАЕВ
     
     // Если профиль существует, но статус заявки не соответствует
-    if (profile && !['legal_approved', 'content_review', 'completed'].includes(request.status)) {
-      console.warn(`Несоответствие: профиль существует, но статус заявки: ${request.status}`);
-      // Корректируем статус на основе состояния профиля
-      if (profile.is_public) {
-        return {
-          ...statusConfig['completed'],
-          hasRequest: true,
-          request_id: request._id,
-          status: 'completed',
-          business_name: request.business_data.business_name,
-          category: request.business_data.category,
-          submitted_at: request.submitted_at,
-          profile_id: profile._id,
-          legal_info_id: legalInfo?._id,
-          warning: 'Статус скорректирован на основе состояния профиля'
-        };
-      } else if (profile.content_status === 'pending_review') {
-        return {
-          ...statusConfig['content_review'],
-          hasRequest: true,
-          request_id: request._id,
-          status: 'content_review',
-          business_name: request.business_data.business_name,
-          category: request.business_data.category,
-          submitted_at: request.submitted_at,
-          profile_id: profile._id,
-          legal_info_id: legalInfo?._id,
-          warning: 'Статус скорректирован на основе состояния профиля'
-        };
-      } else {
-        return {
-          ...statusConfig['legal_approved'],
-          hasRequest: true,
-          request_id: request._id,
-          status: 'legal_approved',
-          business_name: request.business_data.business_name,
-          category: request.business_data.category,
-          submitted_at: request.submitted_at,
-          profile_id: profile._id,
-          legal_info_id: legalInfo?._id,
-          warning: 'Статус скорректирован на основе состояния профиля'
-        };
-      }
+    if (profile && request.status === 'legal_approved') {
+      config.profile_management_available = true;
+      config.profile_id = profile._id;
     }
 
     return {
-      hasRequest: true,
+      ...config,
       request_id: request._id,
-      status: request.status,
-      
-      // ✅ БЕЗОПАСНО: показываем только открытые данные
-      business_name: request.business_data.business_name,
-      category: request.business_data.category,
-      submitted_at: request.submitted_at,
-      
-      // 🆕 ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ТЕКУЩЕМ ЭТАПЕ
-      profile_id: profile?._id,
-      legal_info_id: legalInfo?._id,
-      
-      // 🆕 ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ПРОЦЕССЕ
-      workflow_progress: {
-        current_step: config.current_step,
-        total_steps: config.total_steps,
-        progress_percentage: Math.round((config.current_step / config.total_steps) * 100),
-        next_milestone: getNextMilestone(request.status)
-      },
-      
-      ...config
+      request_status: request.status,
+      business_info: {
+        business_name: request.business_data.business_name,
+        category: request.business_data.category,
+        submitted_at: request.submitted_at
+      }
     };
 
   } catch (error) {
@@ -408,43 +346,50 @@ export const getPartnerDashboardStatus = async (userId) => {
   }
 };
 
-// ================ БЕЗОПАСНОСТЬ И ДОСТУП ================
+// ================ 🔓 РАСШИФРОВКА ДАННЫХ ================
 
 /**
- * 🔓 БЕЗОПАСНАЯ расшифровка данных партнера (только для владельца/админа)
+ * ✅ Получение расшифрованных персональных данных партнера
  */
 export const getDecryptedPartnerData = async (userId, requesterId, requesterRole) => {
   try {
     // Проверяем права доступа
-    const hasAccess = (
-      requesterRole === 'admin' || // Админ может все
-      userId === requesterId // Владелец может свои данные
-    );
-
-    if (!hasAccess) {
-      throw new Error('Нет прав для просмотра персональных данных');
+    if (requesterId !== userId && requesterRole !== 'admin') {
+      throw new Error('Нет прав доступа к персональным данным');
     }
 
     const request = await InitialPartnerRequest.findOne({ user_id: userId });
     if (!request) {
-      throw new Error('Заявка не найдена');
+      throw new Error('Заявка партнера не найдена');
     }
 
-    // 🔓 РАСШИФРОВЫВАЕМ чувствительные данные
+    // 🔓 Расшифровываем чувствительные данные
     const decryptedData = {
       personal_data: {
         first_name: request.personal_data.first_name,
         last_name: request.personal_data.last_name,
         phone: decryptString(request.personal_data.phone), // 🔓 РАСШИФРОВАЛИ
-        email: request.personal_data.email
+        email: request.personal_data.email // ✅ Уже открыто
       },
       business_data: {
-        ...request.business_data.toObject(),
+        business_name: request.business_data.business_name,
+        brand_name: request.business_data.brand_name,
+        category: request.business_data.category,
+        description: request.business_data.description,
+        
+        // 🔓 Расшифрованные данные
         address: decryptString(request.business_data.address), // 🔓 РАСШИФРОВАЛИ
         phone: decryptString(request.business_data.phone), // 🔓 РАСШИФРОВАЛИ
         email: decryptString(request.business_data.email), // 🔓 РАСШИФРОВАЛИ
-        floor_unit: request.business_data.floor_unit ? 
-          decryptString(request.business_data.floor_unit) : null // 🔓 РАСШИФРОВАЛИ
+        
+        // ✅ Открытые данные
+        location: request.business_data.location,
+        owner_name: request.business_data.owner_name,
+        owner_surname: request.business_data.owner_surname,
+        cover_image_url: request.business_data.cover_image_url,
+        
+        // 🔓 Расшифровка опциональных данных
+        floor_unit: request.business_data.floor_unit ? decryptString(request.business_data.floor_unit) : null // 🔓 РАСШИФРОВАЛИ
       }
     };
 
@@ -455,6 +400,8 @@ export const getDecryptedPartnerData = async (userId, requesterId, requesterRole
     throw error;
   }
 };
+
+// ================ 🔐 ФУНКЦИИ ПРОВЕРКИ ДОСТУПА ================
 
 /**
  * ✅ Проверка может ли партнер получить доступ к функциям
@@ -528,6 +475,8 @@ export const checkPartnerAccess = async (userId, feature) => {
   }
 };
 
+// ================ 🔐 ШИФРОВАНИЕ ЮРИДИЧЕСКИХ ДАННЫХ ================
+
 /**
  * 🔐 БЕЗОПАСНАЯ ФУНКЦИЯ: Шифрование юридических данных
  */
@@ -544,76 +493,4 @@ export const encryptLegalData = (legalData) => {
     tax_number: legalData.tax_number ? cryptoString(legalData.tax_number) : null,
     additional_info: legalData.additional_info || null
   };
-};
-
-// ================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ================
-
-/**
- * 🆕 ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Определение следующего этапа
- */
-const getNextMilestone = (currentStatus) => {
-  const milestones = {
-    'pending': 'Одобрение заявки администратором',
-    'approved': 'Подача юридических данных',
-    'under_review': 'Одобрение документов администратором',
-    'legal_approved': 'Наполнение контентом (меню, фото)',
-    'content_review': 'Одобрение контента администратором',
-    'completed': 'Процесс завершен',
-    'rejected': 'Процесс остановлен'
-  };
-  
-  return milestones[currentStatus] || 'Неизвестный этап';
-};
-
-/**
- * 🆕 ДОБАВЛЕНО: Проверка готовности к переходу на следующий этап
- */
-export const checkReadinessForNextStep = async (userId) => {
-  try {
-    const status = await getPartnerDashboardStatus(userId);
-    
-    const readinessChecks = {
-      'approved': {
-        ready: !status.has_legal_info,
-        action_needed: 'Заполните юридические данные',
-        missing_items: status.has_legal_info ? [] : ['Юридические данные']
-      },
-      'legal_approved': {
-        ready: checkContentCompleteness(status.profile_id),
-        action_needed: 'Добавьте контент для модерации',
-        missing_items: await getMissingContentItems(status.profile_id)
-      }
-    };
-    
-    return {
-      current_status: status.status,
-      readiness: readinessChecks[status.status] || { ready: true, action_needed: null }
-    };
-    
-  } catch (error) {
-    console.error('Check readiness for next step error:', error);
-    throw error;
-  }
-};
-
-/**
- * 🆕 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ПРОВЕРКИ ГОТОВНОСТИ
- */
-const checkContentCompleteness = async (profileId) => {
-  if (!profileId) return false;
-  
-  // Здесь можно добавить проверки наличия меню, фото, описаний и т.д.
-  // Пока возвращаем true
-  return true;
-};
-
-const getMissingContentItems = async (profileId) => {
-  if (!profileId) return ['Профиль не создан'];
-  
-  const missingItems = [];
-  
-  // Здесь можно добавить проверки и вернуть список недостающих элементов
-  // Например: 'Меню', 'Фотографии', 'Описание', 'График работы'
-  
-  return missingItems;
 };
