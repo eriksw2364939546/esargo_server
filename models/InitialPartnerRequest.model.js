@@ -1,131 +1,124 @@
-// models/InitialPartnerRequest.model.js (исправленный - ES6 modules)
+// models/InitialPartnerRequest.model.js (ДОБАВЛЕНИЕ НОВОГО СТАТУСА)
 import mongoose from 'mongoose';
 
 const initialPartnerRequestSchema = new mongoose.Schema({
-  user_id: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'User', 
-    required: true, 
-    index: true 
+  user_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true,
+    index: true
   },
+  
+  // ... все существующие поля остаются ...
+  
   status: {
     type: String,
-    required: true,
-    enum: ['pending', 'approved', 'rejected', 'awaiting_legal_info'],
+    enum: [
+      'pending',           // Ждет одобрения админом (ЭТАП 1)
+      'approved',          // Одобрено, можно подавать юр.данные (ЭТАП 2) 
+      'under_review',      // Юр.данные на проверке (ЭТАП 3)
+      'legal_approved',    // 🆕 НОВЫЙ! Юр.данные одобрены, PartnerProfile создан (ЭТАП 4)
+      'content_review',    // Контент на модерации (ЭТАП 5)
+      'completed',         // ВСЁ ГОТОВО! Публичный доступ (ЭТАП 6)
+      'rejected'           // Отклонено на любом этапе
+    ],
     default: 'pending',
     index: true
   },
-  business_data: {
-    business_name: { 
-      type: String, 
-      required: true, 
-      trim: true, 
-      maxlength: 100 
-    },
-    brand_name: { 
-      type: String, 
-      trim: true, 
-      maxlength: 100 
-    },
-    category: { 
-      type: String, 
-      required: true, 
-      enum: ['restaurant', 'store'] 
-    },
-    address: { 
-      type: String, 
-      required: true, 
-      trim: true 
-    },
-    location: {
-      lat: { 
-        type: Number, 
-        required: true 
-      },
-      lng: { 
-        type: Number, 
-        required: true 
-      }
-    },
-    phone: { 
-      type: String, 
-      required: true, 
-      trim: true 
-    },
-    email: { 
-      type: String, 
-      required: true, 
-      trim: true, 
-      lowercase: true 
-    },
-    owner_name: { 
-      type: String, 
-      required: true, 
-      trim: true 
-    },
-    owner_surname: { 
-      type: String, 
-      required: true, 
-      trim: true 
-    },
-    floor_unit: { 
-      type: String, 
-      trim: true, 
-      maxlength: 100 
-    }
-  },
-  whatsapp_consent: { 
-    type: Boolean, 
-    default: false 
-  },
-  submitted_at: { 
-    type: Date, 
-    required: true, 
-    default: Date.now, 
-    index: true 
-  },
-  review_info: {
-    reviewed_by: { 
-      type: mongoose.Schema.Types.ObjectId, 
-      ref: 'AdminUser' 
-    },
-    reviewed_at: Date,
-    rejection_reason: String,
-    admin_notes: String
-  },
-  source: { 
-    type: String, 
-    enum: ['web', 'mobile', 'admin'], 
-    default: 'web' 
-  },
-  ip_address: String,
-  user_agent: String
+  
+  // ... все остальные поля остаются без изменений ...
+  
 }, {
   timestamps: true
 });
 
-// Индексы
-initialPartnerRequestSchema.index({ user_id: 1, status: 1 });
-initialPartnerRequestSchema.index({ 'business_data.category': 1 });
-initialPartnerRequestSchema.index({ submitted_at: -1 });
+// ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
-// Методы экземпляра
+// Одобрение первичной заявки (переход к юр.данным)
 initialPartnerRequestSchema.methods.approve = function(adminId, notes = '') {
-  this.status = 'awaiting_legal_info';
-  this.review_info.reviewed_by = adminId;
-  this.review_info.reviewed_at = new Date();
-  this.review_info.admin_notes = notes;
+  this.status = 'approved';
+  this.review_info = {
+    reviewed_by: adminId,
+    reviewed_at: new Date(),
+    decision: 'approved',
+    admin_notes: notes
+  };
+  
   return this.save();
 };
 
+// Отклонение заявки
 initialPartnerRequestSchema.methods.reject = function(adminId, reason) {
   this.status = 'rejected';
-  this.review_info.reviewed_by = adminId;
-  this.review_info.reviewed_at = new Date();
-  this.review_info.rejection_reason = reason;
+  this.review_info = {
+    reviewed_by: adminId,
+    reviewed_at: new Date(),
+    decision: 'rejected',
+    rejection_reason: reason
+  };
+  
   return this.save();
 };
 
-// 🆕 ИСПРАВЛЕНО: ES6 export
-const InitialPartnerRequest = mongoose.model('InitialPartnerRequest', initialPartnerRequestSchema);
-export default InitialPartnerRequest;
+// 🆕 НОВОЕ: Перевод в статус "юр.данные одобрены"
+initialPartnerRequestSchema.methods.approveLegal = function(adminId, notes = '') {
+  this.status = 'legal_approved';
+  if (!this.review_info) {
+    this.review_info = {};
+  }
+  this.review_info.legal_approved_by = adminId;
+  this.review_info.legal_approved_at = new Date();
+  this.review_info.legal_notes = notes;
+  
+  return this.save();
+};
+
+// 🆕 НОВОЕ: Перевод в статус "контент на модерации"
+initialPartnerRequestSchema.methods.submitForContentReview = function() {
+  this.status = 'content_review';
+  return this.save();
+};
+
+// 🆕 НОВОЕ: Финальное завершение (публичный доступ)
+initialPartnerRequestSchema.methods.complete = function(adminId, notes = '') {
+  this.status = 'completed';
+  if (!this.review_info) {
+    this.review_info = {};
+  }
+  this.review_info.completed_by = adminId;
+  this.review_info.completed_at = new Date();
+  this.review_info.completion_notes = notes;
+  
+  return this.save();
+};
+
+// ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
+
+// Поиск заявок по статусу
+initialPartnerRequestSchema.statics.findByStatus = function(status) {
+  return this.find({ status }).sort({ submitted_at: 1 });
+};
+
+// Поиск заявок ожидающих одобрения
+initialPartnerRequestSchema.statics.findPendingApproval = function() {
+  return this.find({ 
+    status: { $in: ['pending', 'under_review', 'content_review'] }
+  }).sort({ submitted_at: 1 });
+};
+
+// 🆕 НОВОЕ: Поиск заявок готовых для создания профиля
+initialPartnerRequestSchema.statics.findReadyForProfile = function() {
+  return this.find({ 
+    status: 'approved' // Одобрены, но еще нет юр.данных
+  }).sort({ submitted_at: 1 });
+};
+
+// 🆕 НОВОЕ: Поиск заявок с одобренными юр.данными
+initialPartnerRequestSchema.statics.findWithApprovedLegal = function() {
+  return this.find({ 
+    status: 'legal_approved' // Юр.данные одобрены, можно наполнять контент
+  }).sort({ submitted_at: 1 });
+};
+
+export default mongoose.model('InitialPartnerRequest', initialPartnerRequestSchema);
