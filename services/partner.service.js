@@ -1,4 +1,4 @@
-// services/partner.service.js (ИСПРАВЛЕННАЯ ЛОГИКА)
+// services/partner.service.js - ИСПРАВЛЕННАЯ ЛОГИКА 🎯
 import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { cryptoString, decryptString } from '../utils/crypto.js';
@@ -6,10 +6,108 @@ import { hashString, hashMeta, comparePassword } from '../utils/hash.js';
 import { generateCustomerToken } from './token.service.js';
 import mongoose from 'mongoose';
 
+// ================ АВТОРИЗАЦИЯ ================
+
 /**
- * ✅ ИСПРАВЛЕНО: Создание PartnerProfile ТОЛЬКО после одобрения юр.данных
- * @param {object} partnerData - Данные партнера из InitialRequest + LegalInfo
- * @returns {object} - Результат создания
+ * ✅ АВТОРИЗАЦИЯ ПАРТНЕРА (работает с новой логикой)
+ * Партнер может войти сразу после регистрации (даже без профиля)
+ */
+export const loginPartner = async (email, password) => {
+  try {
+    // Получаем Meta через правильный метод  
+    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(email), 'partner');
+
+    if (!metaInfo || !metaInfo.partner) {
+      const error = new Error('Партнер не найден');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const user = metaInfo.partner; // Уже пользователь из populate
+
+    // Проверяем блокировку аккаунта
+    if (metaInfo.isAccountLocked()) {
+      const error = new Error('Аккаунт временно заблокирован');
+      error.statusCode = 423;
+      throw error;
+    }
+
+    // Проверяем активность пользователя
+    if (!user.is_active) {
+      const error = new Error('Аккаунт деактивирован');
+      error.statusCode = 403;
+      throw error;
+    }
+
+    // ✅ ПРАВИЛЬНО: Профиль партнера может отсутствовать (на ранних этапах)
+    const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
+    
+    // 🎯 КЛЮЧЕВОЕ: Партнер может войти даже без профиля для личного кабинета
+    // PartnerProfile создается только после одобрения юр.данных (ЭТАП 3)
+
+    // Проверяем пароль
+    const isPasswordValid = await comparePassword(password, user.password_hash);
+    if (!isPasswordValid) {
+      await metaInfo.incrementFailedAttempts();
+      const error = new Error('Неверный пароль');
+      error.statusCode = 401;
+      throw error;
+    }
+
+    // Сбрасываем счетчик неудачных попыток
+    await metaInfo.resetFailedAttempts();
+
+    // Генерируем токен
+    const token = generateCustomerToken({
+      user_id: user._id,
+      _id: user._id,
+      email: user.email,
+      role: 'partner',
+      is_admin: false
+    }, '30d');
+
+    return { 
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        is_email_verified: user.is_email_verified,
+        profile: partnerProfile // Может быть null на ранних этапах (НОРМАЛЬНО!)
+      }
+    };
+
+  } catch (error) {
+    console.error('Login partner error:', error);
+    throw error;
+  }
+};
+
+/**
+ * ✅ Получение партнера по ID (для middleware)
+ */
+export const getPartnerById = async (userId) => {
+  try {
+    const user = await User.findById(userId).select('-password_hash');
+    if (!user || user.role !== 'partner') return null;
+
+    const profile = await PartnerProfile.findOne({ user_id: userId });
+
+    return {
+      ...user.toObject(),
+      profile // Может быть null - это нормально
+    };
+  } catch (error) {
+    console.error('Get partner by ID error:', error);
+    return null;
+  }
+};
+
+// ================ 🔧 ЭТАП 3: СОЗДАНИЕ PARTNERPROFILE ================
+
+/**
+ * ✅ ЭТАП 3: Создание PartnerProfile ТОЛЬКО после одобрения юр.данных
+ * Это единственное место где создается PartnerProfile!
  */
 export const createPartnerAccount = async (partnerData) => {
   try {
@@ -27,10 +125,10 @@ export const createPartnerAccount = async (partnerData) => {
       owner_surname,
       floor_unit,
       cover_image_url,
-      legal_info_id // 🆕 ДОБАВЛЕНО: ссылка на юридические данные
+      legal_info_id
     } = partnerData;
 
-    // ✅ ИСПРАВЛЕНО: Проверяем что профиль не существует
+    // ✅ ПРОВЕРЯЕМ: профиль не должен уже существовать
     const existingProfile = await PartnerProfile.findOne({ user_id });
     if (existingProfile) {
       throw new Error('Профиль партнера уже создан');
@@ -42,7 +140,7 @@ export const createPartnerAccount = async (partnerData) => {
       throw new Error('Пользователь не найден');
     }
 
-    // ✅ ИСПРАВЛЕНО: Создаем PartnerProfile с правильными статусами
+    // ✅ СОЗДАЕМ PartnerProfile с правильными статусами
     const newPartnerProfile = new PartnerProfile({
       user_id: user._id,
       business_name,
@@ -53,19 +151,19 @@ export const createPartnerAccount = async (partnerData) => {
       // 🔐 ВСЕ АДРЕСА И КОНТАКТЫ УЖЕ ЗАШИФРОВАНЫ В InitialRequest
       address, // Уже зашифровано
       location,
-      phone, // Уже зашифровано
+      phone, // Уже зашифровано  
       email, // Уже зашифровано
+      floor_unit, // Уже зашифровано
       
       owner_name,
       owner_surname,
-      floor_unit, // Уже зашифровано
       cover_image_url,
       
-      // 🆕 НОВОЕ: Правильные статусы для нового процесса
+      // 🎯 ПРАВИЛЬНЫЕ СТАТУСЫ для нового процесса
       is_approved: false, // Еще не одобрен полностью
       is_active: false,   // Еще не активен
-      approval_status: 'awaiting_content', // 🎯 ЖДЕТ НАПОЛНЕНИЯ КОНТЕНТОМ
-      content_status: 'awaiting_content',  // 🎯 ЖДЕТ КОНТЕНТА
+      approval_status: 'awaiting_content', // ЖДЕТ НАПОЛНЕНИЯ КОНТЕНТОМ
+      content_status: 'awaiting_content',  // ЖДЕТ КОНТЕНТА
       is_public: false,   // НЕ ПУБЛИЧНЫЙ (финальный этап)
       
       // Ссылка на юридические данные
@@ -97,101 +195,7 @@ export const createPartnerAccount = async (partnerData) => {
 };
 
 /**
- * ✅ ИСПРАВЛЕНО: Авторизация партнера (работает с новой логикой)
- */
-export const loginPartner = async (email, password) => {
-  try {
-    // 🆕 ИСПРАВЛЕНО: Получаем Meta через новый метод  
-    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(email), 'partner');
-
-    if (!metaInfo || !metaInfo.partner) {
-      const error = new Error('Партнер не найден');
-      error.statusCode = 404;
-      throw error;
-    }
-
-    const user = metaInfo.partner; // Уже пользователь из populate
-
-    // Проверяем блокировку аккаунта
-    if (metaInfo.isAccountLocked()) {
-      const error = new Error('Аккаунт временно заблокирован');
-      error.statusCode = 423;
-      throw error;
-    }
-
-    // Проверяем активность пользователя
-    if (!user.is_active) {
-      const error = new Error('Аккаунт деактивирован');
-      error.statusCode = 403;
-      throw error;
-    }
-
-    // ✅ ИСПРАВЛЕНО: Профиль партнера может отсутствовать (на ранних этапах)
-    const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
-    
-    // 🎯 НОВОЕ: Партнер может войти даже без профиля (для личного кабинета)
-    // Профиль создается только после одобрения юр.данных
-
-    // Проверяем пароль
-    const isPasswordValid = await comparePassword(password, user.password_hash);
-    if (!isPasswordValid) {
-      await metaInfo.incrementFailedAttempts();
-      const error = new Error('Неверный пароль');
-      error.statusCode = 401;
-      throw error;
-    }
-
-    // Сбрасываем счетчик неудачных попыток
-    await metaInfo.resetFailedAttempts();
-
-    // Генерируем токен
-    const token = generateCustomerToken({
-      user_id: user._id,
-      _id: user._id,
-      email: user.email,
-      role: 'partner',
-      is_admin: false
-    }, '30d');
-
-    return { 
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        role: user.role,
-        is_email_verified: user.is_email_verified,
-        profile: partnerProfile // Может быть null на ранних этапах
-      }
-    };
-
-  } catch (error) {
-    console.error('Login partner error:', error);
-    throw error;
-  }
-};
-
-/**
- * 🆕 ДОБАВЛЕНО: Получение партнера по ID (для middleware)
- */
-export const getPartnerById = async (userId) => {
-  try {
-    const user = await User.findById(userId).select('-password_hash');
-    if (!user || user.role !== 'partner') return null;
-
-    const profile = await PartnerProfile.findOne({ user_id: userId });
-
-    return {
-      ...user.toObject(),
-      profile
-    };
-  } catch (error) {
-    console.error('Get partner by ID error:', error);
-    return null;
-  }
-};
-
-/**
- * ✅ ИСПРАВЛЕНО: Финальное одобрение партнера 
+ * ✅ ЭТАП 3: Финальное одобрение партнера (единственное место создания PartnerProfile)
  * Создает PartnerProfile ТОЛЬКО ЗДЕСЬ после одобрения юр.данных
  */
 export const finalApprovePartner = async (legalInfoId, adminId) => {
@@ -225,10 +229,10 @@ export const finalApprovePartner = async (legalInfoId, adminId) => {
       await legalInfo.save({ session });
 
       // 2️⃣ Обновляем статус первичной заявки
-      initialRequest.status = 'legal_approved'; // 🆕 НОВЫЙ СТАТУС!
+      initialRequest.status = 'legal_approved'; // 🎯 НОВЫЙ СТАТУС!
       await initialRequest.save({ session });
 
-      // 3️⃣ СОЗДАЕМ PartnerProfile (единственное место создания!)
+      // 3️⃣ СОЗДАЕМ PartnerProfile (ЕДИНСТВЕННОЕ МЕСТО СОЗДАНИЯ!)
       const partnerProfileData = {
         user_id: legalInfo.user_id._id,
         business_name: initialRequest.business_data.business_name,
@@ -269,8 +273,45 @@ export const finalApprovePartner = async (legalInfoId, adminId) => {
   }
 };
 
+// ================ ЭТАП 4-5: УПРАВЛЕНИЕ КОНТЕНТОМ ================
+
 /**
- * 🆕 ДОБАВЛЕНО: Управление контентом партнера
+ * ✅ ЭТАП 4: Отправка контента на модерацию
+ */
+export const submitContentForReview = async (userId) => {
+  try {
+    const profile = await PartnerProfile.findOne({ user_id: userId });
+    if (!profile) {
+      throw new Error('Профиль партнера не найден');
+    }
+
+    if (profile.content_status !== 'awaiting_content' && profile.content_status !== 'content_added') {
+      throw new Error('Контент уже на модерации или одобрен');
+    }
+
+    // Обновляем статус контента и заявки
+    profile.content_status = 'pending_review';
+    await profile.save();
+
+    await InitialPartnerRequest.findOneAndUpdate(
+      { user_id: userId },
+      { status: 'content_review' }
+    );
+
+    return {
+      success: true,
+      message: 'Контент отправлен на модерацию',
+      profile: profile
+    };
+
+  } catch (error) {
+    console.error('Submit content for review error:', error);
+    throw error;
+  }
+};
+
+/**
+ * ✅ ЭТАП 5: Управление контентом партнера (для админов)
  */
 export const updatePartnerContentStatus = async (profileId, newStatus, adminId = null) => {
   try {
@@ -282,7 +323,7 @@ export const updatePartnerContentStatus = async (profileId, newStatus, adminId =
     // Обновляем статус контента
     profile.content_status = newStatus;
 
-    // Если контент одобрен - делаем партнера публичным
+    // ЭТАП 6: Если контент одобрен - делаем партнера публичным!
     if (newStatus === 'approved') {
       profile.is_approved = true;
       profile.is_active = true;
@@ -315,37 +356,98 @@ export const updatePartnerContentStatus = async (profileId, newStatus, adminId =
   }
 };
 
+// ================ ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ ================
+
 /**
- * 🆕 ДОБАВЛЕНО: Отправка контента на модерацию
+ * ✅ Получение публичных партнеров (для сайта)
  */
-export const submitContentForReview = async (userId) => {
+export const getPublicPartners = async (filters = {}) => {
+  try {
+    const { category, lat, lng, radius = 5 } = filters;
+    
+    let query = {
+      is_public: true,
+      is_active: true,
+      is_approved: true
+    };
+
+    if (category) {
+      query.category = category;
+    }
+
+    // Поиск по геолокации
+    if (lat && lng) {
+      query.location = {
+        $near: {
+          $geometry: {
+            type: 'Point',
+            coordinates: [lng, lat]
+          },
+          $maxDistance: radius * 1000 // км в метры
+        }
+      };
+    }
+
+    const partners = await PartnerProfile.find(query)
+      .select('business_name brand_name category description location ratings working_hours cover_image_url')
+      .sort({ 'ratings.avg_rating': -1 })
+      .limit(50);
+
+    return {
+      success: true,
+      partners: partners,
+      count: partners.length
+    };
+
+  } catch (error) {
+    console.error('Get public partners error:', error);
+    throw error;
+  }
+};
+
+/**
+ * ✅ Получение статистики партнера
+ */
+export const getPartnerStats = async (userId) => {
   try {
     const profile = await PartnerProfile.findOne({ user_id: userId });
     if (!profile) {
       throw new Error('Профиль партнера не найден');
     }
 
-    if (profile.content_status !== 'awaiting_content' && profile.content_status !== 'content_added') {
-      throw new Error('Контент уже на модерации или одобрен');
-    }
-
-    // Обновляем статус контента и заявки
-    profile.content_status = 'pending_review';
-    await profile.save();
-
-    await InitialPartnerRequest.findOneAndUpdate(
-      { user_id: userId },
-      { status: 'content_review' }
-    );
-
     return {
       success: true,
-      message: 'Контент отправлен на модерацию',
-      profile: profile
+      stats: profile.stats,
+      ratings: profile.ratings,
+      status: {
+        is_public: profile.is_public,
+        is_active: profile.is_active,
+        content_status: profile.content_status,
+        published_at: profile.published_at
+      }
     };
 
   } catch (error) {
-    console.error('Submit content for review error:', error);
+    console.error('Get partner stats error:', error);
     throw error;
   }
+};
+
+// ================ ЭКСПОРТ ================
+export {
+  // АВТОРИЗАЦИЯ
+  loginPartner,
+  getPartnerById,
+  
+  // ЭТАП 3: СОЗДАНИЕ ПРОФИЛЯ (ТОЛЬКО ЗДЕСЬ!)
+  createPartnerAccount,
+  finalApprovePartner,
+  
+  // ЭТАП 4-5: КОНТЕНТ
+  submitContentForReview,
+  updatePartnerContentStatus,
+  
+  // ДОПОЛНИТЕЛЬНО
+  getPublicPartners,
+  getPartnerStats
 };
