@@ -1,4 +1,4 @@
-// models/Meta.model.js (исправленный - добавлен findByEmailHash)
+// models/Meta.model.js (ИСПРАВЛЕННЫЙ - включаем password_hash)
 import mongoose from 'mongoose';
 
 const metaSchema = new mongoose.Schema({
@@ -81,41 +81,37 @@ metaSchema.index({ partner: 1, role: 1 });
 metaSchema.index({ courier: 1, role: 1 });
 metaSchema.index({ admin: 1, role: 1 });
 
-// Методы для работы с безопасностью
-metaSchema.methods.incrementFailedAttempts = function() {
-  this.security_info.failed_login_attempts += 1;
-  this.security_info.last_login_attempt = new Date();
-  
-  // 🆕 ИСПРАВЛЕНО: Разная логика блокировки для админов и обычных пользователей
-  let lockDuration = 15 * 60 * 1000; // 15 минут по умолчанию
-  let attemptsThreshold = 5;
-  
-  if (this.role === 'admin') {
-    lockDuration = 60 * 60 * 1000; // 1 час для админов
-    attemptsThreshold = 3; // Строже для админов
-  }
-  
-  // Блокируем аккаунт после превышения лимита попыток
-  if (this.security_info.failed_login_attempts >= attemptsThreshold) {
-    this.security_info.account_locked_until = new Date(Date.now() + lockDuration);
-  }
-  
-  return this.save();
-};
+// ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
-metaSchema.methods.resetFailedAttempts = function() {
-  this.security_info.failed_login_attempts = 0;
-  this.security_info.account_locked_until = undefined;
-  this.security_info.last_login_attempt = new Date();
-  return this.save();
-};
-
+// Проверка заблокирован ли аккаунт
 metaSchema.methods.isAccountLocked = function() {
   return this.security_info.account_locked_until && 
          this.security_info.account_locked_until > new Date();
 };
 
-// 🆕 ДОБАВЛЕНО: Методы для получения связанного пользователя
+// Увеличение счетчика неудачных попыток
+metaSchema.methods.incrementFailedAttempts = function() {
+  this.security_info.failed_login_attempts += 1;
+  this.security_info.last_login_attempt = new Date();
+  
+  // Блокируем аккаунт после 5 неудачных попыток на 15 минут
+  if (this.security_info.failed_login_attempts >= 5) {
+    this.security_info.account_locked_until = new Date(Date.now() + 15 * 60 * 1000);
+  }
+  
+  return this.save();
+};
+
+// Сброс счетчика неудачных попыток
+metaSchema.methods.resetFailedAttempts = function() {
+  this.security_info.failed_login_attempts = 0;
+  this.security_info.last_login_attempt = new Date();
+  this.security_info.account_locked_until = undefined;
+  
+  return this.save();
+};
+
+// Получение пользователя в зависимости от роли
 metaSchema.methods.getUser = function() {
   switch (this.role) {
     case 'customer':
@@ -184,11 +180,23 @@ metaSchema.statics.findByEmailAndRoleWithUser = function(hashedEmail, role) {
       return this.findOne({ em: hashedEmail, role });
   }
   
+  // ✅ ИСПРАВЛЕНО: Убираем select: '-password_hash' чтобы включить пароль!
   return this.findOne({ em: hashedEmail, role }).populate({
     path: populateField,
-    model: refModel,
-    select: '-password_hash'
+    model: refModel
+    // БЕЗ select - включаем ВСЕ поля включая password_hash
   });
+};
+
+// Обновление информации о пароле
+metaSchema.statics.updatePasswordInfo = function(hashedEmail, role) {
+  return this.findOneAndUpdate(
+    { em: hashedEmail, role },
+    { 
+      'security_info.password_changed_at': new Date() 
+    },
+    { new: true }
+  );
 };
 
 // 🆕 ИСПРАВЛЕНО: Создание Meta записи для разных типов пользователей

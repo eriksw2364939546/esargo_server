@@ -1,4 +1,4 @@
-// services/partner.service.js - ПОЛНЫЙ ИСПРАВЛЕННЫЙ ФАЙЛ 🎯
+// services/partner.service.js - ПОЛНЫЙ ИСПРАВЛЕННЫЙ ФАЙЛ С ОТЛАДКОЙ 🎯
 import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { cryptoString, decryptString } from '../utils/crypto.js';
@@ -14,10 +14,62 @@ import mongoose from 'mongoose';
  */
 const loginPartner = async (email, password) => {
   try {
+    // ✅ ДОБАВЛЕНА ОТЛАДКА
+    const normalizedEmail = email.toLowerCase().trim();
+    console.log('🔍 LOGIN ATTEMPT:', {
+      original_email: email,
+      normalized_email: normalizedEmail,
+      email_hash: hashMeta(normalizedEmail),
+      password_length: password.length
+    });
+
     // Получаем Meta через правильный метод  
-    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(email), 'partner');
+    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(normalizedEmail), 'partner');
+    
+    // ✅ ДОБАВЛЕНА ОТЛАДКА
+    console.log('🔍 META SEARCH RESULT:', {
+      found: !!metaInfo,
+      has_partner: metaInfo ? !!metaInfo.partner : false,
+      meta_id: metaInfo ? metaInfo._id : null,
+      partner_id: metaInfo && metaInfo.partner ? metaInfo.partner._id : null
+    });
 
     if (!metaInfo || !metaInfo.partner) {
+      // ✅ ДОБАВЛЕНА ОТЛАДКА - поискать пользователя напрямую
+      console.log('🔍 META NOT FOUND, searching User directly...');
+      const directUser = await User.findOne({ 
+        email: normalizedEmail, 
+        role: 'partner' 
+      });
+      console.log('🔍 DIRECT USER SEARCH:', {
+        found: !!directUser,
+        user_id: directUser ? directUser._id : null,
+        user_email: directUser ? directUser.email : null,
+        user_role: directUser ? directUser.role : null
+      });
+
+      // Если пользователь найден напрямую, но нет Meta - это проблема!
+      if (directUser) {
+        console.error('🚨 ПРОБЛЕМА: User существует, но Meta запись отсутствует!');
+        console.log('🔧 Пытаемся создать Meta запись...');
+        
+        try {
+          // Пытаемся создать Meta запись
+          const newMeta = await Meta.createForPartner(directUser._id, hashMeta(normalizedEmail));
+          console.log('✅ Meta запись создана:', newMeta._id);
+          
+          // Повторяем поиск
+          const retryMetaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(normalizedEmail), 'partner');
+          if (retryMetaInfo && retryMetaInfo.partner) {
+            console.log('✅ Meta найден после создания, продолжаем авторизацию...');
+            // Продолжаем с найденным Meta
+            return await continueLogin(retryMetaInfo.partner, password, retryMetaInfo);
+          }
+        } catch (metaError) {
+          console.error('❌ Ошибка создания Meta:', metaError);
+        }
+      }
+      
       const error = new Error('Партнер не найден');
       error.statusCode = 404;
       throw error;
@@ -25,62 +77,107 @@ const loginPartner = async (email, password) => {
 
     const user = metaInfo.partner; // Уже пользователь из populate
 
-    // Проверяем блокировку аккаунта
-    if (metaInfo.isAccountLocked()) {
-      const error = new Error('Аккаунт временно заблокирован');
-      error.statusCode = 423;
-      throw error;
-    }
-
-    // Проверяем активность пользователя
-    if (!user.is_active) {
-      const error = new Error('Аккаунт деактивирован');
-      error.statusCode = 403;
-      throw error;
-    }
-
-    // ✅ ПРАВИЛЬНО: Профиль партнера может отсутствовать (на ранних этапах)
-    const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
-    
-    // 🎯 КЛЮЧЕВОЕ: Партнер может войти даже без профиля для личного кабинета
-    // PartnerProfile создается только после одобрения юр.данных (ЭТАП 3)
-
-    // Проверяем пароль
-    const isPasswordValid = await comparePassword(password, user.password_hash);
-    if (!isPasswordValid) {
-      await metaInfo.incrementFailedAttempts();
-      const error = new Error('Неверный пароль');
-      error.statusCode = 401;
-      throw error;
-    }
-
-    // Сбрасываем счетчик неудачных попыток
-    await metaInfo.resetFailedAttempts();
-
-    // Генерируем токен
-    const token = generateCustomerToken({
-      user_id: user._id,
-      _id: user._id,
-      email: user.email,
-      role: 'partner',
-      is_admin: false
-    }, '30d');
-
-    return { 
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        role: user.role,
-        is_email_verified: user.is_email_verified,
-        profile: partnerProfile // Может быть null на ранних этапах (НОРМАЛЬНО!)
-      }
-    };
+    return await continueLogin(user, password, metaInfo);
 
   } catch (error) {
-    console.error('Login partner error:', error);
+    console.error('❌ LOGIN PARTNER ERROR:', error);
     throw error;
   }
+};
+
+/**
+ * Продолжение авторизации после нахождения пользователя
+ */
+const continueLogin = async (user, password, metaInfo) => {
+  console.log('🔍 CONTINUE LOGIN:', {
+    user_id: user._id,
+    user_email: user.email,
+    user_active: user.is_active
+  });
+
+  // Проверяем блокировку аккаунта
+  if (metaInfo.isAccountLocked()) {
+    const error = new Error('Аккаунт временно заблокирован');
+    error.statusCode = 423;
+    throw error;
+  }
+
+  // Проверяем активность пользователя
+  if (!user.is_active) {
+    const error = new Error('Аккаунт деактивирован');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // ✅ ПРАВИЛЬНО: Профиль партнера может отсутствовать (на ранних этапах)
+  const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
+  
+  // 🎯 КЛЮЧЕВОЕ: Партнер может войти даже без профиля для личного кабинета
+  // PartnerProfile создается только после одобрения юр.данных (ЭТАП 3)
+
+  console.log('🔍 PROFILE CHECK:', {
+    has_profile: !!partnerProfile,
+    profile_id: partnerProfile ? partnerProfile._id : null
+  });
+
+  // ✅ ДОБАВЛЕНА ОТЛАДКА ПРОВЕРКИ ПАРОЛЯ
+  console.log('🔍 PASSWORD CHECK:', {
+    provided_password_length: password.length,
+    has_password_hash: !!user.password_hash,
+    stored_hash_length: user.password_hash ? user.password_hash.length : 0,
+    hash_starts_with: user.password_hash ? user.password_hash.substring(0, 10) + '...' : 'NO_HASH',
+    user_fields: Object.keys(user)
+  });
+
+  // Проверяем пароль
+  if (!user.password_hash) {
+    console.error('🚨 КРИТИЧЕСКАЯ ОШИБКА: password_hash отсутствует в объекте user!');
+    console.log('🔍 User object:', JSON.stringify(user, null, 2));
+    const error = new Error('Ошибка данных пользователя');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const isPasswordValid = await comparePassword(password, user.password_hash);
+  
+  console.log('🔍 PASSWORD VALIDATION RESULT:', {
+    is_valid: isPasswordValid
+  });
+  
+  if (!isPasswordValid) {
+    await metaInfo.incrementFailedAttempts();
+    const error = new Error('Неверный пароль');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  // Сбрасываем счетчик неудачных попыток
+  await metaInfo.resetFailedAttempts();
+
+  // Генерируем токен
+  const token = generateCustomerToken({
+    user_id: user._id,
+    _id: user._id,
+    email: user.email,
+    role: 'partner',
+    is_admin: false
+  }, '30d');
+
+  console.log('✅ LOGIN SUCCESS:', {
+    user_id: user._id,
+    token_generated: !!token
+  });
+
+  return { 
+    token,
+    user: {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      is_email_verified: user.is_email_verified,
+      profile: partnerProfile // Может быть null на ранних этапах (НОРМАЛЬНО!)
+    }
+  };
 };
 
 /**
