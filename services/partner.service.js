@@ -1,4 +1,4 @@
-// services/partner.service.js - ИСПРАВЛЕННАЯ ЛОГИКА 🎯
+// services/partner.service.js - ПОЛНЫЙ ИСПРАВЛЕННЫЙ ФАЙЛ 🎯
 import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { cryptoString, decryptString } from '../utils/crypto.js';
@@ -12,7 +12,7 @@ import mongoose from 'mongoose';
  * ✅ АВТОРИЗАЦИЯ ПАРТНЕРА (работает с новой логикой)
  * Партнер может войти сразу после регистрации (даже без профиля)
  */
-export const loginPartner = async (email, password) => {
+const loginPartner = async (email, password) => {
   try {
     // Получаем Meta через правильный метод  
     const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(email), 'partner');
@@ -86,7 +86,7 @@ export const loginPartner = async (email, password) => {
 /**
  * ✅ Получение партнера по ID (для middleware)
  */
-export const getPartnerById = async (userId) => {
+const getPartnerById = async (userId) => {
   try {
     const user = await User.findById(userId).select('-password_hash');
     if (!user || user.role !== 'partner') return null;
@@ -103,13 +103,13 @@ export const getPartnerById = async (userId) => {
   }
 };
 
-// ================ 🔧 ЭТАП 3: СОЗДАНИЕ PARTNERPROFILE ================
+// ================ ЭТАП 3: СОЗДАНИЕ PARTNERPROFILE ================
 
 /**
  * ✅ ЭТАП 3: Создание PartnerProfile ТОЛЬКО после одобрения юр.данных
  * Это единственное место где создается PartnerProfile!
  */
-export const createPartnerAccount = async (partnerData) => {
+const createPartnerAccount = async (partnerData) => {
   try {
     const {
       user_id,
@@ -159,33 +159,21 @@ export const createPartnerAccount = async (partnerData) => {
       owner_surname,
       cover_image_url,
       
-      // 🎯 ПРАВИЛЬНЫЕ СТАТУСЫ для нового процесса
-      is_approved: false, // Еще не одобрен полностью
-      is_active: false,   // Еще не активен
-      approval_status: 'awaiting_content', // ЖДЕТ НАПОЛНЕНИЯ КОНТЕНТОМ
-      content_status: 'awaiting_content',  // ЖДЕТ КОНТЕНТА
-      is_public: false,   // НЕ ПУБЛИЧНЫЙ (финальный этап)
+      // 🎯 ПРАВИЛЬНЫЕ СТАТУСЫ ДЛЯ ЭТАПА 4
+      content_status: 'awaiting_content', // Партнер должен наполнить контент
+      is_approved: false, // Будет true после одобрения контента
+      is_active: false, // Будет true после одобрения контента  
+      is_public: false, // Будет true после финальной публикации
       
-      // Ссылка на юридические данные
-      legal_info: legal_info_id,
-      
-      // Базовый график работы (можно изменить в кабинете)
-      working_hours: {
-        monday: { is_open: true, open_time: '09:00', close_time: '21:00' },
-        tuesday: { is_open: true, open_time: '09:00', close_time: '21:00' },
-        wednesday: { is_open: true, open_time: '09:00', close_time: '21:00' },
-        thursday: { is_open: true, open_time: '09:00', close_time: '21:00' },
-        friday: { is_open: true, open_time: '09:00', close_time: '21:00' },
-        saturday: { is_open: true, open_time: '10:00', close_time: '22:00' },
-        sunday: { is_open: false, open_time: null, close_time: null }
-      }
+      legal_info_id // Ссылка на юридические данные
     });
 
     await newPartnerProfile.save();
 
     return {
-      isNewPartner: true,
-      partner: newPartnerProfile
+      success: true,
+      partner: newPartnerProfile,
+      message: 'Профиль партнера создан. Теперь можно наполнять контент.'
     };
 
   } catch (error) {
@@ -195,42 +183,41 @@ export const createPartnerAccount = async (partnerData) => {
 };
 
 /**
- * ✅ ЭТАП 3: Финальное одобрение партнера (единственное место создания PartnerProfile)
- * Создает PartnerProfile ТОЛЬКО ЗДЕСЬ после одобрения юр.данных
+ * ✅ ЭТАП 3: ФИНАЛЬНОЕ ОДОБРЕНИЕ ПАРТНЕРА (создание PartnerProfile)
+ * Вызывается админом после одобрения юридических данных
  */
-export const finalApprovePartner = async (legalInfoId, adminId) => {
+const finalApprovePartner = async (legalInfoId, adminId) => {
   const session = await mongoose.startSession();
   
   try {
-    const result = await session.withTransaction(async () => {
-      // Получаем юридическую информацию с заявкой
+    return await session.withTransaction(async () => {
+      // 1️⃣ ПОЛУЧАЕМ юридическую информацию
       const legalInfo = await PartnerLegalInfo.findById(legalInfoId)
         .populate('user_id')
-        .populate('partner_request_id')
         .session(session);
-
+      
       if (!legalInfo) {
         throw new Error('Юридическая информация не найдена');
       }
 
       if (legalInfo.verification_status !== 'pending') {
-        throw new Error('Юридические данные уже обработаны');
+        throw new Error('Юридическая информация уже обработана');
       }
 
-      const initialRequest = legalInfo.partner_request_id;
+      // 2️⃣ ОДОБРЯЕМ юридические данные
+      await legalInfo.verify(adminId, 'Юридические данные одобрены администратором');
+
+      // Получаем первичную заявку
+      const initialRequest = await InitialPartnerRequest.findOne({
+        user_id: legalInfo.user_id._id
+      }).session(session);
+
       if (!initialRequest) {
         throw new Error('Первичная заявка не найдена');
       }
 
-      // 1️⃣ Обновляем статус юридической информации
-      legalInfo.verification_status = 'verified';
-      legalInfo.verified_at = new Date();
-      legalInfo.verified_by = adminId;
-      await legalInfo.save({ session });
-
-      // 2️⃣ Обновляем статус первичной заявки
-      initialRequest.status = 'legal_approved'; // 🎯 НОВЫЙ СТАТУС!
-      await initialRequest.save({ session });
+      // Обновляем статус заявки
+      await initialRequest.approveLegal(adminId, 'Юридические данные одобрены');
 
       // 3️⃣ СОЗДАЕМ PartnerProfile (ЕДИНСТВЕННОЕ МЕСТО СОЗДАНИЯ!)
       const partnerProfileData = {
@@ -263,8 +250,6 @@ export const finalApprovePartner = async (legalInfoId, adminId) => {
       };
     });
 
-    return result;
-
   } catch (error) {
     console.error('Final approve partner error:', error);
     throw error;
@@ -278,7 +263,7 @@ export const finalApprovePartner = async (legalInfoId, adminId) => {
 /**
  * ✅ ЭТАП 4: Отправка контента на модерацию
  */
-export const submitContentForReview = async (userId) => {
+const submitContentForReview = async (userId) => {
   try {
     const profile = await PartnerProfile.findOne({ user_id: userId });
     if (!profile) {
@@ -313,7 +298,7 @@ export const submitContentForReview = async (userId) => {
 /**
  * ✅ ЭТАП 5: Управление контентом партнера (для админов)
  */
-export const updatePartnerContentStatus = async (profileId, newStatus, adminId = null) => {
+const updatePartnerContentStatus = async (profileId, newStatus, adminId = null) => {
   try {
     const profile = await PartnerProfile.findById(profileId);
     if (!profile) {
@@ -361,7 +346,7 @@ export const updatePartnerContentStatus = async (profileId, newStatus, adminId =
 /**
  * ✅ Получение публичных партнеров (для сайта)
  */
-export const getPublicPartners = async (filters = {}) => {
+const getPublicPartners = async (filters = {}) => {
   try {
     const { category, lat, lng, radius = 5 } = filters;
     
@@ -408,7 +393,7 @@ export const getPublicPartners = async (filters = {}) => {
 /**
  * ✅ Получение статистики партнера
  */
-export const getPartnerStats = async (userId) => {
+const getPartnerStats = async (userId) => {
   try {
     const profile = await PartnerProfile.findOne({ user_id: userId });
     if (!profile) {
@@ -433,7 +418,7 @@ export const getPartnerStats = async (userId) => {
   }
 };
 
-// ================ ЭКСПОРТ ================
+// ================ ЕДИНЫЙ ЭКСПОРТ ================
 export {
   // АВТОРИЗАЦИЯ
   loginPartner,
