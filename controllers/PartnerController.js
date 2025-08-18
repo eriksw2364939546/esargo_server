@@ -1,15 +1,10 @@
-// controllers/PartnerController.js - ИСПРАВЛЕННЫЙ ИМПОРТ
+// controllers/PartnerController.js - ИСПРАВЛЕННЫЙ (основные функции партнеров)
 import { 
   registerPartnerWithInitialRequest,
   getPartnerDashboardStatus,
   checkPartnerAccess
-} from '../services/partner.register.service.js'; // 🔧 ИСПРАВЛЕНО: используем существующий файл
-import {
-  approveInitialPartnerRequest,
-  rejectInitialPartnerRequest,
-  approveLegalInfoAndCreatePartner
-} from '../services/admin.partner.service.js';
-import { InitialPartnerRequest, PartnerLegalInfo, PartnerProfile } from '../models/index.js';
+} from '../services/partner.register.service.js'; // ✅ используем существующий файл
+import { InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
 import mongoose from 'mongoose';
 
 // ================ ПУБЛИЧНЫЕ МЕТОДЫ ================
@@ -452,51 +447,25 @@ export const getPartnerProfileData = async (req, res) => {
   }
 };
 
-// ================ АДМИНСКИЕ МЕТОДЫ ================
-// (оставляем без изменений, они работают правильно)
-
-export const getPartnerRequests = async (req, res) => {
-  // ... существующий код админских методов
-};
-
-export const updatePartnerRequestStatus = async (req, res) => {
-  // ... существующий код
-};
-
-export const approveLegalInfoAndCreate = async (req, res) => {
-  // ... существующий код  
-};
-
-export const rejectLegalInfoData = async (req, res) => {
-  // ... существующий код
-};
-
-export const getRequestDetails = async (req, res) => {
-  // ... существующий код
-};
-
 // ================ ЭКСПОРТ ================
 export default {
-  // ✅ ПРАВИЛЬНЫЙ ПОТОК
+  // ✅ ОСНОВНЫЕ ФУНКЦИИ ПАРТНЕРОВ (пошагово)
+  
+  // 1️⃣ РЕГИСТРАЦИЯ
   registerPartner, // Создает User + InitialPartnerRequest 
   loginPartnerUser, // Авторизация партнера
   
-  // Личный кабинет
-  getDashboardStatus, // 🆕 Статус личного кабинета
+  // 2️⃣ ЛИЧНЫЙ КАБИНЕТ
+  getDashboardStatus, // Статус личного кабинета
   getRequestStatus, // Статус заявки (старый метод)
-  checkFeatureAccess, // 🆕 Проверка доступа к функциям
+  checkFeatureAccess, // Проверка доступа к функциям
   
-  // Этапы регистрации
+  // 3️⃣ ЭТАПЫ РЕГИСТРАЦИИ
   submitPartnerLegalInfo, // Юридические данные (после одобрения)
   getPartnerProfileData, // Профиль (после полного одобрения)
   
-  // Устаревшие
-  createInitialPartnerRequest, // DEPRECATED
+  // 4️⃣ УСТАРЕВШИЕ
+  createInitialPartnerRequest // DEPRECATED
   
-  // Админские
-  getPartnerRequests,
-  updatePartnerRequestStatus,
-  approveLegalInfoAndCreate,
-  rejectLegalInfoData,
-  getRequestDetails
+  // 🔄 АДМИНСКИЕ МЕТОДЫ ДОБАВИМ ПОЗЖЕ
 };

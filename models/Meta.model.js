@@ -1,4 +1,4 @@
-// models/Meta.model.js (исправленный)
+// models/Meta.model.js (исправленный - добавлен findByEmailHash)
 import mongoose from 'mongoose';
 
 const metaSchema = new mongoose.Schema({
@@ -146,7 +146,12 @@ metaSchema.methods.getUserId = function() {
   }
 };
 
-// Статические методы
+// ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
+
+// 🔧 ИСПРАВЛЕНИЕ: Добавляем недостающий метод findByEmailHash
+metaSchema.statics.findByEmailHash = function(hashedEmail) {
+  return this.findOne({ em: hashedEmail });
+};
 
 // Поиск по хешированному email и роли
 metaSchema.statics.findByEmailAndRole = function(hashedEmail, role) {

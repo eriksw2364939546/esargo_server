@@ -1,56 +1,55 @@
-// routes/Partner.route.js (обновленный)
+// routes/Partner.route.js - ОСНОВНЫЕ ФУНКЦИИ ПАРТНЕРОВ
 import express from 'express';
 import {
-  createInitialPartnerRequest,
-  submitPartnerLegalInfo,
+  registerPartner,  // 🆕 ГЛАВНАЯ ФУНКЦИЯ
   loginPartnerUser,
-  getPartnerProfileData,
+  getDashboardStatus,
   getRequestStatus,
-  getPartnerRequests,
-  updatePartnerRequestStatus,
-  approveLegalInfoAndCreate,
-  rejectLegalInfoData,
-  getRequestDetails
+  checkFeatureAccess,
+  submitPartnerLegalInfo,
+  getPartnerProfileData,
+  createInitialPartnerRequest  // deprecated
 } from '../controllers/PartnerController.js';
 import { 
   authenticateUser, 
-  requireRole,
-  requireAdminPermission,
-  optionalAuth 
+  requireRole
 } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
 
 // ================ ПУБЛИЧНЫЕ РОУТЫ ================
 
-// POST /api/partners/login - Авторизация партнера
+// 🎯 1️⃣ РЕГИСТРАЦИЯ ПАРТНЕРА (главная функция)
+router.post('/register', registerPartner);
+
+// 🎯 2️⃣ АВТОРИЗАЦИЯ ПАРТНЕРА
 router.post('/login', loginPartnerUser);
 
 // GET /api/partners/health - Проверка работы роутов
 router.get('/health', (req, res) => {
   res.json({
     result: true,
-    message: "Partner routes working with service layer",
+    message: "Partner routes working - основные функции",
     service_layer: "enabled",
     meta_model: "enabled",
     available_endpoints: {
-      // Публичные
-      login: "POST /api/partners/login",
+      // 📋 ОСНОВНОЙ ПОТОК
+      "1️⃣ Регистрация": "POST /api/partners/register",
+      "2️⃣ Авторизация": "POST /api/partners/login",
+      "3️⃣ Статус кабинета": "GET /api/partners/dashboard",
+      "4️⃣ Юридические данные": "POST /api/partners/:request_id/legal-info",
+      "5️⃣ Профиль": "GET /api/partners/profile",
       
-      // Регистрация партнера
-      create_initial: "POST /api/partners/initial-request",
-      submit_legal: "POST /api/partners/:request_id/legal-info",
-      request_status: "GET /api/partners/status",
-      
-      // Профиль партнера
-      profile: "GET /api/partners/profile",
-      
-      // Админские
-      list_requests: "GET /api/partners/requests",
-      request_details: "GET /api/partners/requests/:request_id",
-      update_status: "PATCH /api/partners/:id/status",
-      approve_legal: "POST /api/partners/legal-info/:legal_info_id/approve",
-      reject_legal: "POST /api/partners/legal-info/:legal_info_id/reject"
+      // 🔧 ДОПОЛНИТЕЛЬНО  
+      check_access: "GET /api/partners/access/:feature",
+      status_old: "GET /api/partners/status"
+    },
+    workflow: {
+      step1: "POST /register -> Создает User + InitialPartnerRequest",
+      step2: "POST /login -> Авторизация в личный кабинет",
+      step3: "GET /dashboard -> Проверка что нужно сделать дальше",
+      step4: "POST /:request_id/legal-info -> Подача документов (после одобрения админом)",
+      step5: "GET /profile -> Полный доступ (после одобрения документов)"
     },
     timestamp: new Date().toISOString()
   });
@@ -58,33 +57,63 @@ router.get('/health', (req, res) => {
 
 // ================ ЗАЩИЩЕННЫЕ РОУТЫ ПАРТНЕРОВ ================
 
-// POST /api/partners/initial-request - Этап 1: Создание первичной заявки
-router.post('/initial-request', authenticateUser, createInitialPartnerRequest);
+// 🎯 3️⃣ СТАТУС ЛИЧНОГО КАБИНЕТА (что делать дальше)
+router.get('/dashboard', authenticateUser, requireRole('partner'), getDashboardStatus);
 
-// POST /api/partners/:request_id/legal-info - Этап 2: Юридические данные
-router.post('/:request_id/legal-info', authenticateUser, submitPartnerLegalInfo);
+// 🎯 4️⃣ ПОДАЧА ЮРИДИЧЕСКИХ ДАННЫХ
+router.post('/:request_id/legal-info', authenticateUser, requireRole('partner'), submitPartnerLegalInfo);
 
-// GET /api/partners/profile - Получение профиля партнера
+// 🎯 5️⃣ ПОЛУЧЕНИЕ ПРОФИЛЯ (после полного одобрения)
 router.get('/profile', authenticateUser, requireRole('partner'), getPartnerProfileData);
 
-// GET /api/partners/status - Получение статуса заявки
-router.get('/status', authenticateUser, getRequestStatus);
+// 🔧 ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ
 
-// ================ АДМИНСКИЕ РОУТЫ ================
+// Проверка доступа к функции
+router.get('/access/:feature', authenticateUser, requireRole('partner'), checkFeatureAccess);
 
-// GET /api/partners/requests - Получение всех заявок (админы)
-router.get('/requests', authenticateUser, requireRole('admin'), requireAdminPermission('partners', 'read'), getPartnerRequests);
+// Старый метод получения статуса
+router.get('/status', authenticateUser, requireRole('partner'), getRequestStatus);
 
-// GET /api/partners/requests/:request_id - Получение детальной информации о заявке
-router.get('/requests/:request_id', authenticateUser, requireRole('admin'), requireAdminPermission('partners', 'read'), getRequestDetails);
+// ================ УСТАРЕВШИЕ РОУТЫ ================
 
-// PATCH /api/partners/:id/status - Обновление статуса первичной заявки (админы)
-router.patch('/:id/status', authenticateUser, requireRole('admin'), requireAdminPermission('partners', 'approve'), updatePartnerRequestStatus);
+// POST /api/partners/initial-request - УСТАРЕЛО
+router.post('/initial-request', authenticateUser, createInitialPartnerRequest);
 
-// 🆕 POST /api/partners/legal-info/:legal_info_id/approve - Одобрение юридических данных
-router.post('/legal-info/:legal_info_id/approve', authenticateUser, requireRole('admin'), requireAdminPermission('partners', 'approve'), approveLegalInfoAndCreate);
+// ================ ЗАМЕТКИ ДЛЯ РАЗРАБОТЧИКОВ ================
+/*
+📋 ПОТОК РЕГИСТРАЦИИ ПАРТНЕРА:
 
-// 🆕 POST /api/partners/legal-info/:legal_info_id/reject - Отклонение юридических данных  
-router.post('/legal-info/:legal_info_id/reject', authenticateUser, requireRole('admin'), requireAdminPermission('partners', 'write'), rejectLegalInfoData);
+1️⃣ POST /api/partners/register
+   - Создает User с role='partner' 
+   - Создает InitialPartnerRequest со статусом 'pending'
+   - Возвращает JWT токен
+   - Партнер может войти в кабинет
+
+2️⃣ POST /api/partners/login  
+   - Авторизация партнера
+   - Получение токена доступа
+
+3️⃣ GET /api/partners/dashboard
+   - Проверка статуса заявки
+   - Показывает что нужно сделать дальше:
+     • pending -> "Ждите одобрения админом"
+     • approved -> "Заполните юридические данные"  
+     • under_review -> "Документы на проверке"
+     • completed -> "Доступны все функции"
+
+4️⃣ POST /api/partners/:request_id/legal-info
+   - Подача юридических данных (SIRET, и т.д.)
+   - Только после одобрения первичной заявки (status=approved)
+
+5️⃣ GET /api/partners/profile
+   - Получение полного профиля партнера
+   - Только после одобрения всех документов
+
+🔄 СЛЕДУЮЩИЕ ЭТАПЫ:
+- Админские функции для одобрения заявок
+- Управление меню и товарами  
+- Обработка заказов
+- Аналитика и отчеты
+*/
 
 export default router;

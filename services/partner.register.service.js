@@ -1,4 +1,4 @@
-// services/partner.correct.service.js - ПРАВИЛЬНЫЙ ПОТОК
+// services/partner.register.service.js - ИСПРАВЛЕННЫЙ
 import { User, InitialPartnerRequest } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { hashString, hashMeta } from '../utils/hash.js';
@@ -68,56 +68,49 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
 
       await newUser.save({ session });
 
-      // 2️⃣ Создаем Meta запись
-      const newMetaInfo = new Meta({
-        user_id: newUser._id,
-        email_hash: hashedEmail,
-        role: 'partner',
-        security_info: {
-          failed_attempts: 0,
-          last_failed_attempt: null,
-          locked_until: null
-        }
-      });
+      // 2️⃣ Создаем Meta запись через правильный метод
+      const newMetaInfo = await Meta.createForPartner(newUser._id, hashedEmail);
 
-      await newMetaInfo.save({ session });
-
-      // 3️⃣ Создаем InitialPartnerRequest (данные с изображения 1)
-      const initialRequest = new InitialPartnerRequest({
+      // 3️⃣ Создаем InitialPartnerRequest (заявка партнера)
+      const newPartnerRequest = new InitialPartnerRequest({
         user_id: newUser._id,
-        status: 'pending', // ⏳ Ожидает одобрения админа
+        personal_data: {
+          first_name,
+          last_name,
+          phone,
+          email: normalizedEmail
+        },
         business_data: {
           business_name,
           brand_name: brand_name || business_name,
-          category, // restaurant/store
+          category,
+          description: `${category === 'restaurant' ? 'Ресторан' : 'Магазин'} ${business_name}`,
           address,
-          location: {
-            lat: parseFloat(location.lat),
-            lng: parseFloat(location.lng)
-          },
+          location,
+          floor_unit,
           phone,
           email: normalizedEmail,
           owner_name: first_name,
-          owner_surname: last_name,
-          floor_unit // этаж/люкс
+          owner_surname: last_name
         },
-        whatsapp_consent,
-        submitted_at: new Date(),
-        source: 'web',
-        ip_address: registration_ip,
-        user_agent
+        registration_info: {
+          registration_ip,
+          user_agent,
+          whatsapp_consent,
+          consent_date: new Date()
+        },
+        status: 'pending', // Ждет одобрения админом
+        submitted_at: new Date()
       });
 
-      await initialRequest.save({ session });
+      await newPartnerRequest.save({ session });
 
-      // 4️⃣ Генерируем токен (партнер может войти в кабинет!)
+      // 4️⃣ Генерируем JWT токен 
       const token = generateCustomerToken({
         user_id: newUser._id,
-        _id: newUser._id,
         email: newUser.email,
-        role: 'partner',
-        is_admin: false
-      }, '30d');
+        role: newUser.role
+      });
 
       return {
         success: true,
@@ -125,57 +118,57 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
           id: newUser._id,
           email: newUser.email,
           role: newUser.role,
+          is_active: newUser.is_active,
           is_email_verified: newUser.is_email_verified
         },
         request: {
-          id: initialRequest._id,
-          status: initialRequest.status, // 'pending'
-          business_name: initialRequest.business_data.business_name,
-          category: initialRequest.business_data.category
+          id: newPartnerRequest._id,
+          business_name: newPartnerRequest.business_data.business_name,
+          category: newPartnerRequest.business_data.category,
+          status: newPartnerRequest.status,
+          submitted_at: newPartnerRequest.submitted_at
         },
-        token,
-        dashboard_access: {
-          can_login: true, // ✅ Может войти в кабинет
-          has_limited_access: true, // ⚠️ Ограниченный доступ
-          waiting_for_approval: true, // ⏳ Ждет одобрения
-          next_step: 'Ожидание одобрения администратором'
-        }
+        token
       };
     });
 
   } catch (error) {
     console.error('Register partner with initial request error:', error);
     throw error;
-  } finally {
-    await session.endSession();
   }
 };
 
 /**
- * ✅ Получение статуса заявки для личного кабинета
+ * ✅ Получение статуса личного кабинета партнера
+ * Показывает что нужно сделать дальше
  */
 export const getPartnerDashboardStatus = async (userId) => {
   try {
-    const request = await InitialPartnerRequest.findOne({ user_id: userId })
-      .sort({ submitted_at: -1 });
-
+    // Получаем первичную заявку партнера
+    const request = await InitialPartnerRequest.findOne({ user_id: userId });
+    
     if (!request) {
       return {
         hasRequest: false,
-        dashboard_state: 'no_request'
+        dashboard_state: 'no_request',
+        message: 'Заявка на партнерство не найдена',
+        can_access_features: false,
+        show_legal_form: false,
+        admin_action_needed: false
       };
     }
 
+    // Конфигурация статусов для личного кабинета
     const statusConfig = {
       'pending': {
-        dashboard_state: 'waiting_approval',
-        message: 'Ваша заявка на рассмотрении',
+        dashboard_state: 'awaiting_approval',
+        message: 'Ваша заявка на рассмотрении у администратора',
         can_access_features: false,
         show_legal_form: false,
         admin_action_needed: true
       },
       'approved': {
-        dashboard_state: 'can_submit_legal',
+        dashboard_state: 'need_legal_info',
         message: 'Заявка одобрена! Заполните юридические данные',
         can_access_features: false,
         show_legal_form: true, // 🎯 ПОКАЗАТЬ ФОРМУ ИЗОБРАЖЕНИЯ 2
