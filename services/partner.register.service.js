@@ -71,7 +71,46 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
       // 2️⃣ Создаем Meta запись через правильный метод
       const newMetaInfo = await Meta.createForPartner(newUser._id, hashedEmail);
 
-      // 3️⃣ Создаем InitialPartnerRequest (заявка партнера) 🔐 С ШИФРОВАНИЕМ
+      // 🆕 3️⃣ Создаем базовый PartnerProfile (пустой, будет заполнен после одобрения)
+      const { PartnerProfile } = await import('../models/index.js');
+      const newPartnerProfile = new PartnerProfile({
+        user_id: newUser._id,
+        business_name,
+        brand_name: brand_name || business_name,
+        category,
+        description: `${category === 'restaurant' ? 'Ресторан' : 'Магазин'} ${business_name}`,
+        
+        // 🔐 ЗАШИФРОВЫВАЕМ основные данные
+        address: cryptoString(address),
+        location, // Координаты открыто (для карт)
+        phone: cryptoString(phone),
+        email: cryptoString(normalizedEmail),
+        
+        // Основная информация
+        owner_name: first_name,
+        owner_surname: last_name,
+        floor_unit: floor_unit ? cryptoString(floor_unit) : null,
+        
+        // 🚧 СТАТУС: В процессе регистрации
+        is_approved: false,
+        is_active: false,
+        approval_status: 'awaiting_legal_info', // pending → awaiting_legal_info → under_review → approved
+        
+        // Рабочие часы по умолчанию (можно изменить позже)
+        working_hours: {
+          monday: { is_open: true, open_time: '09:00', close_time: '21:00' },
+          tuesday: { is_open: true, open_time: '09:00', close_time: '21:00' },
+          wednesday: { is_open: true, open_time: '09:00', close_time: '21:00' },
+          thursday: { is_open: true, open_time: '09:00', close_time: '21:00' },
+          friday: { is_open: true, open_time: '09:00', close_time: '21:00' },
+          saturday: { is_open: true, open_time: '10:00', close_time: '22:00' },
+          sunday: { is_open: false, open_time: null, close_time: null }
+        }
+      });
+
+      await newPartnerProfile.save({ session }); // 🔧 ДОБАВЛЕНО: Сохраняем профиль
+
+      // 4️⃣ Создаем InitialPartnerRequest (заявка партнера) 🔐 С ШИФРОВАНИЕМ
       const newPartnerRequest = new InitialPartnerRequest({
         user_id: newUser._id,
         
@@ -118,7 +157,7 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
 
       await newPartnerRequest.save({ session });
 
-      // 4️⃣ Генерируем JWT токен 
+      // 5️⃣ Генерируем JWT токен 
       const token = generateCustomerToken({
         user_id: newUser._id,
         email: newUser.email,
@@ -143,6 +182,14 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
           submitted_at: newPartnerRequest.submitted_at
           // 🚫 НЕ ВОЗВРАЩАЕМ зашифрованные данные в ответе
         },
+        profile: {
+          id: newPartnerProfile._id,
+          business_name: newPartnerProfile.business_name,
+          category: newPartnerProfile.category,
+          approval_status: newPartnerProfile.approval_status,
+          is_approved: newPartnerProfile.is_approved,
+          is_active: newPartnerProfile.is_active
+        },
         token
       };
     });
@@ -154,8 +201,8 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
 };
 
 /**
- * ✅ БЕЗОПАСНОЕ получение статуса личного кабинета партнера
- * 🔓 Расшифровывает данные только для владельца
+ * ✅ ОБНОВЛЕННОЕ получение статуса личного кабинета партнера
+ * 🔓 Теперь учитывает PartnerProfile и показывает полную картину
  */
 export const getPartnerDashboardStatus = async (userId) => {
   try {
@@ -173,6 +220,10 @@ export const getPartnerDashboardStatus = async (userId) => {
       };
     }
 
+    // 🆕 ПРОВЕРЯЕМ ТАКЖЕ PARTNERPROFILE
+    const { PartnerProfile } = await import('../models/index.js');
+    const profile = await PartnerProfile.findOne({ user_id: userId });
+
     // Конфигурация статусов для личного кабинета
     const statusConfig = {
       'pending': {
@@ -180,35 +231,45 @@ export const getPartnerDashboardStatus = async (userId) => {
         message: 'Ваша заявка на рассмотрении у администратора',
         can_access_features: false,
         show_legal_form: false,
-        admin_action_needed: true
+        admin_action_needed: true,
+        profile_exists: !!profile,
+        profile_status: profile?.approval_status || 'not_created'
       },
       'approved': {
         dashboard_state: 'need_legal_info',
         message: 'Заявка одобрена! Заполните юридические данные',
         can_access_features: false,
         show_legal_form: true, // 🎯 ПОКАЗАТЬ ФОРМУ ИЗОБРАЖЕНИЯ 2
-        admin_action_needed: false
+        admin_action_needed: false,
+        profile_exists: !!profile,
+        profile_status: profile?.approval_status || 'awaiting_legal_info'
       },
       'awaiting_legal_info': {
         dashboard_state: 'need_legal_info',
         message: 'Необходимо заполнить юридические данные',
         can_access_features: false,
         show_legal_form: true,
-        admin_action_needed: false
+        admin_action_needed: false,
+        profile_exists: !!profile,
+        profile_status: profile?.approval_status || 'awaiting_legal_info'
       },
       'under_review': {
         dashboard_state: 'legal_review',
         message: 'Юридические данные на проверке',
         can_access_features: false,
         show_legal_form: false,
-        admin_action_needed: true
+        admin_action_needed: true,
+        profile_exists: !!profile,
+        profile_status: profile?.approval_status || 'under_review'
       },
       'completed': {
         dashboard_state: 'active_partner',
         message: 'Добро пожаловать! Все функции доступны',
         can_access_features: true, // 🎉 ВСЁ ДОСТУПНО
         show_legal_form: false,
-        admin_action_needed: false
+        admin_action_needed: false,
+        profile_exists: !!profile,
+        profile_status: profile?.approval_status || 'approved'
       },
       'rejected': {
         dashboard_state: 'rejected',
@@ -216,7 +277,9 @@ export const getPartnerDashboardStatus = async (userId) => {
         can_access_features: false,
         show_legal_form: false,
         admin_action_needed: false,
-        rejection_reason: request.review_info?.rejection_reason
+        rejection_reason: request.review_info?.rejection_reason,
+        profile_exists: !!profile,
+        profile_status: profile?.approval_status || 'rejected'
       }
     };
 
@@ -231,6 +294,10 @@ export const getPartnerDashboardStatus = async (userId) => {
       business_name: request.business_data.business_name,
       category: request.business_data.category,
       submitted_at: request.submitted_at,
+      
+      // 🆕 ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ПРОФИЛЕ
+      profile_id: profile?._id,
+      has_profile: !!profile,
       
       // 🔓 РАСШИФРОВЫВАЕМ только для владельца (в контроллере проверяем права)
       // phone будет расшифрован отдельной функцией при необходимости
@@ -353,6 +420,3 @@ export const encryptLegalData = (legalData) => {
     additional_info: legalData.additional_info || null
   };
 };
-
-// 🔐 ЭКСПОРТ ФУНКЦИЙ БЕЗОПАСНОСТИ
-export { encryptLegalData, getDecryptedPartnerData };
