@@ -1,7 +1,8 @@
-// models/Category.model.js (исправленный - ES6 modules)
+// models/Category.model.js - ИСПРАВЛЕННАЯ МОДЕЛЬ (ТОЛЬКО ГЛОБАЛЬНЫЕ КАТЕГОРИИ) 🏪
 import mongoose from 'mongoose';
 
 const categorySchema = new mongoose.Schema({
+  // ✅ ТОЛЬКО 2 ГЛОБАЛЬНЫЕ КАТЕГОРИИ
   name: {
     type: String,
     required: true,
@@ -17,7 +18,7 @@ const categorySchema = new mongoose.Schema({
     index: true
   },
   
-  // Отображение в интерфейсе
+  // Отображение в интерфейсе (мультиязычность)
   display_info: {
     title_ru: {
       type: String,
@@ -50,7 +51,7 @@ const categorySchema = new mongoose.Schema({
     }
   },
   
-  // Иконка и изображения
+  // Визуальные элементы
   visual_assets: {
     icon_url: {
       type: String // URL иконки для меню
@@ -146,83 +147,60 @@ const categorySchema = new mongoose.Schema({
       max: 5
     },
     last_stats_update: {
-      type: Date,
-      default: Date.now
+      type: Date
     }
   },
   
-  // Бизнес-настройки для категории
+  // Бизнес-настройки для каждой категории
   business_settings: {
     // Настройки доставки
     delivery_settings: {
-      min_order_amount: {
+      default_preparation_time: {
         type: Number,
-        default: 15 // Минимальная сумма заказа
-      },
-      delivery_fee: {
-        type: Number,
-        default: 3.50 // Стандартная стоимость доставки
-      },
-      free_delivery_threshold: {
-        type: Number,
-        default: 35 // Бесплатная доставка от суммы
+        default: function() {
+          return this.slug === 'restaurant' ? 30 : 15; // Рестораны дольше готовят
+        }
       },
       max_delivery_distance: {
         type: Number,
-        default: 15 // Максимальное расстояние доставки в км
+        default: 10 // км
       },
-      estimated_preparation_time: {
+      delivery_fee_base: {
         type: Number,
-        default: 30 // Среднее время приготовления в минутах
-      }
-    },
-    
-    // Настройки заказов
-    order_settings: {
-      allow_pre_orders: {
-        type: Boolean,
-        default: true
-      },
-      max_items_per_order: {
-        type: Number,
-        default: 50
-      },
-      allow_special_instructions: {
-        type: Boolean,
-        default: true
+        default: 2.99 // евро
       }
     },
     
     // Рабочие часы по умолчанию
     default_working_hours: {
       monday: { 
-        open: { type: String, default: '10:00' }, 
+        open: { type: String, default: '09:00' }, 
         close: { type: String, default: '22:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       tuesday: { 
-        open: { type: String, default: '10:00' }, 
+        open: { type: String, default: '09:00' }, 
         close: { type: String, default: '22:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       wednesday: { 
-        open: { type: String, default: '10:00' }, 
+        open: { type: String, default: '09:00' }, 
         close: { type: String, default: '22:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       thursday: { 
-        open: { type: String, default: '10:00' }, 
+        open: { type: String, default: '09:00' }, 
         close: { type: String, default: '22:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       friday: { 
-        open: { type: String, default: '10:00' }, 
-        close: { type: String, default: '22:00' }, 
+        open: { type: String, default: '09:00' }, 
+        close: { type: String, default: '23:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       saturday: { 
-        open: { type: String, default: '10:00' }, 
-        close: { type: String, default: '22:00' }, 
+        open: { type: String, default: '09:00' }, 
+        close: { type: String, default: '23:00' }, 
         is_open: { type: Boolean, default: true } 
       },
       sunday: { 
@@ -272,24 +250,8 @@ const categorySchema = new mongoose.Schema({
     }
   },
   
-  // Популярные подкатегории для фильтрации
-  popular_subcategories: [{
-    name: {
-      type: String,
-      trim: true
-    },
-    slug: {
-      type: String,
-      trim: true
-    },
-    icon: {
-      type: String
-    },
-    is_featured: {
-      type: Boolean,
-      default: false
-    }
-  }],
+  // ❌ УДАЛЕНО: popular_subcategories 
+  // Теперь подкатегории создает каждый партнер в своем menu_categories!
   
   // Информация о последнем обновлении
   last_updated_by: {
@@ -317,14 +279,14 @@ const categorySchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Индексы для оптимизации
+// ================ ИНДЕКСЫ ================
 categorySchema.index({ slug: 1 });
 categorySchema.index({ is_active: 1, sort_order: 1 });
 categorySchema.index({ name: 1 });
 categorySchema.index({ 'stats.total_partners': -1 });
 categorySchema.index({ 'stats.total_orders': -1 });
 
-// Виртуальные поля
+// ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
 
 // Получение партнеров категории
 categorySchema.virtual('partners', {
@@ -341,118 +303,110 @@ categorySchema.virtual('products', {
   foreignField: 'category'
 });
 
-// Методы экземпляра
+// ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
-// Обновление статистики категории
+/**
+ * 📊 Обновление статистики категории
+ */
 categorySchema.methods.updateStats = async function() {
   const PartnerProfile = mongoose.model('PartnerProfile');
   const Product = mongoose.model('Product');
   const Order = mongoose.model('Order');
   
-  // Подсчет партнеров
-  const totalPartners = await PartnerProfile.countDocuments({ category: this.slug });
-  const activePartners = await PartnerProfile.countDocuments({ 
-    category: this.slug, 
-    is_active: true,
-    is_approved: true 
-  });
-  
-  // Подсчет продуктов
-  const totalProducts = await Product.countDocuments({ category: this.slug });
-  
-  // Получаем партнеров для подсчета заказов
-  const partnerIds = await PartnerProfile.find({ category: this.slug }).distinct('_id');
-  
-  // Подсчет заказов и выручки
-  const orderStats = await Order.aggregate([
-    {
-      $match: {
-        partner_id: { $in: partnerIds },
-        status: 'delivered'
+  try {
+    // Подсчет партнеров
+    const totalPartners = await PartnerProfile.countDocuments({ category: this.slug });
+    const activePartners = await PartnerProfile.countDocuments({ 
+      category: this.slug, 
+      is_active: true,
+      is_approved: true 
+    });
+    
+    // Подсчет продуктов
+    const totalProducts = await Product.countDocuments({ category: this.slug });
+    
+    // Получаем партнеров для подсчета заказов
+    const partnerIds = await PartnerProfile.find({ category: this.slug }).distinct('_id');
+    
+    // Подсчет заказов и выручки
+    const orderStats = await Order.aggregate([
+      {
+        $match: {
+          partner_id: { $in: partnerIds },
+          status: 'delivered'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total_orders: { $sum: 1 },
+          total_revenue: { $sum: '$total_price' }
+        }
       }
-    },
-    {
-      $group: {
-        _id: null,
-        total_orders: { $sum: 1 },
-        total_revenue: { $sum: '$total_price' }
+    ]);
+    
+    // Подсчет среднего рейтинга
+    const ratingStats = await PartnerProfile.aggregate([
+      {
+        $match: {
+          category: this.slug,
+          is_active: true,
+          'ratings.total_ratings': { $gt: 0 }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          avg_rating: { $avg: '$ratings.avg_rating' }
+        }
       }
-    }
-  ]);
-  
-  // Подсчет среднего рейтинга
-  const ratingStats = await PartnerProfile.aggregate([
-    {
-      $match: {
-        category: this.slug,
-        is_active: true,
-        'ratings.total_ratings': { $gt: 0 }
-      }
-    },
-    {
-      $group: {
-        _id: null,
-        avg_rating: { $avg: '$ratings.avg_rating' }
-      }
-    }
-  ]);
-  
-  // Обновляем статистику
-  this.stats.total_partners = totalPartners;
-  this.stats.active_partners = activePartners;
-  this.stats.total_products = totalProducts;
-  this.stats.total_orders = orderStats[0]?.total_orders || 0;
-  this.stats.total_revenue = orderStats[0]?.total_revenue || 0;
-  this.stats.avg_rating = ratingStats[0]?.avg_rating || 0;
-  this.stats.last_stats_update = new Date();
-  
-  return this.save();
-};
-
-// Добавление подкатегории
-categorySchema.methods.addSubcategory = function(name, slug, icon = null, isFeatured = false) {
-  // Проверяем что подкатегория еще не существует
-  const exists = this.popular_subcategories.some(sub => sub.slug === slug);
-  if (exists) {
-    throw new Error('Подкатегория уже существует');
+    ]);
+    
+    // Обновляем статистику
+    this.stats.total_partners = totalPartners;
+    this.stats.active_partners = activePartners;
+    this.stats.total_products = totalProducts;
+    this.stats.total_orders = orderStats[0]?.total_orders || 0;
+    this.stats.total_revenue = orderStats[0]?.total_revenue || 0;
+    this.stats.avg_rating = ratingStats[0]?.avg_rating || 0;
+    this.stats.last_stats_update = new Date();
+    
+    return this.save();
+    
+  } catch (error) {
+    console.error(`Ошибка обновления статистики категории ${this.slug}:`, error);
+    throw error;
   }
-  
-  this.popular_subcategories.push({
-    name,
-    slug,
-    icon,
-    is_featured: isFeatured
-  });
-  
-  return this.save();
 };
 
-// Удаление подкатегории
-categorySchema.methods.removeSubcategory = function(slug) {
-  this.popular_subcategories = this.popular_subcategories.filter(sub => sub.slug !== slug);
-  return this.save();
-};
-
-// Обновление бизнес-настроек
+/**
+ * 🔧 Обновление бизнес-настроек
+ */
 categorySchema.methods.updateBusinessSettings = function(newSettings) {
   Object.assign(this.business_settings, newSettings);
   this.markModified('business_settings');
   return this.save();
 };
 
-// Статические методы
+// ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
-// Получение активных категорий
+/**
+ * 📋 Получение активных категорий
+ */
 categorySchema.statics.findActive = function() {
   return this.find({ is_active: true }).sort({ sort_order: 1 });
 };
 
-// Поиск по slug
+/**
+ * 🔍 Поиск по slug
+ */
 categorySchema.statics.findBySlug = function(slug) {
   return this.findOne({ slug, is_active: true });
 };
 
-// Получение статистики всех категорий
+/**
+ * 📊 Получение статистики всех категорий
+ */
 categorySchema.statics.getAllStats = function() {
   return this.find({ is_active: true }, {
     name: 1,
@@ -462,7 +416,9 @@ categorySchema.statics.getAllStats = function() {
   }).sort({ sort_order: 1 });
 };
 
-// Инициализация категорий по умолчанию
+/**
+ * 🚀 Инициализация категорий по умолчанию
+ */
 categorySchema.statics.initializeDefaults = async function() {
   const existingCategories = await this.countDocuments();
   if (existingCategories > 0) {
@@ -489,13 +445,15 @@ categorySchema.statics.initializeDefaults = async function() {
           background_color: '#FFF5F5'
         }
       },
-      popular_subcategories: [
-        { name: 'Бургеры', slug: 'burgers', is_featured: true },
-        { name: 'Пицца', slug: 'pizza', is_featured: true },
-        { name: 'Суши', slug: 'sushi', is_featured: true },
-        { name: 'Паста', slug: 'pasta', is_featured: false },
-        { name: 'Салаты', slug: 'salads', is_featured: false }
-      ]
+      business_settings: {
+        delivery_settings: {
+          default_preparation_time: 30 // Рестораны готовят дольше
+        }
+      },
+      category_features: {
+        supports_options: true, // Добавки к блюдам
+        show_preparation_time: true
+      }
     },
     {
       name: 'Магазины',
@@ -518,23 +476,23 @@ categorySchema.statics.initializeDefaults = async function() {
       },
       business_settings: {
         delivery_settings: {
-          estimated_preparation_time: 15 // Магазины быстрее
+          default_preparation_time: 15 // Магазины быстрее
         }
       },
-      popular_subcategories: [
-        { name: 'Продукты', slug: 'groceries', is_featured: true },
-        { name: 'Напитки', slug: 'beverages', is_featured: true },
-        { name: 'Хлеб и выпечка', slug: 'bakery', is_featured: false },
-        { name: 'Мясо и рыба', slug: 'meat-fish', is_featured: false },
-        { name: 'Молочные продукты', slug: 'dairy', is_featured: false }
-      ]
+      category_features: {
+        supports_options: false, // Товары без добавок
+        supports_age_restriction: true, // Для алкоголя
+        show_preparation_time: false
+      }
     }
   ];
   
   return this.insertMany(defaultCategories);
 };
 
-// Обновление всех статистик (для cron задач)
+/**
+ * 🔄 Обновление всех статистик (для cron задач)
+ */
 categorySchema.statics.updateAllStats = async function() {
   const categories = await this.find({ is_active: true });
   const results = [];
@@ -564,6 +522,5 @@ categorySchema.statics.updateAllStats = async function() {
 categorySchema.set('toJSON', { virtuals: true });
 categorySchema.set('toObject', { virtuals: true });
 
-// 🆕 ИСПРАВЛЕНО: ES6 export
 const Category = mongoose.model('Category', categorySchema);
 export default Category;
