@@ -1,4 +1,4 @@
-// routes/Partner.route.js - ОСНОВНЫЕ РОУТЫ ПАРТНЕРОВ 🏪
+// routes/Partner.route.js - РАСШИРЕННЫЕ РОУТЫ С УПРАВЛЕНИЕМ МЕНЮ 🍽️
 import express from 'express';
 import {
   registerPartner,
@@ -12,6 +12,20 @@ import {
   getRequestStatus,
   createInitialPartnerRequest
 } from '../controllers/PartnerController.js';
+
+// 🆕 ИМПОРТ КОНТРОЛЛЕРА МЕНЮ
+import {
+  getMenuCategories,
+  addMenuCategory,
+  updateMenuCategory,
+  deleteMenuCategory,
+  getProducts,
+  addProduct,
+  updateProduct,
+  deleteProduct,
+  getMenuStats
+} from '../controllers/PartnerMenuController.js';
+
 import { 
   authenticateUser, 
   requireRole
@@ -71,6 +85,23 @@ router.get('/health', (req, res) => {
       // Профиль (доступен после ЭТАПА 3)
       profile: "GET /api/partners/profile",
       
+      // 🆕 УПРАВЛЕНИЕ МЕНЮ (ЭТАП 4)
+      menu: {
+        categories: {
+          get_all: "GET /api/partners/menu/categories",
+          add: "POST /api/partners/menu/categories",
+          update: "PUT /api/partners/menu/categories/:category_id",
+          delete: "DELETE /api/partners/menu/categories/:category_id"
+        },
+        products: {
+          get_all: "GET /api/partners/menu/products",
+          add: "POST /api/partners/menu/products",
+          update: "PUT /api/partners/menu/products/:product_id",
+          delete: "DELETE /api/partners/menu/products/:product_id"
+        },
+        stats: "GET /api/partners/menu/stats"
+      },
+      
       // Legacy/deprecated
       old_status: "GET /api/partners/status (deprecated)",
       old_initial: "POST /api/partners/initial-request (deprecated)"
@@ -80,7 +111,7 @@ router.get('/health', (req, res) => {
   });
 });
 
-// ================ ЗАЩИЩЕННЫЕ РОУТЫ ================
+// ================ ЗАЩИЩЕННЫЕ РОУТЫ ЛИЧНОГО КАБИНЕТА ================
 
 /**
  * 📊 ЛИЧНЫЙ КАБИНЕТ - ДАШБОРД
@@ -138,6 +169,65 @@ router.get('/profile',
   authenticateUser, 
   requireRole('partner'), 
   getPartnerProfileData
+);
+
+// ================ 🆕 ЭТАП 4: УПРАВЛЕНИЕ МЕНЮ И ПРОДУКТАМИ ================
+
+// 📊 СТАТИСТИКА МЕНЮ
+router.get('/menu/stats', 
+  authenticateUser, 
+  requireRole('partner'), 
+  getMenuStats
+);
+
+// 📋 УПРАВЛЕНИЕ КАТЕГОРИЯМИ МЕНЮ
+router.get('/menu/categories', 
+  authenticateUser, 
+  requireRole('partner'), 
+  getMenuCategories
+);
+
+router.post('/menu/categories', 
+  authenticateUser, 
+  requireRole('partner'), 
+  addMenuCategory
+);
+
+router.put('/menu/categories/:category_id', 
+  authenticateUser, 
+  requireRole('partner'), 
+  updateMenuCategory
+);
+
+router.delete('/menu/categories/:category_id', 
+  authenticateUser, 
+  requireRole('partner'), 
+  deleteMenuCategory
+);
+
+// 🍽️ УПРАВЛЕНИЕ ПРОДУКТАМИ/БЛЮДАМИ
+router.get('/menu/products', 
+  authenticateUser, 
+  requireRole('partner'), 
+  getProducts
+);
+
+router.post('/menu/products', 
+  authenticateUser, 
+  requireRole('partner'), 
+  addProduct
+);
+
+router.put('/menu/products/:product_id', 
+  authenticateUser, 
+  requireRole('partner'), 
+  updateProduct
+);
+
+router.delete('/menu/products/:product_id', 
+  authenticateUser, 
+  requireRole('partner'), 
+  deleteProduct
 );
 
 // ================ LEGACY/DEPRECATED РОУТЫ ================

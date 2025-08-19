@@ -1,4 +1,4 @@
-// models/Product.model.js (исправленный - ES6 modules)
+// models/Product.model.js - ОБНОВЛЕННАЯ МОДЕЛЬ С ПРАВИЛЬНЫМИ СВЯЗЯМИ 🍽️
 import mongoose from 'mongoose';
 
 const productSchema = new mongoose.Schema({
@@ -40,21 +40,30 @@ const productSchema = new mongoose.Schema({
     type: String
   },
   
-  // Категория соответствует категории партнера
+  // 🎯 ГЛОБАЛЬНАЯ КАТЕГОРИЯ (restaurant/store)
   category: {
     type: String,
     required: true,
     enum: ['restaurant', 'store']
   },
   
-  // Подкатегория для группировки товаров (например: "Бургеры", "Салаты", "Напитки")
+  // 🆕 КАТЕГОРИЯ МЕНЮ ПАРТНЕРА (slug из menu_categories)
   subcategory: {
     type: String,
+    required: true, // Теперь обязательно!
     trim: true,
-    maxlength: 50
+    maxlength: 50,
+    index: true
   },
   
-  // Добавки (из модального окна товара)
+  // 🆕 ID КАТЕГОРИИ МЕНЮ (для удобства запросов)
+  menu_category_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    required: true,
+    index: true
+  },
+  
+  // Добавки (как было - отлично проработано)
   options_groups: [{
     name: {
       type: String,
@@ -103,7 +112,7 @@ const productSchema = new mongoose.Schema({
     type: Number,
     min: 0,
     default: function() {
-      return this.category === 'restaurant' ? 15 : 0; // в минутах
+      return this.category === 'restaurant' ? 15 : 0; // 15 минут для ресторанов
     }
   },
   
@@ -256,9 +265,10 @@ const productSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Индексы для оптимизации поиска
+// ================ ИНДЕКСЫ (обновленные) ================
 productSchema.index({ partner_id: 1, is_active: 1, is_available: 1 });
 productSchema.index({ category: 1, subcategory: 1 });
+productSchema.index({ partner_id: 1, menu_category_id: 1 }); // 🆕 Новый индекс
 productSchema.index({ price: 1 });
 productSchema.index({ 'ratings.avg_rating': -1 });
 productSchema.index({ 'sales_stats.total_sold': -1 });
@@ -281,7 +291,7 @@ productSchema.index({
   }
 });
 
-// Виртуальные поля
+// ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
 
 // Финальная цена с учетом скидки
 productSchema.virtual('final_price').get(function() {
@@ -307,7 +317,7 @@ productSchema.virtual('is_low_stock').get(function() {
          this.stock_quantity <= this.low_stock_threshold;
 });
 
-// Методы экземпляра
+// ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
 // Обновление статистики продаж
 productSchema.methods.updateSalesStats = function(quantity, orderTotal) {
@@ -358,7 +368,7 @@ productSchema.methods.updateRating = function(newRating) {
   return this.save();
 };
 
-// Добавление опции в группу
+// 🆕 Добавление опции в группу
 productSchema.methods.addOptionToGroup = function(groupIndex, optionData) {
   if (this.options_groups[groupIndex]) {
     this.options_groups[groupIndex].options.push(optionData);
@@ -367,7 +377,7 @@ productSchema.methods.addOptionToGroup = function(groupIndex, optionData) {
   throw new Error('Группа опций не найдена');
 };
 
-// Удаление опции из группы
+// 🆕 Удаление опции из группы
 productSchema.methods.removeOptionFromGroup = function(groupIndex, optionIndex) {
   if (this.options_groups[groupIndex] && this.options_groups[groupIndex].options[optionIndex]) {
     this.options_groups[groupIndex].options.splice(optionIndex, 1);
@@ -376,7 +386,27 @@ productSchema.methods.removeOptionFromGroup = function(groupIndex, optionIndex) 
   throw new Error('Опция не найдена');
 };
 
-// Проверка доступности всех выбранных опций
+// 🆕 Проверка принадлежности продукта к категории партнера
+productSchema.methods.validateCategory = async function() {
+  const PartnerProfile = mongoose.model('PartnerProfile');
+  const partner = await PartnerProfile.findById(this.partner_id);
+  
+  if (!partner) {
+    throw new Error('Партнер не найден');
+  }
+  
+  const category = partner.menu_categories.find(cat => cat.slug === this.subcategory);
+  if (!category) {
+    throw new Error('Категория меню не найдена у этого партнера');
+  }
+  
+  // Синхронизируем menu_category_id
+  this.menu_category_id = category._id;
+  
+  return true;
+};
+
+// 🆕 Проверка доступности всех выбранных опций
 productSchema.methods.validateSelectedOptions = function(selectedOptions) {
   const errors = [];
   
@@ -401,7 +431,7 @@ productSchema.methods.validateSelectedOptions = function(selectedOptions) {
   return errors;
 };
 
-// Расчет общей стоимости с опциями
+// 🆕 Расчет общей стоимости с опциями
 productSchema.methods.calculateTotalPrice = function(quantity = 1, selectedOptions = []) {
   let basePrice = this.final_price * quantity;
   let optionsPrice = 0;
@@ -419,9 +449,22 @@ productSchema.methods.calculateTotalPrice = function(quantity = 1, selectedOptio
   return basePrice + optionsPrice;
 };
 
-// Статические методы
+// ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
-// Поиск товаров партнера
+// 🆕 Поиск товаров партнера по категории меню
+productSchema.statics.findByPartnerCategory = function(partnerId, categorySlug, includeInactive = false) {
+  const filter = { 
+    partner_id: partnerId, 
+    subcategory: categorySlug 
+  };
+  if (!includeInactive) {
+    filter.is_active = true;
+    filter.is_available = true;
+  }
+  return this.find(filter).sort({ sort_order: 1, createdAt: -1 });
+};
+
+// Поиск товаров партнера (обновленный)
 productSchema.statics.findByPartner = function(partnerId, includeInactive = false) {
   const filter = { partner_id: partnerId };
   if (!includeInactive) {
@@ -431,7 +474,7 @@ productSchema.statics.findByPartner = function(partnerId, includeInactive = fals
   return this.find(filter).sort({ sort_order: 1, createdAt: -1 });
 };
 
-// Поиск по категории
+// Поиск по глобальной категории
 productSchema.statics.findByCategory = function(category, subcategory = null) {
   const filter = { 
     category, 
@@ -472,5 +515,4 @@ productSchema.statics.resetMonthlyStats = function() {
 productSchema.set('toJSON', { virtuals: true });
 productSchema.set('toObject', { virtuals: true });
 
-// 🆕 ИСПРАВЛЕНО: ES6 export вместо module.exports
 export default mongoose.model('Product', productSchema);
