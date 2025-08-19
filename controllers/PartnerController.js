@@ -1,4 +1,4 @@
-// controllers/PartnerController.js - ИСПРАВЛЕННЫЙ КОНТРОЛЛЕР 🎯
+// controllers/PartnerController.js - ПОЛНЫЙ ИСПРАВЛЕННЫЙ КОНТРОЛЛЕР 🎯
 import { 
   registerPartnerWithInitialRequest,
   getPartnerDashboardStatus,
@@ -172,21 +172,21 @@ export const getDashboardStatus = async (req, res) => {
 
     res.status(200).json({
       result: true,
-      message: "Статус личного кабинета получен",
-      dashboard: status
+      message: "Статус дашборда получен",
+      ...status
     });
 
   } catch (error) {
     console.error('Get dashboard status error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка получения статуса кабинета"
+      message: "Ошибка получения статуса дашборда"
     });
   }
 };
 
 /**
- * 🔓 ПЕРСОНАЛЬНЫЕ ДАННЫЕ (расшифрованные)
+ * ✅ ПОЛУЧЕНИЕ ПЕРСОНАЛЬНЫХ ДАННЫХ (РАСШИФРОВАННЫХ)
  * Только для владельца аккаунта
  */
 export const getPartnerPersonalData = async (req, res) => {
@@ -200,12 +200,13 @@ export const getPartnerPersonalData = async (req, res) => {
       });
     }
 
-    const decryptedData = await getDecryptedPartnerData(user._id, user._id, user.role);
+    const personalData = await getDecryptedPartnerData(user._id);
 
     res.status(200).json({
       result: true,
       message: "Персональные данные получены",
-      data: decryptedData
+      personal_data: personalData,
+      security_note: "Данные расшифрованы только для владельца аккаунта"
     });
 
   } catch (error) {
@@ -219,6 +220,7 @@ export const getPartnerPersonalData = async (req, res) => {
 
 /**
  * ✅ ПРОВЕРКА ДОСТУПА К ФУНКЦИЯМ
+ * GET /api/partners/access/:feature
  */
 export const checkFeatureAccess = async (req, res) => {
   try {
