@@ -21,7 +21,10 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
       business_name: registrationData.business_name
     });
 
-    const result = await session.withTransaction(async () => {
+    // 🔥 ИСПРАВЛЕНИЕ: Переменные вне транзакции
+    let newUser, newMetaInfo, newInitialRequest, token;
+
+    await session.withTransaction(async () => {
       const {
         // Данные пользователя
         first_name,
@@ -77,7 +80,7 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
       console.log('🔍 CREATING USER...');
 
       // 1️⃣ Создаем User с ролью 'partner'
-      const newUser = new User({
+      newUser = new User({
         email: normalizedEmail, // ✅ ОТКРЫТО (нужно для авторизации)
         password_hash: await hashString(password),
         role: 'partner', // 🎯 СРАЗУ ПАРТНЕР (может войти в кабинет)
@@ -103,7 +106,7 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
       });
 
       // 2️⃣ Создаем Meta запись через правильный метод
-      const newMetaInfo = await Meta.createForPartner(newUser._id, hashedEmail);
+      newMetaInfo = await Meta.createForPartner(newUser._id, hashedEmail);
       
       console.log('✅ META CREATED:', {
         meta_id: newMetaInfo._id,
@@ -112,7 +115,7 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
 
       // 3️⃣ Создаем ТОЛЬКО InitialPartnerRequest (заявка партнера)
       // ❌ НЕ СОЗДАЕМ PartnerProfile (создается только в ЭТАПЕ 3!)
-      const newInitialRequest = new InitialPartnerRequest({
+      newInitialRequest = new InitialPartnerRequest({
         user_id: newUser._id,
         personal_data: {
           first_name,
@@ -168,7 +171,7 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
       
       console.log('🔍 TOKEN PAYLOAD:', tokenPayload);
       
-      const token = generateCustomerToken(tokenPayload, '30d');
+      token = generateCustomerToken(tokenPayload, '30d');
       
       console.log('🔍 TOKEN GENERATION RESULT:', {
         token_created: !!token,
@@ -181,44 +184,48 @@ export const registerPartnerWithInitialRequest = async (registrationData) => {
         throw new Error('Ошибка создания токена');
       }
 
-      const responseData = {
+      console.log('✅ REGISTRATION COMPLETE INSIDE TRANSACTION:', {
         success: true,
-        user: {
-          id: newUser._id,
-          email: newUser.email,
-          role: newUser.role,
-          is_email_verified: newUser.is_email_verified
-        },
-        request: {
-          _id: newInitialRequest._id,
-          status: newInitialRequest.status,
-          business_name: newInitialRequest.business_data.business_name,
-          category: newInitialRequest.business_data.category
-        },
-        token,
-        next_steps: [
-          'Дождитесь одобрения заявки администратором',
-          'После одобрения вы сможете подать юридические данные',
-          'Войдите в личный кабинет для отслеживания статуса'
-        ]
-      };
-      
-      console.log('✅ REGISTRATION COMPLETE:', {
-        success: responseData.success,
-        user_id: responseData.user.id,
-        has_token: !!responseData.token,
-        token_length: responseData.token ? responseData.token.length : 0
+        user_id: newUser._id,
+        has_token: !!token,
+        token_length: token ? token.length : 0
       });
 
-      return responseData;
+      // Возвращаем простое значение из транзакции
+      return true;
     });
 
-    console.log('✅ TRANSACTION COMPLETE:', {
-      success: result.success,
-      has_token: !!result.token
+    // 🔥 ФОРМИРУЕМ ОТВЕТ ПОСЛЕ УСПЕШНОЙ ТРАНЗАКЦИИ
+    const responseData = {
+      success: true,
+      user: {
+        id: newUser._id,
+        email: newUser.email,
+        role: newUser.role,
+        is_email_verified: newUser.is_email_verified
+      },
+      request: {
+        _id: newInitialRequest._id,
+        status: newInitialRequest.status,
+        business_name: newInitialRequest.business_data.business_name,
+        category: newInitialRequest.business_data.category
+      },
+      token,
+      next_steps: [
+        'Дождитесь одобрения заявки администратором',
+        'После одобрения вы сможете подать юридические данные',
+        'Войдите в личный кабинет для отслеживания статуса'
+      ]
+    };
+
+    console.log('✅ FINAL RESPONSE DATA:', {
+      success: responseData.success,
+      user_id: responseData.user.id,
+      has_token: !!responseData.token,
+      token_length: responseData.token ? responseData.token.length : 0
     });
 
-    return result;
+    return responseData;
 
   } catch (error) {
     console.error('🚨 REGISTER PARTNER ERROR:', {
