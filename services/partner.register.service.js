@@ -478,6 +478,9 @@ export const getDecryptedPartnerData = async (userId) => {
 /**
  * ✅ Шифрование и сохранение юридических данных
  */
+/**
+ * ✅ ИСПРАВЛЕНО: Шифрование и сохранение юридических данных
+ */
 export const encryptLegalData = async (legalData) => {
   try {
     const {
@@ -485,7 +488,7 @@ export const encryptLegalData = async (legalData) => {
       partner_request_id,
       legal_name,
       siret_number,
-      legal_form,
+      legal_form, // ✅ НЕ ШИФРУЕТСЯ! Остается открытым для enum validation
       business_address,
       contact_person,
       contact_phone,
@@ -496,27 +499,38 @@ export const encryptLegalData = async (legalData) => {
       user_agent
     } = legalData;
 
+    console.log('🔍 ENCRYPTING LEGAL DATA:', {
+      user_id,
+      partner_request_id,
+      legal_form, // Должно остаться открытым: "SARL"
+      has_bank_details: !!bank_details
+    });
+
     const newLegalInfo = new PartnerLegalInfo({
       user_id,
       partner_request_id,
       
-      // Зашифрованные юридические данные
+      // ✅ ИСПРАВЛЕНО: Смешанное шифрование (некоторые поля открытые)
       legal_data: {
+        // 🔐 ЗАШИФРОВАННЫЕ поля (конфиденциальные)
         legal_name: cryptoString(legal_name),
         siret_number: cryptoString(siret_number),
-        legal_form: cryptoString(legal_form),
         business_address: cryptoString(business_address),
-        contact_person: cryptoString(contact_person),
         contact_phone: cryptoString(contact_phone),
         bank_details: bank_details ? cryptoString(JSON.stringify(bank_details)) : null,
         tax_number: tax_number ? cryptoString(tax_number) : null,
-        additional_info: additional_info ? cryptoString(additional_info) : null
+        additional_info: additional_info ? cryptoString(additional_info) : null,
+        
+        // ✅ ОТКРЫТЫЕ поля (не критичные для безопасности)
+        legal_form: legal_form, // НЕ ШИФРУЕТСЯ! "SARL", "SAS", etc.
+        contact_person: contact_person // НЕ ШИФРУЕТСЯ! Имя не критично
       },
       
-      submission_info: {
+      security_info: {
         submitted_at: new Date(),
         submitted_ip,
-        user_agent
+        user_agent,
+        decryption_attempts: 0
       },
       
       verification_status: 'pending'
@@ -527,7 +541,8 @@ export const encryptLegalData = async (legalData) => {
     console.log('✅ LEGAL DATA ENCRYPTED AND SAVED:', {
       legal_info_id: newLegalInfo._id,
       user_id,
-      partner_request_id
+      partner_request_id,
+      legal_form_saved: newLegalInfo.legal_data.legal_form // Должно быть "SARL", не зашифровано
     });
 
     return newLegalInfo;

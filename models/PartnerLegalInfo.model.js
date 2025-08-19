@@ -1,4 +1,4 @@
-// models/PartnerLegalInfo.model.js - БЕЗОПАСНАЯ МОДЕЛЬ С ШИФРОВАНИЕМ 🔐
+// models/PartnerLegalInfo.model.js - ИСПРАВЛЕНА ENUM ОШИБКА 🔐
 import mongoose from 'mongoose';
 
 const partnerLegalInfoSchema = new mongoose.Schema({
@@ -17,7 +17,7 @@ const partnerLegalInfoSchema = new mongoose.Schema({
     index: true
   },
   
-  // 🔐 ЗАШИФРОВАННЫЕ ЮРИДИЧЕСКИЕ ДАННЫЕ
+  // 🔐 ЮРИДИЧЕСКИЕ ДАННЫЕ (смешанное шифрование)
   legal_data: {
     // 🔐 ОСНОВНЫЕ ДАННЫЕ (зашифрованы)
     legal_name: {
@@ -28,12 +28,12 @@ const partnerLegalInfoSchema = new mongoose.Schema({
     siret_number: {
       type: String, // Зашифрованный SIRET номер (14 цифр)
       required: true,
-      unique: true, // Уникальность на уровне зашифрованных данных
       index: true
     },
     
+    // ✅ ИСПРАВЛЕНО: legal_form НЕ ШИФРУЕТСЯ (не критично для безопасности)
     legal_form: {
-      type: String, // SASU, SARL, SAS, etc. (открыто, не критично)
+      type: String, // ОТКРЫТО: SASU, SARL, SAS, etc.
       required: true,
       enum: [
         'SARL', 'EURL', 'SAS', 'SASU', 'SA', 
@@ -48,31 +48,31 @@ const partnerLegalInfoSchema = new mongoose.Schema({
       required: true
     },
     
-    // 🔐 КОНТАКТНЫЕ ДАННЫЕ (зашифрованы)
+    // ✅ КОНТАКТНЫЕ ДАННЫЕ (открытые имена, зашифрованные контакты)
     contact_person: {
-      type: String, // Имя контактного лица (можно открыто)
+      type: String, // Имя контактного лица (ОТКРЫТО - не критично)
       required: true
     },
     
     contact_phone: {
-      type: String, // Зашифрованный телефон для связи
+      type: String, // 🔐 Зашифрованный телефон для связи
       required: true
     },
     
     // 🔐 ФИНАНСОВЫЕ ДАННЫЕ (зашифрованы)
     bank_details: {
-      type: String, // Зашифрованные банковские реквизиты
+      type: String, // Зашифрованные банковские реквизиты (JSON string)
       default: null
     },
     
     tax_number: {
-      type: String, // Зашифрованный налоговый номер
+      type: String, // 🔐 Зашифрованный налоговый номер
       default: null
     },
     
     // Дополнительная информация
     additional_info: {
-      type: String,
+      type: String, // 🔐 Зашифрованная дополнительная информация
       default: null
     }
   },
@@ -124,48 +124,31 @@ const partnerLegalInfoSchema = new mongoose.Schema({
   
   // 🔐 БЕЗОПАСНОСТЬ И АУДИТ
   security_info: {
-    // Когда данные были поданы
     submitted_at: {
       type: Date,
-      required: true,
-      default: Date.now
+      default: Date.now,
+      index: true
     },
     
-    // IP адрес с которого подали данные
-    submission_ip: String,
-    
-    // User-Agent браузера
+    submitted_ip: String,
     user_agent: String,
     
-    // Дата последнего изменения данных
-    last_modified_at: {
-      type: Date,
-      default: Date.now
-    },
-    
-    // Кто последний изменил (админ или пользователь)
-    last_modified_by: {
-      user_id: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User'
-      },
-      admin_id: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'AdminUser'
-      },
-      role: {
-        type: String,
-        enum: ['partner', 'admin']
-      }
-    },
-    
-    // 🔐 Количество попыток расшифровки (для мониторинга)
+    // Счетчик попыток расшифровки (для безопасности)
     decryption_attempts: {
       type: Number,
       default: 0
     },
     
-    // Последняя попытка несанкционированного доступа
+    last_modified_at: Date,
+    last_modified_by: {
+      admin_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'AdminUser'
+      },
+      role: String
+    },
+    
+    // Логирование подозрительной активности
     last_unauthorized_access: {
       ip: String,
       timestamp: Date,
@@ -176,11 +159,7 @@ const partnerLegalInfoSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// ================ ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ ================
-
-partnerLegalInfoSchema.index({ partner_request_id: 1 });
-partnerLegalInfoSchema.index({ user_id: 1 });
-partnerLegalInfoSchema.index({ 'legal_data.siret_number': 1 }, { unique: true });
+// ================ ИНДЕКСЫ ================
 partnerLegalInfoSchema.index({ verification_status: 1 });
 partnerLegalInfoSchema.index({ 'security_info.submitted_at': 1 });
 
@@ -260,24 +239,6 @@ partnerLegalInfoSchema.methods.requestCorrection = function(adminId, notes) {
     timestamp: new Date(),
     notes
   });
-  
-  return this.save();
-};
-
-/**
- * 🔐 БЕЗОПАСНЫЙ метод для логирования попыток расшифровки
- */
-partnerLegalInfoSchema.methods.logDecryptionAttempt = function(authorized = true, ip = '', userAgent = '') {
-  if (authorized) {
-    this.security_info.decryption_attempts += 1;
-  } else {
-    // Логируем несанкционированную попытку
-    this.security_info.last_unauthorized_access = {
-      ip,
-      timestamp: new Date(),
-      user_agent: userAgent
-    };
-  }
   
   return this.save();
 };
