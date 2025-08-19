@@ -79,12 +79,13 @@ export const registerPartner = async (req, res) => {
       whatsapp_consent, registration_ip: req.ip, user_agent: req.get('User-Agent')
     });
 
+    // ✅ ИСПРАВЛЕНО: ВОЗВРАЩАЕМ ТОКЕН В ОТВЕТЕ!
     res.status(201).json({
       result: true,
       message: "🎯 ЭТАП 1 ЗАВЕРШЕН: Регистрация успешна!",
       user: result.user,
       request: result.request,
-      token: result.token,
+      token: result.token, // 🔥 ВОТ ОН ТОКЕН!
       workflow: {
         current_step: 1,
         step_name: "Ожидание одобрения заявки",
