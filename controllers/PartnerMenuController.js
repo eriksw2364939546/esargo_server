@@ -1,4 +1,4 @@
-// controllers/PartnerMenuController.js - УПРАВЛЕНИЕ МЕНЮ И ПРОДУКТАМИ 🍽️
+// controllers/PartnerMenuController.js - ЗАВЕРШЕННОЕ УПРАВЛЕНИЕ МЕНЮ И ПРОДУКТАМИ 🍽️
 import { PartnerProfile, Product } from '../models/index.js';
 
 // ================ УПРАВЛЕНИЕ КАТЕГОРИЯМИ МЕНЮ ================
@@ -464,9 +464,10 @@ export const updateProduct = async (req, res) => {
       });
     }
 
-    const product = await Product.findOne({
-      _id: product_id,
-      partner_id: partner._id
+    // Находим продукт принадлежащий этому партнеру
+    const product = await Product.findOne({ 
+      _id: product_id, 
+      partner_id: partner._id 
     });
 
     if (!product) {
@@ -476,7 +477,7 @@ export const updateProduct = async (req, res) => {
       });
     }
 
-    // Если меняется категория, проверяем что она существует
+    // Валидация изменения категории
     if (updateData.subcategory && updateData.subcategory !== product.subcategory) {
       const category = partner.menu_categories.find(cat => cat.slug === updateData.subcategory);
       if (!category) {
@@ -488,18 +489,40 @@ export const updateProduct = async (req, res) => {
       updateData.menu_category_id = category._id;
     }
 
-    // Обновляем продукт
-    Object.assign(product, {
-      ...updateData,
-      last_updated_by: user._id
+    // Валидация цены
+    if (updateData.price && updateData.price <= 0) {
+      return res.status(400).json({
+        result: false,
+        message: "Цена должна быть больше нуля"
+      });
+    }
+
+    // Обновляем поля
+    const allowedFields = [
+      'title', 'description', 'price', 'discount_price', 'image_url',
+      'subcategory', 'menu_category_id', 'preparation_time', 'options_groups',
+      'dish_info', 'product_info', 'tags', 'is_active', 'is_available',
+      'sort_order'
+    ];
+
+    allowedFields.forEach(field => {
+      if (updateData[field] !== undefined) {
+        product[field] = updateData[field];
+      }
     });
+
+    // Обновляем кто последний раз изменил
+    product.last_updated_by = user._id;
+
+    // Валидируем категорию если изменилась
+    if (updateData.subcategory) {
+      await product.validateCategory();
+    }
 
     await product.save();
 
-    // Обновляем статистику если менялась категория
-    if (updateData.subcategory) {
-      await partner.updateProductStats();
-    }
+    // Обновляем статистику партнера
+    await partner.updateProductStats();
 
     res.status(200).json({
       result: true,
@@ -509,6 +532,14 @@ export const updateProduct = async (req, res) => {
 
   } catch (error) {
     console.error('Update product error:', error);
+    
+    if (error.message.includes('категории')) {
+      return res.status(400).json({
+        result: false,
+        message: error.message
+      });
+    }
+    
     res.status(500).json({
       result: false,
       message: "Ошибка обновления продукта"
@@ -541,9 +572,10 @@ export const deleteProduct = async (req, res) => {
       });
     }
 
-    const product = await Product.findOneAndDelete({
-      _id: product_id,
-      partner_id: partner._id
+    // Находим и удаляем продукт принадлежащий этому партнеру
+    const product = await Product.findOneAndDelete({ 
+      _id: product_id, 
+      partner_id: partner._id 
     });
 
     if (!product) {
@@ -575,10 +607,10 @@ export const deleteProduct = async (req, res) => {
   }
 };
 
-// ================ ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ ================
+// ================ СТАТИСТИКА МЕНЮ ================
 
 /**
- * 📊 СТАТИСТИКА МЕНЮ
+ * 📊 ПОЛУЧЕНИЕ СТАТИСТИКИ МЕНЮ
  * GET /api/partners/menu/stats
  */
 export const getMenuStats = async (req, res) => {
@@ -604,40 +636,65 @@ export const getMenuStats = async (req, res) => {
     // Обновляем статистику
     await partner.updateProductStats();
 
-    const categoryStats = await Promise.all(
-      partner.menu_categories.map(async (category) => {
-        const totalProducts = await Product.countDocuments({
-          partner_id: partner._id,
-          subcategory: category.slug
-        });
-        
-        const activeProducts = await Product.countDocuments({
-          partner_id: partner._id,
-          subcategory: category.slug,
-          is_active: true,
-          is_available: true
-        });
+    // Получаем продукты для анализа
+    const allProducts = await Product.findByPartner(partner._id, true);
+    const activeProducts = allProducts.filter(p => p.is_active && p.is_available);
 
-        return {
-          category_name: category.name,
-          category_slug: category.slug,
-          total_products: totalProducts,
-          active_products: activeProducts,
-          inactive_products: totalProducts - activeProducts
-        };
-      })
-    );
+    // Статистика по категориям
+    const categoryStats = partner.menu_categories.map(category => {
+      const categoryProducts = allProducts.filter(p => p.subcategory === category.slug);
+      const activeCategoryProducts = categoryProducts.filter(p => p.is_active && p.is_available);
+      
+      return {
+        category: {
+          id: category._id,
+          name: category.name,
+          slug: category.slug
+        },
+        products_count: {
+          total: categoryProducts.length,
+          active: activeCategoryProducts.length,
+          inactive: categoryProducts.length - activeCategoryProducts.length
+        },
+        avg_price: categoryProducts.length > 0 
+          ? (categoryProducts.reduce((sum, p) => sum + p.final_price, 0) / categoryProducts.length).toFixed(2)
+          : 0,
+        has_discounts: categoryProducts.some(p => p.discount_price > 0)
+      };
+    });
+
+    // Общая статистика
+    const stats = {
+      overview: {
+        total_categories: partner.menu_categories.length,
+        total_products: allProducts.length,
+        active_products: activeProducts.length,
+        inactive_products: allProducts.length - activeProducts.length
+      },
+      pricing: {
+        avg_price: activeProducts.length > 0 
+          ? (activeProducts.reduce((sum, p) => sum + p.final_price, 0) / activeProducts.length).toFixed(2)
+          : 0,
+        min_price: activeProducts.length > 0 
+          ? Math.min(...activeProducts.map(p => p.final_price)).toFixed(2)
+          : 0,
+        max_price: activeProducts.length > 0 
+          ? Math.max(...activeProducts.map(p => p.final_price)).toFixed(2)
+          : 0,
+        products_with_discounts: allProducts.filter(p => p.discount_price > 0).length
+      },
+      categories: categoryStats,
+      last_updated: new Date()
+    };
 
     res.status(200).json({
       result: true,
       message: "Статистика меню получена",
-      overall_stats: {
-        total_categories: partner.stats.total_categories,
-        total_products: partner.stats.total_products,
-        active_products: partner.stats.active_products,
-        content_ready: partner.isContentReady()
-      },
-      category_stats: categoryStats
+      stats: stats,
+      business_info: {
+        business_name: partner.business_name,
+        category: partner.category
+      }
     });
 
   } catch (error) {
@@ -647,4 +704,22 @@ export const getMenuStats = async (req, res) => {
       message: "Ошибка получения статистики"
     });
   }
+};
+
+// ================ ЭКСПОРТ ВСЕХ ФУНКЦИЙ ================
+export default {
+  // Категории меню
+  getMenuCategories,
+  addMenuCategory,
+  updateMenuCategory,
+  deleteMenuCategory,
+  
+  // Продукты
+  getProducts,
+  addProduct,
+  updateProduct,
+  deleteProduct,
+  
+  // Статистика
+  getMenuStats
 };
