@@ -1,11 +1,11 @@
-// routes/index.js (обновленный)
+// routes/index.js - ИСПРАВЛЕННЫЙ БЕЗ КОНФЛИКТА 🎯
 import express from 'express';
 const router = express.Router();
 
 // Import роутов
 import partnerRoutes from './Partner.route.js';
 import customerRoutes from './Customer.route.js';
-import adminRoutes from './Admin.route.js'; // 🆕 НОВЫЙ
+import adminRoutes from './Admin.route.js';
 
 // Health check endpoint
 router.get('/health', (req, res) => {
@@ -24,7 +24,7 @@ router.use('/customers', customerRoutes);
 // Partner routes (для создания ресторанов/магазинов)
 router.use('/partners', partnerRoutes);
 
-// 🆕 Admin routes (для администраторов)
+// Admin routes (для администраторов)
 router.use('/admin', adminRoutes);
 
 // Главная страница API
@@ -49,26 +49,29 @@ router.get('/', (req, res) => {
 				}
 			},
 			partners: {
+				register: 'POST /api/partners/register', // 🔥 РЕГИСТРАЦИЯ С ТОКЕНОМ!
 				login: 'POST /api/partners/login',
-				initial_request: 'POST /api/partners/initial-request',
-				legal_info: 'POST /api/partners/:id/legal-info',
+				dashboard: 'GET /api/partners/dashboard',
+				legal_info: 'POST /api/partners/legal-info/:request_id',
 				profile: 'GET /api/partners/profile',
-				status: 'GET /api/partners/status',
-				admin: {
-					list_requests: 'GET /api/partners/requests',
-					request_details: 'GET /api/partners/requests/:request_id',
-					update_status: 'PATCH /api/partners/:id/status',
-					approve_legal: 'POST /api/partners/legal-info/:legal_info_id/approve',
-					reject_legal: 'POST /api/partners/legal-info/:legal_info_id/reject'
+				menu: {
+					categories: 'GET/POST/PUT/DELETE /api/partners/menu/categories',
+					products: 'GET/POST/PUT/DELETE /api/partners/menu/products',
+					stats: 'GET /api/partners/menu/stats'
 				}
 			},
-			admin: { // 🆕 НОВЫЙ РАЗДЕЛ
+			admin: {
 				login: 'POST /api/admin/login',
 				verify: 'GET /api/admin/verify',
 				profile: 'GET /api/admin/profile',
 				create_admin: 'POST /api/admin/create',
 				list_admins: 'GET /api/admin/list',
-				update_permissions: 'PUT /api/admin/:admin_id/permissions'
+				partners: {
+					requests: 'GET /api/admin/partners/requests',
+					approve_request: 'POST /api/admin/partners/requests/:id/approve',
+					approve_legal: 'POST /api/admin/partners/legal/:id/approve',
+					approve_content: 'POST /api/admin/partners/profiles/:id/approve'
+				}
 			}
 		},
 		security_features: {
@@ -82,14 +85,7 @@ router.get('/', (req, res) => {
 	});
 });
 
-// Middleware для обработки несуществующих маршрутов
-router.use('*', (req, res) => {
-	res.status(404).json({
-		success: false,
-		message: 'Маршрут не найден',
-		requested_url: req.originalUrl,
-		available_routes: ['/api/customers', '/api/partners', '/api/admin']
-	});
-});
+// ❌ УДАЛЕНО: Конфликтующий обработчик 404
+// router.use('*', (req, res) => { ... });
 
 export default router;
