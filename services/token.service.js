@@ -1,4 +1,4 @@
-// services/token.service.js
+// services/token.service.js - С ОТЛАДКОЙ
 import jwt from 'jsonwebtoken';
 
 // Получаем секретный ключ из переменных окружения
@@ -12,17 +12,31 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
  */
 export const generateJWTToken = (payload, expiresIn = '3d') => {
   try {
+    console.log('🔍 GENERATING JWT TOKEN:', {
+      payload_keys: Object.keys(payload),
+      expires_in: expiresIn,
+      has_secret: !!JWT_SECRET,
+      secret_length: JWT_SECRET ? JWT_SECRET.length : 0
+    });
+
     if (!payload || typeof payload !== 'object') {
       throw new Error('Payload должен быть объектом');
     }
 
-    return jwt.sign(payload, JWT_SECRET, { 
+    const token = jwt.sign(payload, JWT_SECRET, { 
       expiresIn,
       issuer: 'esargo-app',
       audience: 'esargo-users'
     });
+
+    console.log('✅ JWT TOKEN GENERATED:', {
+      token_length: token.length,
+      token_preview: token.substring(0, 20) + '...'
+    });
+
+    return token;
   } catch (error) {
-    console.error('JWT generation error:', error);
+    console.error('🚨 JWT GENERATION ERROR:', error);
     throw new Error('Ошибка генерации токена');
   }
 };
@@ -61,14 +75,31 @@ export const verifyJWTToken = (token) => {
  * @returns {string} - JWT токен
  */
 export const generateCustomerToken = (user, expiresIn = '30d') => {
+  console.log('🔍 GENERATING CUSTOMER TOKEN:', {
+    user_provided: !!user,
+    user_id: user ? (user._id || user.user_id) : null,
+    email: user ? user.email : null,
+    role: user ? user.role : null,
+    expires_in: expiresIn
+  });
+
   const payload = {
-    user_id: user._id,
+    user_id: user._id || user.user_id,
     email: user.email,
     role: user.role || 'customer',
     type: 'access_token'
   };
 
-  return generateJWTToken(payload, expiresIn);
+  console.log('🔍 TOKEN PAYLOAD PREPARED:', payload);
+
+  const token = generateJWTToken(payload, expiresIn);
+  
+  console.log('✅ CUSTOMER TOKEN GENERATED:', {
+    success: !!token,
+    token_length: token ? token.length : 0
+  });
+
+  return token;
 };
 
 /**

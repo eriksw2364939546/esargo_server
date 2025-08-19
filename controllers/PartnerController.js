@@ -1,4 +1,4 @@
-// controllers/PartnerController.js - ПОЛНЫЙ ИСПРАВЛЕННЫЙ КОНТРОЛЛЕР 🎯
+// controllers/PartnerController.js - ИСПРАВЛЕН ДЛЯ ВОЗВРАТА ТОКЕНА 🎯
 import { 
   registerPartnerWithInitialRequest,
   getPartnerDashboardStatus,
@@ -79,7 +79,23 @@ export const registerPartner = async (req, res) => {
       whatsapp_consent, registration_ip: req.ip, user_agent: req.get('User-Agent')
     });
 
-    // ✅ ИСПРАВЛЕНО: ВОЗВРАЩАЕМ ТОКЕН В ОТВЕТЕ!
+    // 🔥 ИСПРАВЛЕНО: Правильная проверка и возврат токена
+    console.log('🔍 REGISTRATION RESULT:', {
+      success: result.success,
+      has_token: !!result.token,
+      token_length: result.token ? result.token.length : 0,
+      user_id: result.user ? result.user.id : null
+    });
+
+    if (!result.token) {
+      console.error('🚨 ОШИБКА: Токен не создался в registerPartnerWithInitialRequest!');
+      return res.status(500).json({
+        result: false,
+        message: "Ошибка создания токена авторизации"
+      });
+    }
+
+    // ✅ ВОЗВРАЩАЕМ ПОЛНЫЙ ОТВЕТ С ТОКЕНОМ
     res.status(201).json({
       result: true,
       message: "🎯 ЭТАП 1 ЗАВЕРШЕН: Регистрация успешна!",
@@ -96,6 +112,13 @@ export const registerPartner = async (req, res) => {
   } catch (error) {
     console.error('Register partner error:', error);
     
+    // Выводим полную информацию об ошибке для отладки
+    console.error('Error details:', {
+      message: error.message,
+      statusCode: error.statusCode,
+      stack: error.stack
+    });
+    
     if (error.statusCode === 400) {
       return res.status(400).json({
         result: false,
@@ -105,7 +128,8 @@ export const registerPartner = async (req, res) => {
     
     res.status(500).json({
       result: false,
-      message: "Ошибка при регистрации партнера"
+      message: "Ошибка при регистрации партнера",
+      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -168,26 +192,26 @@ export const getDashboardStatus = async (req, res) => {
       });
     }
 
-    const status = await getPartnerDashboardStatus(user._id);
+    const dashboardData = await getPartnerDashboardStatus(user._id);
 
     res.status(200).json({
       result: true,
-      message: "Статус дашборда получен",
-      ...status
+      message: "Статус личного кабинета получен",
+      dashboard: dashboardData
     });
 
   } catch (error) {
     console.error('Get dashboard status error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка получения статуса дашборда"
+      message: "Ошибка получения статуса"
     });
   }
 };
 
 /**
- * ✅ ПОЛУЧЕНИЕ ПЕРСОНАЛЬНЫХ ДАННЫХ (РАСШИФРОВАННЫХ)
- * Только для владельца аккаунта
+ * ✅ ПОЛУЧЕНИЕ ПЕРСОНАЛЬНЫХ ДАННЫХ
+ * Возвращает расшифрованные данные партнера
  */
 export const getPartnerPersonalData = async (req, res) => {
   try {
@@ -205,8 +229,7 @@ export const getPartnerPersonalData = async (req, res) => {
     res.status(200).json({
       result: true,
       message: "Персональные данные получены",
-      personal_data: personalData,
-      security_note: "Данные расшифрованы только для владельца аккаунта"
+      data: personalData
     });
 
   } catch (error) {
@@ -219,8 +242,8 @@ export const getPartnerPersonalData = async (req, res) => {
 };
 
 /**
- * ✅ ПРОВЕРКА ДОСТУПА К ФУНКЦИЯМ
- * GET /api/partners/access/:feature
+ * ✅ ПРОВЕРКА ДОСТУПА К ФУНКЦИИ
+ * Проверяет доступ партнера к определенной функции
  */
 export const checkFeatureAccess = async (req, res) => {
   try {
@@ -303,92 +326,65 @@ export const submitPartnerLegalInfo = async (req, res) => {
     if (!request) {
       return res.status(404).json({
         result: false,
-        message: "Заявка не найдена"
+        message: "Заявка не найдена или нет доступа"
       });
     }
 
-    // Проверяем статус заявки
     if (request.status !== 'approved') {
       return res.status(400).json({
         result: false,
-        message: "Заявка должна быть одобрена для подачи юридических данных",
-        current_status: request.status
+        message: "Сначала дождитесь одобрения заявки"
       });
     }
 
-    // Проверяем не поданы ли уже юр.данные
-    const existingLegal = await PartnerLegalInfo.findOne({
-      user_id: user._id,
-      partner_request_id: request_id
-    });
-
-    if (existingLegal) {
-      return res.status(400).json({
-        result: false,
-        message: "Юридические данные уже поданы",
-        legal_info_id: existingLegal._id,
-        status: existingLegal.verification_status
-      });
-    }
-
-    // 🔐 Шифруем юридические данные
-    const encryptedLegalData = encryptLegalData({
-      legal_name, siret_number, legal_form, business_address,
-      contact_person, contact_phone, bank_details, tax_number, additional_info
-    });
-
-    // Создаем PartnerLegalInfo
-    const legalInfo = new PartnerLegalInfo({
+    // Создаем юридическую информацию
+    const legalData = await encryptLegalData({
       user_id: user._id,
       partner_request_id: request_id,
-      legal_data: encryptedLegalData,
-      verification_status: 'pending',
-      submitted_at: new Date(),
-      submission_ip: req.ip,
-      submission_user_agent: req.get('User-Agent')
+      legal_name,
+      siret_number,
+      legal_form,
+      business_address,
+      contact_person,
+      contact_phone,
+      bank_details,
+      tax_number,
+      additional_info,
+      submitted_ip: req.ip,
+      user_agent: req.get('User-Agent')
     });
 
-    await legalInfo.save();
-
     // Обновляем статус заявки
-    request.status = 'under_review';
-    await request.save();
+    await request.submitLegalDocs();
 
     res.status(201).json({
       result: true,
-      message: "🎯 ЭТАП 2 ЗАВЕРШЕН: Юридические данные поданы! Ожидайте проверки документов.",
-      legal_info_id: legalInfo._id,
-      request_status: request.status,
+      message: "🎯 ЭТАП 2 ЗАВЕРШЕН: Юридические данные поданы!",
+      legal_info_id: legalData._id,
       workflow: {
-        current_step: 3,
-        step_name: "Проверка юридических данных администратором",
-        next_step: "Администратор проверит документы и одобрит создание полного профиля партнера"
-      },
-      security_note: "Все данные зашифрованы и защищены"
+        current_step: 2,
+        step_name: "Проверка юридических данных",
+        next_steps: [
+          "Ожидайте проверки юридических данных администратором",
+          "После одобрения будет создан профиль партнера"
+        ]
+      }
     });
 
   } catch (error) {
-    console.error('Error in submitPartnerLegalInfo:', error);
-    
-    if (error.code === 11000) {
-      return res.status(400).json({ 
-        result: false, 
-        message: "Данная информация уже используется в системе"
-      });
-    }
-    
+    console.error('Submit legal info error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка при предоставлении юридических данных"
+      message: "Ошибка при подаче юридических данных"
     });
   }
 };
 
-// ================ ПРОФИЛЬ (ДОСТУПЕН ПОСЛЕ ЭТАПА 3) ================
+// ================ 4️⃣+ ЭТАПЫ: ПРОФИЛЬ И КОНТЕНТ ================
 
 /**
  * ✅ ПОЛУЧЕНИЕ ПРОФИЛЯ ПАРТНЕРА
- * Доступно только после одобрения юр.данных (ЭТАП 4+)
+ * Доступно только после создания PartnerProfile (ЭТАП 3)
  */
 export const getPartnerProfileData = async (req, res) => {
   try {
