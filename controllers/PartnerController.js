@@ -354,15 +354,22 @@ export const submitPartnerLegalInfo = async (req, res) => {
       user_agent: req.get('User-Agent')
     });
 
-    // Обновляем статус заявки
-    await request.submitLegalDocs();
+    // ✅ ИСПРАВЛЕНО: Обновляем статус заявки напрямую
+    request.status = 'under_review'; // Юр.данные поданы, ожидают проверки
+    await request.save();
+
+    console.log('✅ LEGAL INFO SUBMITTED:', {
+      request_id: request._id,
+      legal_info_id: legalData._id,
+      new_status: request.status
+    });
 
     res.status(201).json({
       result: true,
       message: "🎯 ЭТАП 2 ЗАВЕРШЕН: Юридические данные поданы!",
       legal_info_id: legalData._id,
       workflow: {
-        current_step: 2,
+        current_step: 3,
         step_name: "Проверка юридических данных",
         next_steps: [
           "Ожидайте проверки юридических данных администратором",
@@ -375,7 +382,8 @@ export const submitPartnerLegalInfo = async (req, res) => {
     console.error('Submit legal info error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка при подаче юридических данных"
+      message: "Ошибка при подаче юридических данных",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
