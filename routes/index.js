@@ -54,12 +54,12 @@ router.get('/', (req, res) => {
 			// 	dashboard: 'GET /api/partners/dashboard',
 			// 	legal_info: 'POST /api/partners/legal-info/:request_id',
 			// 	profile: 'GET /api/partners/profile',
-				menu: {
-					categories: 'GET/POST/PUT/DELETE /api/partners/menu/categories',
-					products: 'GET/POST/PUT/DELETE /api/partners/menu/products',
-					stats: 'GET /api/partners/menu/stats'
-				}
-			},
+			// 	menu: {
+			// 		categories: 'GET/POST/PUT/DELETE /api/partners/menu/categories',
+			// 		products: 'GET/POST/PUT/DELETE /api/partners/menu/products',
+			// 		stats: 'GET /api/partners/menu/stats'
+			// 	}
+			// },
 			admin: {
 				login: 'POST /api/admin/login',
 				verify: 'GET /api/admin/verify',
