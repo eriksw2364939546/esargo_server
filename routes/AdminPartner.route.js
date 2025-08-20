@@ -5,7 +5,8 @@ import {
   rejectInitialPartnerRequest,
   approveLegalInfoAndCreatePartner,
   rejectLegalInfo,
-  getAllPartnerRequests
+  getAllPartnerRequests,
+  approvePartnerContentAndPublish  
 } from '../services/admin.partner.service.js';
 import { 
   InitialPartnerRequest, 
@@ -408,26 +409,20 @@ router.post('/profiles/:profile_id/approve',
       const { admin_notes } = req.body;
       const { user } = req;
 
-      // Пока базовая реализация
-      res.status(200).json({
-        result: true,
-        message: "🎯 ЭТАП 5→6: Одобрение контента (В РАЗРАБОТКЕ)",
-        note: "Этот функционал будет реализован после завершения базового workflow",
-        profile_id: profile_id,
-        admin_notes: admin_notes,
-        next_features: [
-          "Проверка контента профиля",
-          "Одобрение меню/каталога",
-          "Публикация в публичном поиске",
-          "Уведомления партнера"
-        ]
-      });
+      // Вся логика в сервисе
+      const result = await approvePartnerContentAndPublish(
+        profile_id,
+        user._id,
+        admin_notes
+      );
+
+      res.status(200).json(result);
 
     } catch (error) {
       console.error('Approve content error:', error);
-      res.status(500).json({
+      res.status(400).json({
         result: false,
-        message: "Ошибка одобрения контента"
+        message: error.message || "Ошибка одобрения контента"
       });
     }
   }

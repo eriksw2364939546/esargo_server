@@ -3,6 +3,9 @@ import express from 'express';
 import {
   login,
   createAdmin,
+
+  createFirstAdmin,
+
   verify,
   getProfile,
   updatePermissions,
@@ -132,6 +135,8 @@ router.get('/profile', authenticateUser, requireRole('admin'), getProfile);
 
 // POST /api/admin/create - Создание нового администратора (owner/manager)
 router.post('/create', authenticateUser, requireRole('admin'), createAdmin);
+
+router.post('/create-first', createFirstAdmin);
 
 // GET /api/admin/list - Получение списка администраторов (owner/manager)  
 router.get('/list', authenticateUser, requireRole('admin'), getAdminsList);
