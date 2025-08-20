@@ -409,13 +409,14 @@ router.post('/profiles/:profile_id/approve',
       const { admin_notes } = req.body;
       const { user } = req;
 
-      // Вся логика в сервисе
+      // ✅ ВЫЗОВ РЕАЛЬНОЙ ФУНКЦИИ ИЗ СЕРВИСА
       const result = await approvePartnerContentAndPublish(
         profile_id,
         user._id,
         admin_notes
       );
 
+      // ✅ ВОЗВРАЩАЕМ РЕЗУЛЬТАТ СЕРВИСА
       res.status(200).json(result);
 
     } catch (error) {

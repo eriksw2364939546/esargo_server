@@ -1,5 +1,5 @@
 // services/admin.partner.service.js
-import { InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
+import { InitialPartnerRequest, PartnerLegalInfo, PartnerProfile  } from '../models/index.js';
 import { finalApprovePartner } from './partner.service.js';
 import mongoose from 'mongoose';
 
