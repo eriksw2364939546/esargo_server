@@ -5,96 +5,7 @@ import {
   getAdminById 
 } from '../services/admin.auth.service.js';
 import { generateCustomerToken } from '../services/token.service.js';
-//------------------------------------------------------------------------
-export const createFirstAdmin = async (req, res) => {
-  try {
-    const {
-      full_name,
-      email,
-      password,
-      role,
-      department,
-      contact_info
-    } = req.body;
 
-    // Валидация обязательных полей
-    if (!full_name || !email || !password || !role) {
-      return res.status(400).json({
-        result: false,
-        message: "Все поля обязательны: full_name, email, password, role"
-      });
-    }
-
-    // 🔓 БЕЗ ПРОВЕРКИ СОЗДАТЕЛЯ - для первого админа
-    
-    // Проверка допустимых ролей для первого админа
-    const allowedRoles = ['owner', 'manager', 'admin'];
-    
-    if (!allowedRoles.includes(role)) {
-      return res.status(400).json({
-        result: false,
-        message: `Недопустимая роль. Доступные роли: ${allowedRoles.join(', ')}`
-      });
-    }
-
-    // Создание администратора через сервис
-    const newAdminData = await createAdminAccount({
-      full_name,
-      email,
-      password,
-      role,
-      department,
-      contact_info
-    });
-
-    if (!newAdminData.isNewAdmin) {
-      return res.status(400).json({
-        result: false,
-        message: "Администратор с таким email уже существует"
-      });
-    }
-
-    // 🆕 ДОБАВЛЕНО: Сразу генерируем токен для первого админа
-    const token = generateCustomerToken({
-      user_id: newAdminData.admin._id,
-      _id: newAdminData.admin._id,
-      email: newAdminData.admin.email,
-      role: 'admin',
-      admin_role: newAdminData.admin.role,
-      is_admin: true
-    }, '8h'); // Срок действия 8 часов для админов
-
-    res.status(201).json({
-      result: true,
-      message: "🎉 ПЕРВЫЙ АДМИН СОЗДАН УСПЕШНО!",
-      admin: {
-        id: newAdminData.admin._id,
-        full_name: newAdminData.admin.full_name,
-        email: newAdminData.admin.email,
-        role: newAdminData.admin.role,
-        department: newAdminData.admin.contact_info?.department
-      },
-      token: token, // 🔑 ТОКЕН ВЫДАЕТСЯ СРАЗУ!
-      next_steps: [
-        "1. ✅ Токен уже получен - используйте его в заголовках",
-        "2. 🏪 Одобрите юридические данные партнера", 
-        "3. 🎯 Создайте PartnerProfile через админ-панель"
-      ],
-      usage: {
-        "Authorization": `Bearer ${token}`,
-        "example_endpoint": "POST /api/admin/partners/legal/:id/approve"
-      }
-    });
-
-  } catch (error) {
-    console.error('Create first admin error:', error);
-    res.status(500).json({
-      result: false,
-      message: error.message || "Ошибка при создании первого администратора",
-      error: error.message
-    });
-  }
-};
 
 /**
  * Авторизация администратора
@@ -470,9 +381,6 @@ export const getAdminsList = async (req, res) => {
 export default {
   login,
   createAdmin,
-  
-  createFirstAdmin,
-
   verify,
   getProfile,
   updatePermissions,
