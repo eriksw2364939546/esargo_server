@@ -1,21 +1,22 @@
-// routes/Admin.route.js - ИСПРАВЛЕННЫЕ АДМИНСКИЕ РОУТЫ 🎯
+// routes/Admin.route.js - АДМИНСКИЕ РОУТЫ С НОВОЙ MIDDLEWARE СИСТЕМОЙ (ИСПРАВЛЕННЫЙ) 🎯
 import express from 'express';
 import {
   login,
   createAdmin,
-
-  createFirstAdmin,
-
   verify,
   getProfile,
   updatePermissions,
   getAdminsList
 } from '../controllers/AdminController.js';
+
+// 🆕 ИМПОРТ НОВОГО АДМИНСКОГО MIDDLEWARE
 import { 
-  authenticateUser, 
-  requireRole,
-  requireAdminPermission
-} from '../middleware/auth.middleware.js';
+  checkAdminToken,
+  checkAdminAccessByGroup,
+  requireOwner,
+  requireManagerOrOwner,
+  requireAnyAdmin
+} from '../middleware/adminAuth.middleware.js';
 
 // 🆕 ИМПОРТИРУЕМ РОУТЫ УПРАВЛЕНИЯ ПАРТНЕРАМИ
 import adminPartnerRoutes from './AdminPartner.route.js';
@@ -31,94 +32,86 @@ router.post('/login', login);
 router.get('/health', (req, res) => {
   res.json({
     result: true,
-    message: "🎯 Admin routes - ИСПРАВЛЕННЫЕ С УПРАВЛЕНИЕМ ПАРТНЕРАМИ",
+    message: "🎯 Admin routes - С НОВОЙ MIDDLEWARE СИСТЕМОЙ",
     service_layer: "enabled",
     meta_model: "enabled",
-    admin_permissions: "enabled",
+    admin_permissions: "role_based",
     
-    // 📋 СТРУКТУРА АДМИНСКИХ МОДУЛЕЙ
-    available_modules: {
-      // 👤 УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ
-      admin_management: {
-        base_path: "/api/admin/",
-        description: "Управление админскими аккаунтами",
-        endpoints: {
-          login: "POST /login",
-          verify: "GET /verify", 
-          profile: "GET /profile",
-          create_admin: "POST /create",
-          list_admins: "GET /list",
-          update_permissions: "PUT /:admin_id/permissions"
-        }
-      },
-      
-      // 🏪 УПРАВЛЕНИЕ ПАРТНЕРАМИ (НОВОЕ!)
-      partner_management: {
-        base_path: "/api/admin/partners/",
-        description: "Полный цикл одобрения партнеров",
-        workflow_steps: {
-          "ЭТАП 1→2": "POST /requests/:id/approve - Одобрить первичную заявку",
-          "ЭТАП 2": "Партнер подает юр.данные через свой кабинет",
-          "ЭТАП 3→4": "POST /legal/:id/approve - Одобрить юр.данные → создать профиль",
-          "ЭТАП 4": "Партнер наполняет контент через свой кабинет",
-          "ЭТАП 5→6": "POST /profiles/:id/approve - Одобрить контент → опубликовать"
-        },
-        endpoints: {
-          // Просмотр
-          get_all_requests: "GET /requests",
-          get_request_details: "GET /requests/:request_id",
-          
-          // Первичные заявки (ЭТАП 1)
-          approve_initial_request: "POST /requests/:request_id/approve",
-          reject_initial_request: "POST /requests/:request_id/reject",
-          
-          // Юридические данные (ЭТАП 3)
-          approve_legal_info: "POST /legal/:legal_info_id/approve",
-          reject_legal_info: "POST /legal/:legal_info_id/reject",
-          
-          // Контент и публикация (ЭТАП 5)
-          approve_content: "POST /profiles/:profile_id/approve",
-          reject_content: "POST /profiles/:profile_id/reject"
-        }
-      },
-      
-      // 🚚 ПЛАНИРУЕМЫЕ МОДУЛИ
-      future_modules: {
-        courier_management: "/api/admin/couriers/",
-        order_management: "/api/admin/orders/",
-        customer_support: "/api/admin/customers/",
-        analytics: "/api/admin/analytics/",
-        system_settings: "/api/admin/system/"
-      }
-    },
-    
-    // 🔑 РОЛИ И РАЗРЕШЕНИЯ
-    roles: {
+    // 📋 ДОСТУПНЫЕ АДМИНСКИЕ РОЛИ
+    admin_roles: {
       owner: {
-        description: "Полные права на все модули",
-        can_do: ["Создавать администраторов", "Изменять настройки системы", "Всё"]
+        description: "Владелец системы - все права",
+        created: "Автоматически при запуске сервера",
+        permissions: "Полный доступ ко всем функциям"
       },
       manager: {
-        description: "Управление партнерами, курьерами, заказами",
-        can_do: ["Одобрять партнеров", "Управлять заказами", "Создавать support/moderator"]
+        description: "Менеджер - управление партнерами и заказами",
+        permissions: "Одобрение партнеров, управление контентом"
+      },
+      admin: {
+        description: "Администратор - базовые права",
+        permissions: "Просмотр данных, базовые операции"
       },
       support: {
-        description: "Поддержка пользователей, просмотр заказов",
-        can_do: ["Просматривать заказы", "Помогать клиентам", "Просматривать заявки"]
+        description: "Поддержка пользователей",
+        permissions: "Работа с клиентами, просмотр заказов"
       },
       moderator: {
-        description: "Модерация контента, одобрение заявок",
-        can_do: ["Модерировать контент", "Одобрять заявки", "Просматривать профили"]
+        description: "Модерация контента",
+        permissions: "Модерация контента партнеров"
       }
     },
     
-    // 🔐 БЕЗОПАСНОСТЬ
-    security_features: {
-      role_based_access: "Контроль доступа на основе ролей",
-      permission_system: "Гранулярные разрешения",
-      admin_logging: "Логирование всех админских действий",
-      session_management: "Управление сессиями",
-      ip_restrictions: "Ограничения по IP (планируется)"
+    // 📋 СТРУКТУРА MIDDLEWARE
+    middleware_system: {
+      base_auth: "checkAdminToken - базовая проверка токена админа",
+      role_based: "checkAdminAccessByGroup(['role1', 'role2']) - проверка по ролям",
+      shortcuts: {
+        requireOwner: "Только для owner",
+        requireManagerOrOwner: "Для owner и manager",
+        requireAnyAdmin: "Для любого админа"
+      }
+    },
+    
+    // 📋 ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ
+    usage_examples: {
+      only_owner: "router.post('/critical', requireOwner, controller)",
+      owner_and_manager: "router.post('/manage', requireManagerOrOwner, controller)",
+      specific_roles: "router.get('/data', checkAdminAccessByGroup(['admin', 'support']), controller)",
+      any_admin: "router.get('/dashboard', requireAnyAdmin, controller)"
+    },
+    
+    // 🎯 ИНФОРМАЦИЯ ОБ OWNER АККАУНТЕ
+    owner_account: {
+      creation: "Автоматически при первом запуске сервера",
+      email: "admin@admin.com",
+      password: "admin (измените после первого входа!)",
+      note: "Используйте POST /api/admin/login для входа"
+    },
+    
+    // 📋 ДОСТУПНЫЕ ENDPOINTS
+    available_endpoints: {
+      auth: {
+        login: "POST /api/admin/login",
+        verify: "GET /api/admin/verify",
+        profile: "GET /api/admin/profile"
+      },
+      management: {
+        create_admin: "POST /api/admin/create",
+        list_admins: "GET /api/admin/list",
+        update_permissions: "PUT /api/admin/:admin_id/permissions"
+      },
+      partners: {
+        requests: "GET /api/admin/partners/requests",
+        approve_request: "POST /api/admin/partners/requests/:id/approve",
+        approve_legal: "POST /api/admin/partners/legal/:id/approve",
+        approve_content: "POST /api/admin/partners/profiles/:id/approve"
+      },
+      system: {
+        dashboard: "GET /api/admin/dashboard",
+        search: "GET /api/admin/search",
+        system_info: "GET /api/admin/system"
+      }
     },
     
     timestamp: new Date().toISOString()
@@ -128,168 +121,261 @@ router.get('/health', (req, res) => {
 // ================ ЗАЩИЩЕННЫЕ РОУТЫ АДМИНОВ ================
 
 // GET /api/admin/verify - Верификация токена администратора
-router.get('/verify', authenticateUser, requireRole('admin'), verify);
+router.get('/verify', checkAdminToken, verify);
 
-// GET /api/admin/profile - Получение профиля администратора
-router.get('/profile', authenticateUser, requireRole('admin'), getProfile);
+// GET /api/admin/profile - Получение профиля администратора  
+router.get('/profile', checkAdminToken, getProfile);
 
-// POST /api/admin/create - Создание нового администратора (owner/manager)
-router.post('/create', authenticateUser, requireRole('admin'), createAdmin);
+// POST /api/admin/create - Создание нового администратора (только owner или manager)
+router.post('/create', requireManagerOrOwner, createAdmin);
 
-router.post('/create-first', createFirstAdmin);
+// GET /api/admin/list - Получение списка администраторов (owner/manager)
+router.get('/list', requireManagerOrOwner, getAdminsList);
 
-// GET /api/admin/list - Получение списка администраторов (owner/manager)  
-router.get('/list', authenticateUser, requireRole('admin'), getAdminsList);
+// PUT /api/admin/:admin_id/permissions - Обновление разрешений (только owner)
+router.put('/:admin_id/permissions', requireOwner, updatePermissions);
 
-// PUT /api/admin/:admin_id/permissions - Обновление разрешений администратора (owner/manager)
-router.put('/:admin_id/permissions', authenticateUser, requireRole('admin'), updatePermissions);
-
-// ================ 🆕 ПОДКЛЮЧЕНИЕ МОДУЛЯ ПАРТНЕРОВ ================
+// ================ 🆕 ПОДКЛЮЧЕНИЕ МОДУЛЯ ПАРТНЕРОВ С НОВЫМИ MIDDLEWARE ================
 
 /**
  * 🏪 МОДУЛЬ УПРАВЛЕНИЯ ПАРТНЕРАМИ
- * /api/admin/partners/* - Все роуты для управления workflow партнеров
- * 
- * 🎯 ПРАВИЛЬНЫЙ WORKFLOW:
- * 1. Партнер регистрируется → InitialPartnerRequest (pending)
- * 2. Админ одобряет → status = approved
- * 3. Партнер подает юр.данные → PartnerLegalInfo, status = under_review  
- * 4. Админ одобряет документы → создается PartnerProfile, status = legal_approved
- * 5. Партнер наполняет контент → status = content_review
- * 6. Админ одобряет контент → is_public = true, status = completed
+ * Используем role-based middleware для разных уровней доступа
  */
 router.use('/partners', adminPartnerRoutes);
 
-// ================ 🔄 ПЛАНИРУЕМЫЕ МОДУЛИ ================
-
-// 🚚 МОДУЛЬ КУРЬЕРОВ (планируется)
-// router.use('/couriers', adminCourierRoutes);
-
-// 🛒 МОДУЛЬ ЗАКАЗОВ (планируется)
-// router.use('/orders', adminOrderRoutes);
-
-// 👥 МОДУЛЬ КЛИЕНТОВ (планируется)
-// router.use('/customers', adminCustomerRoutes);
-
-// 📊 МОДУЛЬ АНАЛИТИКИ (планируется)
-// router.use('/analytics', adminAnalyticsRoutes);
-
-// ⚙️ МОДУЛЬ СИСТЕМНЫХ НАСТРОЕК (планируется)
-// router.use('/system', adminSystemRoutes);
-
-// 📋 МОДУЛЬ ЛОГОВ (планируется)
-// router.use('/logs', adminLogsRoutes);
-
-// ================ ДОПОЛНИТЕЛЬНЫЕ АДМИНСКИЕ ФУНКЦИИ ================
+// ================ ДАШБОРД И АНАЛИТИКА ================
 
 /**
- * 📊 ОБЩАЯ СТАТИСТИКА СИСТЕМЫ
- * GET /api/admin/dashboard
+ * 📊 ГЛАВНЫЙ ДАШБОРД АДМИНИСТРАТОРА
+ * GET /api/admin/dashboard - Доступен любому админу
  */
-router.get('/dashboard', 
-  authenticateUser, 
-  requireRole('admin'), 
-  async (req, res) => {
-    try {
-      const { user } = req;
+router.get('/dashboard', requireAnyAdmin, async (req, res) => {
+  try {
+    // 🎯 БАЗОВАЯ ИНФОРМАЦИЯ ДАШБОРДА
+    const dashboardData = {
+      admin_info: {
+        id: req.admin._id,
+        full_name: req.admin.full_name,
+        role: req.admin_role,
+        department: req.admin.contact_info?.department,
+        last_login: req.admin.last_login_at
+      },
       
-      // Базовая статистика для дашборда
-      const dashboardData = {
-        admin_info: {
-          id: user._id,
-          full_name: user.full_name,
-          role: user.admin_role || user.role,
-          department: user.department
+      server_status: {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        environment: process.env.NODE_ENV,
+        version: "2.0.0"
+      },
+      
+      quick_stats: {
+        pending_requests: "Загружается...",
+        active_partners: "Загружается...",
+        total_orders: "Загружается..."
+      },
+      
+      // 🎯 ДЕЙСТВИЯ В ЗАВИСИМОСТИ ОТ РОЛИ
+      available_actions: getActionsForRole(req.admin_role),
+      
+      notifications: [
+        {
+          type: "success",
+          message: "Owner аккаунт создается автоматически при запуске",
+          timestamp: new Date()
         },
-        
-        quick_stats: {
-          pending_partner_requests: "Загружается...",
-          active_partners: "Загружается...",
-          total_orders_today: "Загружается...",
-          revenue_today: "Загружается..."
-        },
-        
-        quick_actions: [
-          {
-            title: "Заявки партнеров",
-            description: "Просмотр и одобрение заявок",
-            link: "/api/admin/partners/requests"
-          },
-          {
-            title: "Управление администраторами",
-            description: "Создание и управление админами",
-            link: "/api/admin/list"
-          }
-        ],
-        
-        notifications: [
-          {
-            type: "info",
-            message: "Система ESARGO работает нормально",
-            timestamp: new Date()
-          }
-        ]
-      };
+        {
+          type: "info", 
+          message: `Добро пожаловать, ${req.admin.full_name}! Ваша роль: ${req.admin_role}`,
+          timestamp: new Date()
+        }
+      ]
+    };
 
-      res.status(200).json({
-        result: true,
-        message: "Дашборд администратора",
-        dashboard: dashboardData
-      });
+    res.status(200).json({
+      result: true,
+      message: "Дашборд администратора",
+      dashboard: dashboardData
+    });
 
-    } catch (error) {
-      console.error('Admin dashboard error:', error);
-      res.status(500).json({
-        result: false,
-        message: "Ошибка загрузки дашборда"
-      });
-    }
+  } catch (error) {
+    console.error('Admin dashboard error:', error);
+    res.status(500).json({
+      result: false,
+      message: "Ошибка загрузки дашборда"
+    });
   }
-);
+});
 
 /**
  * 🔍 БЫСТРЫЙ ПОИСК ПО СИСТЕМЕ
- * GET /api/admin/search?q=query
+ * GET /api/admin/search?q=query - Доступен любому админу
  */
-router.get('/search',
-  authenticateUser,
-  requireRole('admin'),
-  async (req, res) => {
-    try {
-      const { q } = req.query;
-      
-      if (!q || q.length < 3) {
-        return res.status(400).json({
-          result: false,
-          message: "Поисковый запрос должен содержать минимум 3 символа"
-        });
-      }
-
-      // Базовый поиск (можно расширить)
-      const searchResults = {
-        partners: [],
-        customers: [],
-        orders: [],
-        admins: []
-      };
-
-      res.status(200).json({
-        result: true,
-        message: `Результаты поиска для: "${q}"`,
-        query: q,
-        results: searchResults,
-        total_found: 0
-      });
-
-    } catch (error) {
-      console.error('Admin search error:', error);
-      res.status(500).json({
+router.get('/search', requireAnyAdmin, async (req, res) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q || q.length < 3) {
+      return res.status(400).json({
         result: false,
-        message: "Ошибка поиска"
+        message: "Поисковый запрос должен содержать минимум 3 символа"
       });
     }
+
+    // 🎯 ПОИСК В ЗАВИСИМОСТИ ОТ РОЛИ АДМИНА
+    const searchResults = await performSearchByRole(q, req.admin_role);
+
+    res.status(200).json({
+      result: true,
+      message: `Результаты поиска для: "${q}"`,
+      query: q,
+      admin_role: req.admin_role,
+      results: searchResults,
+      total_found: Object.values(searchResults).flat().length
+    });
+
+  } catch (error) {
+    console.error('Admin search error:', error);
+    res.status(500).json({
+      result: false,
+      message: "Ошибка поиска"
+    });
   }
-);
+});
+
+// ================ СИСТЕМНЫЕ РОУТЫ (ТОЛЬКО OWNER) ================
+
+/**
+ * 🔧 СИСТЕМНЫЕ НАСТРОЙКИ
+ * GET /api/admin/system - Только для owner
+ */
+router.get('/system', requireOwner, async (req, res) => {
+  try {
+    const systemInfo = {
+      database: {
+        status: "connected",
+        collections: "Загружается..."
+      },
+      server: {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        cpu_usage: "Недоступно"
+      },
+      security: {
+        active_sessions: "Загружается...",
+        failed_logins: "Загружается..."
+      }
+    };
+
+    res.status(200).json({
+      result: true,
+      message: "Системная информация",
+      system: systemInfo
+    });
+
+  } catch (error) {
+    console.error('System info error:', error);
+    res.status(500).json({
+      result: false,
+      message: "Ошибка получения системной информации"
+    });
+  }
+});
+
+// ================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ================
+
+/**
+ * 🎯 ПОЛУЧЕНИЕ ДОСТУПНЫХ ДЕЙСТВИЙ В ЗАВИСИМОСТИ ОТ РОЛИ
+ */
+function getActionsForRole(adminRole) {
+  const baseActions = [
+    {
+      title: "Просмотр дашборда",
+      description: "Основная информация системы",
+      link: "/api/admin/dashboard"
+    }
+  ];
+
+  switch (adminRole) {
+    case 'owner':
+      return [
+        ...baseActions,
+        {
+          title: "Управление администраторами",
+          description: "Создание и управление админами",
+          link: "/api/admin/list"
+        },
+        {
+          title: "Системные настройки",
+          description: "Настройка системы",
+          link: "/api/admin/system"
+        },
+        {
+          title: "Управление партнерами",
+          description: "Полный контроль над партнерами",
+          link: "/api/admin/partners/requests"
+        }
+      ];
+      
+    case 'manager':
+      return [
+        ...baseActions,
+        {
+          title: "Заявки партнеров",
+          description: "Одобрение и управление партнерами",
+          link: "/api/admin/partners/requests"
+        },
+        {
+          title: "Создание админов",
+          description: "Создание администраторов",
+          link: "/api/admin/create"
+        }
+      ];
+      
+    case 'support':
+      return [
+        ...baseActions,
+        {
+          title: "Поддержка клиентов",
+          description: "Работа с обращениями",
+          link: "/api/admin/support"
+        }
+      ];
+      
+    default:
+      return baseActions;
+  }
+}
+
+/**
+ * 🔍 ПОИСК В ЗАВИСИМОСТИ ОТ РОЛИ
+ */
+async function performSearchByRole(query, adminRole) {
+  const results = {
+    partners: [],
+    customers: [],
+    orders: [],
+    admins: []
+  };
+
+  // Owner и Manager могут искать везде
+  if (['owner', 'manager'].includes(adminRole)) {
+    // Полный поиск (здесь будет реальная логика поиска)
+    return results;
+  }
+  
+  // Support может искать только клиентов и заказы
+  if (adminRole === 'support') {
+    return {
+      customers: [],
+      orders: []
+    };
+  }
+  
+  // Остальные роли - ограниченный поиск
+  return {
+    basic_info: []
+  };
+}
 
 // ================ MIDDLEWARE ДЛЯ ОБРАБОТКИ ОШИБОК ================
 router.use((error, req, res, next) => {
@@ -305,38 +391,52 @@ router.use((error, req, res, next) => {
 
 // ================ ЗАМЕТКИ ДЛЯ РАЗРАБОТЧИКОВ ================
 /*
-🎯 СТРУКТУРА АДМИНСКИХ РОУТОВ:
+🎯 НОВАЯ СТРУКТУРА АДМИНСКИХ РОУТОВ С ROLE-BASED MIDDLEWARE:
 
 BASE: /api/admin/
-├── 👤 УПРАВЛЕНИЕ АДМИНАМИ
-│   ├── POST /login - Авторизация
-│   ├── GET /verify - Проверка токена
-│   ├── GET /profile - Профиль админа
-│   ├── POST /create - Создание админа
-│   ├── GET /list - Список админов
-│   └── PUT /:admin_id/permissions - Изменение прав
+├── 👤 УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ
+│   ├── POST /login - Авторизация (публичный)
+│   ├── GET /verify - Проверка токена (checkAdminToken)
+│   ├── GET /profile - Профиль админа (checkAdminToken)
+│   ├── POST /create - Создание админа (requireManagerOrOwner)
+│   ├── GET /list - Список админов (requireManagerOrOwner)
+│   └── PUT /:admin_id/permissions - Изменение прав (requireOwner)
 │
 ├── 🏪 УПРАВЛЕНИЕ ПАРТНЕРАМИ (/partners/*)
-│   ├── GET /requests - Все заявки
-│   ├── POST /requests/:id/approve - ЭТАП 1→2
-│   ├── POST /legal/:id/approve - ЭТАП 3→4 (создает PartnerProfile!)
-│   └── POST /profiles/:id/approve - ЭТАП 5→6 (публикует)
+│   ├── Различные уровни доступа по ролям
+│   ├── Owner: полный доступ
+│   ├── Manager: одобрение и управление
+│   └── Admin/Support: просмотр
 │
-├── 📊 ДОПОЛНИТЕЛЬНО
-│   ├── GET /dashboard - Дашборд админа
-│   └── GET /search - Поиск по системе
+├── 📊 ДАШБОРД И АНАЛИТИКА
+│   ├── GET /dashboard - Главный дашборд (requireAnyAdmin)
+│   ├── GET /search - Поиск по системе (requireAnyAdmin)
+│   └── GET /system - Системная информация (requireOwner)
 │
-└── 🔄 ПЛАНИРУЕМЫЕ МОДУЛИ
-    ├── /couriers/* - Управление курьерами
-    ├── /orders/* - Управление заказами
-    ├── /customers/* - Поддержка клиентов
-    └── /analytics/* - Аналитика
+└── 🎯 РОЛИ И ПРАВА:
+    ├── owner: Все права (создается автоматически)
+    ├── manager: Управление партнерами + создание админов
+    ├── admin: Базовые права
+    ├── support: Поддержка клиентов
+    └── moderator: Модерация контента
 
-🔑 КЛЮЧЕВЫЕ ПРИНЦИПЫ:
-- Все админские действия логируются
-- Проверка ролей и разрешений
-- PartnerProfile создается ТОЛЬКО через админа
-- Полный контроль workflow партнеров
+🆕 MIDDLEWARE СИСТЕМА:
+- checkAdminToken: Базовая проверка админского токена
+- checkAdminAccessByGroup(['role1', 'role2']): Проверка по ролям
+- requireOwner: Только owner
+- requireManagerOrOwner: Owner или manager
+- requireAnyAdmin: Любой админ
+
+🔑 ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ:
+router.post('/critical', requireOwner, controller)
+router.post('/manage', requireManagerOrOwner, controller)  
+router.get('/data', checkAdminAccessByGroup(['admin', 'support']), controller)
+router.get('/dashboard', requireAnyAdmin, controller)
+
+📧 OWNER АККАУНТ:
+Email: admin@admin.com
+Password: admin
+Создается автоматически при запуске сервера
 */
 
 export default router;
