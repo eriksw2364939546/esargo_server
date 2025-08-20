@@ -255,95 +255,101 @@ export const approvePartnerContentAndPublish = async (profileId, adminId, adminN
   const session = await mongoose.startSession();
   
   try {
-    return await session.withTransaction(async () => {
-      // 1️⃣ НАХОДИМ ПРОФИЛЬ ПАРТНЕРА
-      const partnerProfile = await PartnerProfile.findById(profileId)
-        .populate('user_id')
-        .session(session);
-      
-      if (!partnerProfile) {
-        throw new Error('Профиль партнера не найден');
+    // 🔧 УБИРАЕМ session.withTransaction() и делаем обычную транзакцию
+    await session.startTransaction();
+
+    // 1️⃣ НАХОДИМ ПРОФИЛЬ ПАРТНЕРА
+    const partnerProfile = await PartnerProfile.findById(profileId)
+      .populate('user_id')
+      .session(session);
+    
+    if (!partnerProfile) {
+      throw new Error('Профиль партнера не найден');
+    }
+
+    // 2️⃣ ПРОВЕРЯЕМ СТАТУС
+    if (partnerProfile.is_public) {
+      throw new Error('Партнер уже опубликован');
+    }
+
+    if (partnerProfile.content_status === 'approved') {
+      throw new Error('Контент уже одобрен');
+    }
+
+    // 3️⃣ ПРОВЕРЯЕМ ГОТОВНОСТЬ К ПУБЛИКАЦИИ
+    if (partnerProfile.menu_categories.length === 0) {
+      throw new Error('Необходимо добавить хотя бы одну категорию меню');
+    }
+
+    // Проверяем наличие продуктов
+    const { Product } = await import('../models/index.js');
+    const productsCount = await Product.countDocuments({ 
+      partner_id: profileId,
+      is_active: true 
+    }).session(session);
+
+    if (productsCount === 0) {
+      throw new Error('Необходимо добавить хотя бы один активный продукт');
+    }
+
+    // 4️⃣ ОДОБРЯЕМ И ПУБЛИКУЕМ
+    partnerProfile.content_status = 'approved';
+    partnerProfile.approval_status = 'approved';
+    partnerProfile.is_approved = true;
+    partnerProfile.is_active = true;
+    partnerProfile.is_public = true;
+    
+    // Добавляем информацию об одобрении
+    partnerProfile.approved_at = new Date();
+    partnerProfile.approved_by = adminId;
+    partnerProfile.admin_notes = adminNotes || 'Контент одобрен администратором';
+
+    await partnerProfile.save({ session });
+
+    // 5️⃣ ОБНОВЛЯЕМ СТАТУС ПЕРВИЧНОЙ ЗАЯВКИ
+    await InitialPartnerRequest.findOneAndUpdate(
+      { user_id: partnerProfile.user_id._id },
+      { 
+        status: 'completed',
+        final_approval_at: new Date(),
+        final_approved_by: adminId
+      },
+      { session }
+    );
+
+    // 🔧 КОММИТИМ ТРАНЗАКЦИЮ
+    await session.commitTransaction();
+
+    // 6️⃣ ФОРМИРУЕМ КРАСИВЫЙ ОТВЕТ API (ВНЕ ТРАНЗАКЦИИ!)
+    return {
+      result: true,
+      message: "🎉 ЭТАП 5→6 ЗАВЕРШЕН: Партнер опубликован!",
+      admin_action: "Контент одобрен и партнер опубликован",
+      partner_published: true,
+      next_step: "Партнер готов принимать заказы",
+      partner: {
+        id: partnerProfile._id,
+        business_name: partnerProfile.business_name,
+        brand_name: partnerProfile.brand_name,
+        category: partnerProfile.category,
+        is_approved: partnerProfile.is_approved,
+        is_active: partnerProfile.is_active,
+        is_public: partnerProfile.is_public,
+        content_status: partnerProfile.content_status,
+        approval_status: partnerProfile.approval_status,
+        approved_at: partnerProfile.approved_at
+      },
+      workflow: {
+        previous_step: 5,
+        current_step: 6,
+        step_name: "Опубликован и готов к заказам",
+        milestone: "🎉 ПОЛНЫЙ WORKFLOW ЗАВЕРШЕН!"
       }
-
-      // 2️⃣ ПРОВЕРЯЕМ СТАТУС
-      if (partnerProfile.is_public) {
-        throw new Error('Партнер уже опубликован');
-      }
-
-      if (partnerProfile.content_status === 'approved') {
-        throw new Error('Контент уже одобрен');
-      }
-
-      // 3️⃣ ПРОВЕРЯЕМ ГОТОВНОСТЬ К ПУБЛИКАЦИИ
-      if (partnerProfile.menu_categories.length === 0) {
-        throw new Error('Необходимо добавить хотя бы одну категорию меню');
-      }
-
-      // Проверяем наличие продуктов
-      const { Product } = await import('../models/index.js');
-      const productsCount = await Product.countDocuments({ 
-        partner_id: profileId,
-        is_active: true 
-      }).session(session);
-
-      if (productsCount === 0) {
-        throw new Error('Необходимо добавить хотя бы один активный продукт');
-      }
-
-      // 4️⃣ ОДОБРЯЕМ И ПУБЛИКУЕМ
-      partnerProfile.content_status = 'approved';
-      partnerProfile.approval_status = 'approved';
-      partnerProfile.is_approved = true;
-      partnerProfile.is_active = true;
-      partnerProfile.is_public = true;
-      
-      // Добавляем информацию об одобрении
-      partnerProfile.approved_at = new Date();
-      partnerProfile.approved_by = adminId;
-      partnerProfile.admin_notes = adminNotes || 'Контент одобрен администратором';
-
-      await partnerProfile.save({ session });
-
-      // 5️⃣ ОБНОВЛЯЕМ СТАТУС ПЕРВИЧНОЙ ЗАЯВКИ
-      await InitialPartnerRequest.findOneAndUpdate(
-        { user_id: partnerProfile.user_id._id },
-        { 
-          status: 'completed',
-          final_approval_at: new Date(),
-          final_approved_by: adminId
-        },
-        { session }
-      );
-
-      // 6️⃣ ФОРМИРУЕМ ОТВЕТ API
-      return {
-        result: true,
-        message: "🎉 ЭТАП 5→6 ЗАВЕРШЕН: Партнер опубликован!",
-        admin_action: "Контент одобрен и партнер опубликован",
-        partner_published: true,
-        next_step: "Партнер готов принимать заказы",
-        partner: {
-          id: partnerProfile._id,
-          business_name: partnerProfile.business_name,
-          brand_name: partnerProfile.brand_name,
-          category: partnerProfile.category,
-          is_approved: partnerProfile.is_approved,
-          is_active: partnerProfile.is_active,
-          is_public: partnerProfile.is_public,
-          content_status: partnerProfile.content_status,
-          approval_status: partnerProfile.approval_status,
-          approved_at: partnerProfile.approved_at
-        },
-        workflow: {
-          previous_step: 5,
-          current_step: 6,
-          step_name: "Опубликован и готов к заказам",
-          milestone: "🎉 ПОЛНЫЙ WORKFLOW ЗАВЕРШЕН!"
-        }
-      };
-    });
+    };
 
   } catch (error) {
+    // 🔧 ОТКАТЫВАЕМ ТРАНЗАКЦИЮ ПРИ ОШИБКЕ
+    await session.abortTransaction();
     console.error('Approve partner content and publish error:', error);
     throw error;
   } finally {
