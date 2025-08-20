@@ -15,13 +15,13 @@ import {
 } from '../models/index.js';
 
 // 🆕 ИМПОРТ НОВЫХ АДМИНСКИХ MIDDLEWARE
-import { 
-  checkAdminToken,
-  checkAdminAccessByGroup,
-  requireOwner,
-  requireManagerOrOwner,
-  requireAnyAdmin
-} from '../middleware/adminAuth.middleware.js';
+// import { 
+//   checkAdminToken,
+//   checkAdminAccessByGroup,
+//   requireOwner,
+//   requireManagerOrOwner,
+//   requireAnyAdmin
+// } from '../middleware/adminAuth.middleware.js';
 
 const router = express.Router();
 

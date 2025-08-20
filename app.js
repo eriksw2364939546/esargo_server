@@ -12,10 +12,14 @@ import connectDB from './config/database.js';
 import { requestLogger, startupLogger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import routes from './routes/index.js';
+import initOwnerAccount from './services/initOwner.service.js';
 
 const app = express();
 
-connectDB();
+
+connectDB().then(() => {
+  initOwnerAccount(); 
+});
 
 app.set('trust proxy', 1);
 

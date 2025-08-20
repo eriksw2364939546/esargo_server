@@ -48,12 +48,12 @@ router.get('/', (req, res) => {
 					remove: 'DELETE /api/customers/addresses/:addressId'
 				}
 			},
-			partners: {
-				register: 'POST /api/partners/register', // 🔥 РЕГИСТРАЦИЯ С ТОКЕНОМ!
-				login: 'POST /api/partners/login',
-				dashboard: 'GET /api/partners/dashboard',
-				legal_info: 'POST /api/partners/legal-info/:request_id',
-				profile: 'GET /api/partners/profile',
+			// partners: {
+			// 	register: 'POST /api/partners/register', // 🔥 РЕГИСТРАЦИЯ С ТОКЕНОМ!
+			// 	login: 'POST /api/partners/login',
+			// 	dashboard: 'GET /api/partners/dashboard',
+			// 	legal_info: 'POST /api/partners/legal-info/:request_id',
+			// 	profile: 'GET /api/partners/profile',
 				menu: {
 					categories: 'GET/POST/PUT/DELETE /api/partners/menu/categories',
 					products: 'GET/POST/PUT/DELETE /api/partners/menu/products',
