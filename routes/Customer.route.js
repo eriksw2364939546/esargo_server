@@ -74,3 +74,16 @@
 // router.delete('/addresses/:addressId', authenticateUser, requireRole('customer'), removeAddress);
 
 // export default router;
+
+import express from 'express';
+const router = express.Router();
+
+// Временный health check
+router.get('/health', (req, res) => {
+  res.json({
+    result: true,
+    message: "Customer routes временно отключены для тестирования админки"
+  });
+});
+
+export default router;

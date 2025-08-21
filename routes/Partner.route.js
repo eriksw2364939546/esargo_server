@@ -264,3 +264,19 @@
 
 // // ================ ЭКСПОРТ ================
 // export default router;
+
+// Все остальное закомментировано...
+
+// ================ ЭКСПОРТ ДЛЯ СОВМЕСТИМОСТИ ================
+import express from 'express';
+const router = express.Router();
+
+// Временный health check
+router.get('/health', (req, res) => {
+  res.json({
+    result: true,  
+    message: "Partner routes временно отключены для тестирования админки"
+  });
+});
+
+export default router;

@@ -1,6 +1,14 @@
-// ================ 4. routes/Admin.route.js ================
+// ================ routes/Admin.route.js ================
 import express from 'express';
-import { createAdmin, loginAdminController, verifyAdmin, editAdmin, deleteAdmin } from '../controllers/AdminController.js';
+import { 
+    createAdmin, 
+    loginAdminController, 
+    verifyAdmin, 
+    editAdmin, 
+    deleteAdmin,
+    getProfile,
+    getAdminsList 
+} from '../controllers/AdminController.js';
 import { checkAdminToken, checkAccessByGroup } from '../middleware/adminAuth.middleware.js';
 
 const router = express.Router();
@@ -10,6 +18,9 @@ router.post('/login', loginAdminController);
 
 // Защищенные роуты
 router.get('/verify', checkAdminToken, verifyAdmin);
+router.get('/profile', checkAdminToken, getProfile);
+router.get('/profile/:id', checkAccessByGroup(['owner']), getProfile);
+router.get('/list', checkAccessByGroup(['owner', 'manager']), getAdminsList);
 router.post('/create', checkAccessByGroup(['owner', 'manager']), createAdmin);
 router.put('/edit/:id', checkAccessByGroup(['owner', 'manager']), editAdmin);
 router.delete('/delete/:id', checkAccessByGroup(['owner']), deleteAdmin);
