@@ -1,517 +1,655 @@
-// controllers/PartnerController.js - ИСПРАВЛЕН ДЛЯ ВОЗВРАТА ТОКЕНА 🎯
-import { 
-  registerPartnerWithInitialRequest,
-  getPartnerDashboardStatus,
-  checkPartnerAccess,
-  getDecryptedPartnerData,
-  encryptLegalData
-} from '../services/partner.register.service.js';
-import { loginPartner, getPartnerById } from '../services/partner.service.js';
-import { InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
-import { cryptoString } from '../utils/crypto.js';
+// ================ controllers/PartnerController.js (С META) ================
+import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo } from '../models/index.js';
+import Meta from '../models/Meta.model.js';
+import { createPartnerAccount, loginPartner } from '../services/partner.auth.service.js';
+import { cryptoString, decryptString } from '../utils/crypto.js';
+import { hashMeta } from '../utils/hash.js';
 import mongoose from 'mongoose';
 
-// ================ 1️⃣ ЭТАП: РЕГИСТРАЦИЯ ================
+/**
+ * ЭТАП 1: Регистрация партнера
+ * Создает User + Meta + InitialPartnerRequest
+ */
+const registerPartner = async (req, res) => {
+    try {
+        const partnerData = req.body;
+        
+        console.log('🔍 REGISTER PARTNER - Start:', {
+            email: partnerData.email,
+            business_name: partnerData.business_name,
+            category: partnerData.category
+        });
+
+        // Валидация обязательных полей
+        const requiredFields = [
+            'first_name', 'last_name', 'email', 'password', 'confirm_password',
+            'phone', 'business_name', 'category', 'address', 'location'
+        ];
+
+        const missingFields = requiredFields.filter(field => !partnerData[field]);
+        
+        if (missingFields.length > 0) {
+            return res.status(400).json({
+                result: false,
+                message: `Обязательные поля: ${missingFields.join(', ')}`
+            });
+        }
+
+        // Проверка паролей
+        if (partnerData.password !== partnerData.confirm_password) {
+            return res.status(400).json({
+                result: false,
+                message: "Пароли не совпадают"
+            });
+        }
+
+        // Проверка категории
+        if (!['restaurant', 'store'].includes(partnerData.category)) {
+            return res.status(400).json({
+                result: false,
+                message: "Категория должна быть 'restaurant' или 'store'"
+            });
+        }
+
+        // Проверяем существование через Meta
+        const normalizedEmail = partnerData.email.toLowerCase().trim();
+        const existingMeta = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), 'partner');
+        
+        if (existingMeta) {
+            return res.status(400).json({
+                result: false,
+                message: "Партнер с таким email уже существует"
+            });
+        }
+
+        // Добавляем IP и User-Agent
+        partnerData.registration_ip = req.ip;
+        partnerData.user_agent = req.get('User-Agent');
+
+        // Создаем аккаунт через сервис
+        const result = await createPartnerAccount(partnerData);
+
+        if (!result.isNewPartner) {
+            return res.status(400).json({
+                result: false,
+                message: "Ошибка при создании партнера"
+            });
+        }
+
+        console.log('✅ REGISTER PARTNER - Success:', {
+            user_id: result.user._id,
+            request_id: result.request._id,
+            meta_id: result.meta._id,
+            has_token: !!result.token
+        });
+
+        res.status(201).json({
+            result: true,
+            message: "Регистрация успешна! Следующий шаг - подача юридических документов.",
+            user: {
+                id: result.user._id,
+                email: result.user.email,
+                role: result.user.role
+            },
+            request: {
+                id: result.request._id,
+                status: result.request.status,
+                business_name: result.request.business_data.business_name
+            },
+            token: result.token,
+            next_step: {
+                action: "submit_legal_info",
+                endpoint: `POST /api/partners/legal-info/${result.request._id}`,
+                description: "Подайте юридические документы для проверки"
+            }
+        });
+
+    } catch (error) {
+        console.error('🚨 REGISTER PARTNER - Error:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка при регистрации партнера",
+            error: error.message
+        });
+    }
+};
 
 /**
- * ✅ ЭТАП 1: РЕГИСТРАЦИЯ ПАРТНЕРА
- * 🔐 Создает: User + Meta + InitialPartnerRequest
- * ❌ НЕ создает: PartnerProfile (создается только в ЭТАПЕ 3!)
+ * Авторизация партнера
  */
-export const registerPartner = async (req, res) => {
-  try {
-    const {
-      // Данные пользователя
-      first_name,
-      last_name,
-      email,
-      password,
-      confirm_password,
-      phone,
-      
-      // Данные бизнеса
-      business_name,
-      brand_name,
-      category, // restaurant/store
-      address,
-      location, // {lat, lng}
-      floor_unit,
-      whatsapp_consent
-    } = req.body;
+const loginPartnerController = async (req, res) => {
+    try {
+        const { email, password } = req.body;
 
-    // Валидация обязательных полей
-    const requiredFields = {
-      first_name, last_name, email, password, confirm_password,
-      phone, business_name, category, address, location
+        console.log('🔍 LOGIN PARTNER - Start:', {
+            email: email
+        });
+
+        if (!email || !password) {
+            return res.status(400).json({
+                result: false,
+                message: "Email и пароль обязательны"
+            });
+        }
+
+        const { token, partner } = await loginPartner({ email, password });
+
+        console.log('✅ LOGIN PARTNER - Success:', {
+            partner_id: partner.id,
+            has_profile: !!partner.profile
+        });
+
+        res.status(200).json({
+            result: true,
+            message: "Авторизация успешна",
+            token,
+            partner
+        });
+
+    } catch (error) {
+        console.error('🚨 LOGIN PARTNER - Error:', error);
+        res.status(error.statusCode || 500).json({
+            result: false,
+            message: error.message || "Ошибка авторизации"
+        });
+    }
+};
+
+/**
+ * Верификация токена партнера
+ */
+const verifyPartner = async (req, res) => {
+    try {
+        const { partner, metaInfo } = req;
+
+        if (!partner) {
+            return res.status(404).json({
+                result: false,
+                message: "Партнер не определен!"
+            });
+        }
+
+        // Получаем полную информацию
+        const partnerProfile = await PartnerProfile.findOne({ user_id: partner._id });
+        const partnerRequest = await InitialPartnerRequest.findOne({ user_id: partner._id });
+
+        res.status(200).json({
+            result: true,
+            message: "Партнер верифицирован",
+            partner: {
+                id: partner._id,
+                email: partner.email,
+                role: partner.role,
+                is_active: partner.is_active
+            },
+            profile: partnerProfile,
+            request: partnerRequest ? {
+                id: partnerRequest._id,
+                status: partnerRequest.status,
+                stage: partnerRequest.workflow_stage
+            } : null
+        });
+
+    } catch (error) {
+        console.error('🚨 VERIFY PARTNER - Error:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка верификации",
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Получение профиля партнера
+ */
+const getProfile = async (req, res) => {
+    try {
+        const { partner } = req;
+        const { id } = req.params;
+
+        console.log('🔍 GET PROFILE - Start:', {
+            partner_id: partner._id,
+            requested_id: id
+        });
+
+        // Если запрашивается конкретный ID
+        let targetPartnerId = partner._id;
+        if (id && mongoose.Types.ObjectId.isValid(id)) {
+            targetPartnerId = id;
+        }
+
+        // Проверяем что партнер может просматривать только свой профиль
+        if (targetPartnerId.toString() !== partner._id.toString()) {
+            return res.status(403).json({
+                result: false,
+                message: "Доступ запрещен"
+            });
+        }
+
+        const partnerProfile = await PartnerProfile.findOne({ 
+            user_id: targetPartnerId 
+        });
+
+        if (!partnerProfile) {
+            return res.status(404).json({
+                result: false,
+                message: "Профиль партнера не найден"
+            });
+        }
+
+        res.status(200).json({
+            result: true,
+            message: "Профиль партнера получен",
+            profile: partnerProfile
+        });
+
+    } catch (error) {
+        console.error('🚨 GET PROFILE - Error:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка получения профиля",
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Обновление профиля партнера
+ */
+const updateProfile = async (req, res) => {
+    try {
+        const { partner } = req;
+        const { id } = req.params;
+        const updateData = req.body;
+
+        console.log('🔍 UPDATE PROFILE - Start:', {
+            partner_id: partner._id,
+            profile_id: id,
+            fields: Object.keys(updateData)
+        });
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                result: false,
+                message: "Неверный ID профиля"
+            });
+        }
+
+        const partnerProfile = await PartnerProfile.findOne({
+            _id: id,
+            user_id: partner._id
+        });
+
+        if (!partnerProfile) {
+            return res.status(404).json({
+                result: false,
+                message: "Профиль не найден"
+            });
+        }
+
+        // Запрещаем менять критические поля
+        const protectedFields = ['user_id', 'status', 'is_active', 'is_approved'];
+        protectedFields.forEach(field => delete updateData[field]);
+
+        // Обновляем профиль
+        Object.assign(partnerProfile, updateData);
+        await partnerProfile.save();
+
+        console.log('✅ UPDATE PROFILE - Success');
+
+        res.status(200).json({
+            result: true,
+            message: "Профиль обновлен",
+            profile: partnerProfile
+        });
+
+    } catch (error) {
+        console.error('🚨 UPDATE PROFILE - Error:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка обновления профиля",
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Удаление партнера (полное удаление из системы)
+ */
+const deletePartner = async (req, res) => {
+    const session = await mongoose.startSession();
+    
+    try {
+        const { partner } = req;
+        const { id } = req.params;
+
+        console.log('🔍 DELETE PARTNER - Start:', {
+            requester_id: partner._id,
+            target_id: id
+        });
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                result: false,
+                message: "Неверный ID партнера"
+            });
+        }
+
+        // Партнер может удалить только себя
+        if (id !== partner._id.toString()) {
+            return res.status(403).json({
+                result: false,
+                message: "Вы можете удалить только свой аккаунт"
+            });
+        }
+
+        await session.withTransaction(async () => {
+            // 1. Находим все связанные данные
+            const partnerToDelete = await User.findById(id).session(session);
+            
+            if (!partnerToDelete) {
+                throw new Error("Партнер не найден");
+            }
+
+            // 2. Удаляем Meta запись
+            await Meta.deleteOne({ partner: id }).session(session);
+            console.log('✅ Meta запись удалена');
+
+            // 3. Удаляем InitialPartnerRequest
+            await InitialPartnerRequest.deleteOne({ user_id: id }).session(session);
+            console.log('✅ Заявка партнера удалена');
+
+            // 4. Удаляем PartnerLegalInfo
+            await PartnerLegalInfo.deleteOne({ user_id: id }).session(session);
+            console.log('✅ Юридические данные удалены');
+
+            // 5. Удаляем PartnerProfile
+            await PartnerProfile.deleteOne({ user_id: id }).session(session);
+            console.log('✅ Профиль партнера удален');
+
+            // 6. Удаляем самого пользователя
+            await User.findByIdAndDelete(id).session(session);
+            console.log('✅ Пользователь удален');
+        });
+
+        console.log('✅ DELETE PARTNER - Success');
+
+        res.status(200).json({
+            result: true,
+            message: "Партнер успешно удален из системы",
+            deletedPartner: {
+                id: id,
+                email: partner.email
+            }
+        });
+
+    } catch (error) {
+        console.error('🚨 DELETE PARTNER - Error:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка при удалении партнера",
+            error: error.message
+        });
+    } finally {
+        await session.endSession();
+    }
+};
+
+/**
+ * Получение статуса дашборда партнера
+ */
+const getDashboardStatus = async (req, res) => {
+    try {
+        const { partner } = req;
+
+        console.log('🔍 GET DASHBOARD - Start:', {
+            partner_id: partner._id
+        });
+
+        // Получаем все связанные данные
+        const partnerRequest = await InitialPartnerRequest.findOne({ 
+            user_id: partner._id 
+        });
+        
+        const legalInfo = await PartnerLegalInfo.findOne({ 
+            user_id: partner._id 
+        });
+        
+        const partnerProfile = await PartnerProfile.findOne({ 
+            user_id: partner._id 
+        });
+
+        // Определяем текущий этап
+        let currentStage = 1;
+        let nextAction = null;
+        let availableFeatures = [];
+
+        if (!partnerRequest) {
+            currentStage = 0;
+            nextAction = {
+                action: "register",
+                description: "Необходимо зарегистрироваться как партнер"
+            };
+        } else if (partnerRequest.status === 'pending') {
+            currentStage = 1;
+            nextAction = {
+                action: "wait_approval",
+                description: "Ожидайте одобрения заявки администратором"
+            };
+        } else if (partnerRequest.status === 'approved' && !legalInfo) {
+            currentStage = 2;
+            nextAction = {
+                action: "submit_legal_info",
+                endpoint: `POST /api/partners/legal-info/${partnerRequest._id}`,
+                description: "Подайте юридические документы"
+            };
+            availableFeatures = ['dashboard', 'personal_data'];
+        } else if (legalInfo && legalInfo.verification_status === 'pending') {
+            currentStage = 3;
+            nextAction = {
+                action: "wait_legal_verification",
+                description: "Юридические документы на проверке"
+            };
+            availableFeatures = ['dashboard', 'personal_data'];
+        } else if (legalInfo && legalInfo.verification_status === 'verified' && !partnerProfile) {
+            currentStage = 3.5;
+            nextAction = {
+                action: "profile_creation",
+                description: "Профиль создается администратором"
+            };
+            availableFeatures = ['dashboard', 'personal_data'];
+        } else if (partnerProfile && partnerProfile.status === 'draft') {
+            currentStage = 4;
+            nextAction = {
+                action: "fill_profile",
+                description: "Заполните профиль и меню"
+            };
+            availableFeatures = ['dashboard', 'personal_data', 'profile', 'menu'];
+        } else if (partnerProfile && partnerProfile.status === 'pending_approval') {
+            currentStage = 5;
+            nextAction = {
+                action: "wait_content_approval",
+                description: "Контент на проверке у администратора"
+            };
+            availableFeatures = ['dashboard', 'personal_data', 'profile', 'menu'];
+        } else if (partnerProfile && partnerProfile.status === 'active') {
+            currentStage = 6;
+            nextAction = {
+                action: "manage_business",
+                description: "Управляйте вашим бизнесом"
+            };
+            availableFeatures = ['dashboard', 'personal_data', 'profile', 'menu', 'orders', 'analytics'];
+        }
+
+        console.log('✅ GET DASHBOARD - Success:', {
+            current_stage: currentStage,
+            available_features: availableFeatures
+        });
+
+        res.status(200).json({
+            result: true,
+            message: "Статус дашборда получен",
+            dashboard: {
+                current_stage: currentStage,
+                stage_name: getStageNameByNumber(currentStage),
+                next_action: nextAction,
+                available_features: availableFeatures,
+                partner_request: partnerRequest ? {
+                    id: partnerRequest._id,
+                    status: partnerRequest.status,
+                    created_at: partnerRequest.createdAt
+                } : null,
+                legal_info: legalInfo ? {
+                    id: legalInfo._id,
+                    status: legalInfo.verification_status,
+                    submitted_at: legalInfo.createdAt
+                } : null,
+                profile: partnerProfile ? {
+                    id: partnerProfile._id,
+                    status: partnerProfile.status,
+                    is_active: partnerProfile.is_active
+                } : null
+            }
+        });
+
+    } catch (error) {
+        console.error('🚨 GET DASHBOARD - Error:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка получения статуса",
+            error: error.message
+        });
+    }
+};
+
+/**
+ * ЭТАП 2: Подача юридических документов
+ */
+const submitLegalInfo = async (req, res) => {
+    try {
+        const { partner, partnerRequest } = req;
+        const legalData = req.body;
+
+        console.log('🔍 SUBMIT LEGAL INFO - Start:', {
+            partner_id: partner._id,
+            request_id: partnerRequest._id
+        });
+
+        // Проверяем статус заявки
+        if (partnerRequest.status !== 'approved') {
+            return res.status(403).json({
+                result: false,
+                message: "Заявка должна быть одобрена перед подачей документов"
+            });
+        }
+
+        // Проверяем не поданы ли уже документы
+        const existingLegal = await PartnerLegalInfo.findOne({ 
+            user_id: partner._id 
+        });
+
+        if (existingLegal) {
+            return res.status(400).json({
+                result: false,
+                message: "Юридические документы уже поданы",
+                legal_status: existingLegal.verification_status
+            });
+        }
+
+        // Валидация обязательных полей
+        const requiredFields = [
+            'legal_name', 'siret_number', 'legal_form', 
+            'business_address', 'bank_details'
+        ];
+
+        const missingFields = requiredFields.filter(field => !legalData[field]);
+        
+        if (missingFields.length > 0) {
+            return res.status(400).json({
+                result: false,
+                message: `Обязательные поля: ${missingFields.join(', ')}`
+            });
+        }
+
+        // Создаем запись с зашифрованными данными
+        const newLegalInfo = new PartnerLegalInfo({
+            user_id: partner._id,
+            partner_request_id: partnerRequest._id,
+            legal_data: {
+                legal_name: cryptoString(legalData.legal_name),
+                siret_number: cryptoString(legalData.siret_number),
+                legal_form: legalData.legal_form,
+                business_address: cryptoString(legalData.business_address),
+                bank_details: cryptoString(JSON.stringify(legalData.bank_details)),
+                tax_number: legalData.tax_number ? cryptoString(legalData.tax_number) : null,
+                contact_person: legalData.contact_person ? cryptoString(legalData.contact_person) : null,
+                contact_phone: legalData.contact_phone ? cryptoString(legalData.contact_phone) : null
+            },
+            verification_status: 'pending',
+            security_info: {
+                submitted_ip: req.ip,
+                user_agent: req.get('User-Agent')
+            }
+        });
+
+        await newLegalInfo.save();
+
+        // Обновляем статус заявки
+        partnerRequest.status = 'under_review';
+        partnerRequest.workflow_stage = 3;
+        await partnerRequest.save();
+
+        console.log('✅ SUBMIT LEGAL INFO - Success:', {
+            legal_id: newLegalInfo._id
+        });
+
+        res.status(201).json({
+            result: true,
+            message: "Юридические документы поданы на проверку",
+            legal_info: {
+                id: newLegalInfo._id,
+                status: newLegalInfo.verification_status
+            },
+            next_step: {
+                action: "wait_verification",
+                description: "Ожидайте проверки документов администратором"
+            }
+        });
+
+    } catch (error) {
+        console.error('🚨 SUBMIT LEGAL INFO - Error:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка при подаче документов",
+            error: error.message
+        });
+    }
+};
+
+// ================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ================
+
+function getStageNameByNumber(stage) {
+    const stages = {
+        0: "Не зарегистрирован",
+        1: "Заявка подана",
+        2: "Заявка одобрена",
+        3: "Документы на проверке",
+        3.5: "Создание профиля",
+        4: "Заполнение контента",
+        5: "Контент на проверке",
+        6: "Активный партнер"
     };
+    return stages[stage] || "Неизвестный этап";
+}
 
-    const missingFields = Object.entries(requiredFields)
-      .filter(([key, value]) => !value)
-      .map(([key]) => key);
-
-    if (missingFields.length > 0) {
-      return res.status(400).json({
-        result: false,
-        message: `Обязательные поля: ${missingFields.join(', ')}`
-      });
-    }
-
-    // Валидация пароля
-    if (password !== confirm_password) {
-      return res.status(400).json({
-        result: false,
-        message: "Пароли не совпадают"
-      });
-    }
-
-    // Валидация категории
-    if (!['restaurant', 'store'].includes(category)) {
-      return res.status(400).json({
-        result: false,
-        message: "Тип бизнеса должен быть 'restaurant' или 'store'"
-      });
-    }
-
-    // 🎯 ЭТАП 1: Создаем ТОЛЬКО User + InitialPartnerRequest
-    const result = await registerPartnerWithInitialRequest({
-      first_name, last_name, email, password, phone,
-      business_name, brand_name, category, address, location, floor_unit,
-      whatsapp_consent, registration_ip: req.ip, user_agent: req.get('User-Agent')
-    });
-
-    // 🔥 ИСПРАВЛЕНО: Правильная проверка и возврат токена
-    console.log('🔍 REGISTRATION RESULT:', {
-      success: result.success,
-      has_token: !!result.token,
-      token_length: result.token ? result.token.length : 0,
-      user_id: result.user ? result.user.id : null
-    });
-
-    if (!result.token) {
-      console.error('🚨 ОШИБКА: Токен не создался в registerPartnerWithInitialRequest!');
-      return res.status(500).json({
-        result: false,
-        message: "Ошибка создания токена авторизации"
-      });
-    }
-
-    // ✅ ВОЗВРАЩАЕМ ПОЛНЫЙ ОТВЕТ С ТОКЕНОМ
-    res.status(201).json({
-      result: true,
-      message: "🎯 ЭТАП 1 ЗАВЕРШЕН: Регистрация успешна!",
-      user: result.user,
-      request: result.request,
-      token: result.token, // 🔥 ВОТ ОН ТОКЕН!
-      workflow: {
-        current_step: 1,
-        step_name: "Ожидание одобрения заявки",
-        next_steps: result.next_steps
-      }
-    });
-
-  } catch (error) {
-    console.error('Register partner error:', error);
-    
-    // Выводим полную информацию об ошибке для отладки
-    console.error('Error details:', {
-      message: error.message,
-      statusCode: error.statusCode,
-      stack: error.stack
-    });
-    
-    if (error.statusCode === 400) {
-      return res.status(400).json({
-        result: false,
-        message: error.message
-      });
-    }
-    
-    res.status(500).json({
-      result: false,
-      message: "Ошибка при регистрации партнера",
-      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-/**
- * ✅ АВТОРИЗАЦИЯ ПАРТНЕРА
- * Может войти сразу после регистрации (для личного кабинета)
- */
-export const loginPartnerUser = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        result: false,
-        message: "Email и пароль обязательны"
-      });
-    }
-
-    const result = await loginPartner(email, password);
-
-    res.status(200).json({
-      result: true,
-      message: "Авторизация успешна",
-      user: result.user,
-      token: result.token
-    });
-
-  } catch (error) {
-    console.error('Login partner error:', error);
-    
-    if (error.statusCode === 401 || error.statusCode === 404) {
-      return res.status(401).json({
-        result: false,
-        message: "Неверный email или пароль"
-      });
-    }
-    
-    res.status(500).json({
-      result: false,
-      message: "Ошибка авторизации"
-    });
-  }
-};
-
-// ================ ЛИЧНЫЙ КАБИНЕТ ================
-
-/**
- * ✅ СТАТУС ЛИЧНОГО КАБИНЕТА
- * Показывает на каком этапе находится партнер
- */
-export const getDashboardStatus = async (req, res) => {
-  try {
-    const { user } = req;
-
-    if (!user || user.role !== 'partner') {
-      return res.status(403).json({
-        result: false,
-        message: "Доступ только для партнеров"
-      });
-    }
-
-    const dashboardData = await getPartnerDashboardStatus(user._id);
-
-    res.status(200).json({
-      result: true,
-      message: "Статус личного кабинета получен",
-      dashboard: dashboardData
-    });
-
-  } catch (error) {
-    console.error('Get dashboard status error:', error);
-    res.status(500).json({
-      result: false,
-      message: "Ошибка получения статуса"
-    });
-  }
-};
-
-/**
- * ✅ ПОЛУЧЕНИЕ ПЕРСОНАЛЬНЫХ ДАННЫХ
- * Возвращает расшифрованные данные партнера
- */
-export const getPartnerPersonalData = async (req, res) => {
-  try {
-    const { user } = req;
-
-    if (!user || user.role !== 'partner') {
-      return res.status(403).json({
-        result: false,
-        message: "Доступ только для партнеров"
-      });
-    }
-
-    const personalData = await getDecryptedPartnerData(user._id);
-
-    res.status(200).json({
-      result: true,
-      message: "Персональные данные получены",
-      data: personalData
-    });
-
-  } catch (error) {
-    console.error('Get partner personal data error:', error);
-    res.status(500).json({
-      result: false,
-      message: "Ошибка получения персональных данных"
-    });
-  }
-};
-
-/**
- * ✅ ПРОВЕРКА ДОСТУПА К ФУНКЦИИ
- * Проверяет доступ партнера к определенной функции
- */
-export const checkFeatureAccess = async (req, res) => {
-  try {
-    const { user } = req;
-    const { feature } = req.params;
-
-    if (!user || user.role !== 'partner') {
-      return res.status(403).json({
-        result: false,
-        message: "Доступ только для партнеров"
-      });
-    }
-
-    const access = await checkPartnerAccess(user._id, feature);
-
-    res.status(200).json({
-      result: true,
-      feature,
-      access
-    });
-
-  } catch (error) {
-    console.error('Check feature access error:', error);
-    res.status(500).json({
-      result: false,
-      message: "Ошибка проверки доступа"
-    });
-  }
-};
-
-// ================ 2️⃣ ЭТАП: ЮРИДИЧЕСКИЕ ДАННЫЕ ================
-
-/**
- * ✅ ЭТАП 2: ПОДАЧА ЮРИДИЧЕСКИХ ДАННЫХ
- * 🔐 Создает: PartnerLegalInfo (зашифрованные документы)
- * 📋 Статус: InitialPartnerRequest.status = "under_review"
- */
-export const submitPartnerLegalInfo = async (req, res) => {
-  try {
-    const { request_id } = req.params;
-    const { user } = req;
-    const {
-      legal_name,
-      siret_number,
-      legal_form,
-      business_address,
-      contact_person,
-      contact_phone,
-      bank_details,
-      tax_number,
-      additional_info
-    } = req.body;
-
-    if (!user || user.role !== 'partner') {
-      return res.status(403).json({
-        result: false,
-        message: "Доступ только для партнеров"
-      });
-    }
-
-    // Валидация обязательных полей
-    const requiredFields = { legal_name, siret_number, legal_form, business_address, contact_person, contact_phone };
-    const missingFields = Object.entries(requiredFields)
-      .filter(([key, value]) => !value)
-      .map(([key]) => key);
-
-    if (missingFields.length > 0) {
-      return res.status(400).json({
-        result: false,
-        message: `Обязательные поля: ${missingFields.join(', ')}`
-      });
-    }
-
-    // Проверяем существование заявки
-    const request = await InitialPartnerRequest.findOne({
-      _id: request_id,
-      user_id: user._id
-    });
-
-    if (!request) {
-      return res.status(404).json({
-        result: false,
-        message: "Заявка не найдена или нет доступа"
-      });
-    }
-
-    if (request.status !== 'approved') {
-      return res.status(400).json({
-        result: false,
-        message: "Сначала дождитесь одобрения заявки"
-      });
-    }
-
-    // Создаем юридическую информацию
-    const legalData = await encryptLegalData({
-      user_id: user._id,
-      partner_request_id: request_id,
-      legal_name,
-      siret_number,
-      legal_form,
-      business_address,
-      contact_person,
-      contact_phone,
-      bank_details,
-      tax_number,
-      additional_info,
-      submitted_ip: req.ip,
-      user_agent: req.get('User-Agent')
-    });
-
-    // ✅ ИСПРАВЛЕНО: Обновляем статус заявки напрямую
-    request.status = 'under_review'; // Юр.данные поданы, ожидают проверки
-    await request.save();
-
-    console.log('✅ LEGAL INFO SUBMITTED:', {
-      request_id: request._id,
-      legal_info_id: legalData._id,
-      new_status: request.status
-    });
-
-    res.status(201).json({
-      result: true,
-      message: "🎯 ЭТАП 2 ЗАВЕРШЕН: Юридические данные поданы!",
-      legal_info_id: legalData._id,
-      workflow: {
-        current_step: 3,
-        step_name: "Проверка юридических данных",
-        next_steps: [
-          "Ожидайте проверки юридических данных администратором",
-          "После одобрения будет создан профиль партнера"
-        ]
-      }
-    });
-
-  } catch (error) {
-    console.error('Submit legal info error:', error);
-    res.status(500).json({
-      result: false,
-      message: "Ошибка при подаче юридических данных",
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// ================ 4️⃣+ ЭТАПЫ: ПРОФИЛЬ И КОНТЕНТ ================
-
-/**
- * ✅ ПОЛУЧЕНИЕ ПРОФИЛЯ ПАРТНЕРА
- * Доступно только после создания PartnerProfile (ЭТАП 3)
- */
-export const getPartnerProfileData = async (req, res) => {
-  try {
-    const { user } = req;
-
-    if (!user || user.role !== 'partner') {
-      return res.status(403).json({
-        result: false,
-        message: "Доступ только для партнеров"
-      });
-    }
-
-    // Проверяем доступ к профилю
-    const access = await checkPartnerAccess(user._id, 'profile_viewing');
-    
-    if (!access.has_access) {
-      return res.status(403).json({
-        result: false,
-        message: access.reason || "Профиль будет доступен после одобрения документов"
-      });
-    }
-
-    const partnerData = await getPartnerById(user._id);
-
-    if (!partnerData || !partnerData.profile) {
-      return res.status(404).json({
-        result: false,
-        message: "Профиль партнера не создан"
-      });
-    }
-
-    res.status(200).json({
-      result: true,
-      message: "Профиль партнера получен",
-      user: {
-        id: partnerData._id,
-        email: partnerData.email,
-        role: partnerData.role,
-        is_email_verified: partnerData.is_email_verified
-      },
-      partner: partnerData.profile
-    });
-
-  } catch (error) {
-    console.error('Get partner profile error:', error);
-    res.status(500).json({
-      result: false,
-      message: "Ошибка получения профиля"
-    });
-  }
-};
-
-// ================ LEGACY/DEPRECATED ================
-
-/**
- * ❌ УСТАРЕВШИЙ: Старый метод получения статуса
- */
-export const getRequestStatus = async (req, res) => {
-  try {
-    const { user } = req;
-
-    if (!user || user.role !== 'partner') {
-      return res.status(403).json({
-        result: false,
-        message: "Пользователь не аутентифицирован"
-      });
-    }
-
-    const status = await getPartnerDashboardStatus(user._id);
-
-    res.status(200).json({
-      result: true,
-      message: "Статус заявки получен (используйте /dashboard)",
-      status,
-      deprecated: true,
-      use_instead: "GET /api/partners/dashboard"
-    });
-
-  } catch (error) {
-    console.error('Get request status error:', error);
-    res.status(500).json({
-      result: false,
-      message: "Ошибка получения статуса"
-    });
-  }
-};
-
-/**
- * ❌ УСТАРЕВШИЙ: Создание первичной заявки
- */
-export const createInitialPartnerRequest = async (req, res) => {
-  return res.status(400).json({
-    result: false,
-    message: "Этот метод устарел. Используйте POST /api/partners/register для полной регистрации.",
-    new_endpoint: "POST /api/partners/register",
-    deprecated: true
-  });
-};
-
-// ================ ЭКСПОРТ ================
-export default {
-  // ✅ ОСНОВНОЙ WORKFLOW ПАРТНЕРОВ
-  
-  // 1️⃣ ЭТАП: РЕГИСТРАЦИЯ
-  registerPartner,          // Создает User + InitialPartnerRequest
-  loginPartnerUser,         // Авторизация партнера
-  
-  // ЛИЧНЫЙ КАБИНЕТ
-  getDashboardStatus,       // Статус кабинета (что делать дальше)
-  getPartnerPersonalData,   // Персональные данные (расшифрованные)
-  checkFeatureAccess,       // Проверка доступа к функциям
-  
-  // 2️⃣ ЭТАП: ЮРИДИЧЕСКИЕ ДАННЫЕ
-  submitPartnerLegalInfo,   // Подача юр.данных (ЭТАП 2)
-  
-  // 4️⃣+ ЭТАПЫ: ПРОФИЛЬ И КОНТЕНТ
-  getPartnerProfileData,    // Профиль (доступен после ЭТАПА 3)
-  
-  // DEPRECATED
-  getRequestStatus,         // Устаревший (используйте getDashboardStatus)
-  createInitialPartnerRequest // Устаревший (используйте registerPartner)
+export {
+    registerPartner,
+    loginPartnerController,
+    verifyPartner,
+    getProfile,
+    updateProfile,
+    deletePartner,
+    getDashboardStatus,
+    submitLegalInfo
 };
