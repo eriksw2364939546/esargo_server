@@ -1,11 +1,12 @@
-// ================ services/partner.auth.service.js (ТОЛЬКО БД) ================
+// ================ services/partner.auth.service.js (ИСПРАВЛЕННЫЙ) ================
 import { User, InitialPartnerRequest, PartnerProfile, PartnerLegalInfo } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { hashString, hashMeta, comparePassword } from '../utils/hash.js';
+import { cryptoString } from '../utils/crypto.js'; // 🆕 ИСПРАВЛЕНО: Правильный импорт
 import { generateCustomerToken } from './token.service.js';
 import mongoose from 'mongoose';
 
-// ================ Исправленная функция createPartnerAccount в services/partner.auth.service.js ================
+// ================ Исправленная функция createPartnerAccount ================
 
 export const createPartnerAccount = async (partnerData) => {
     const session = await mongoose.startSession();
@@ -126,12 +127,12 @@ export const createPartnerAccount = async (partnerData) => {
         return result;
 
     } catch (error) {
+        console.error('🚨 CREATE PARTNER ACCOUNT ERROR:', error);
         throw error;
     } finally {
         await session.endSession();
     }
 };
-
 
 /**
  * Авторизация партнера
@@ -155,6 +156,20 @@ export const loginPartner = async ({ email, password }) => {
 
         const partner = metaInfo.partner;
 
+        // Проверяем активность аккаунта
+        if (!partner.is_active) {
+            const error = new Error('Аккаунт деактивирован');
+            error.statusCode = 403;
+            throw error;
+        }
+
+        // Проверяем блокировку аккаунта
+        if (metaInfo.isAccountLocked()) {
+            const error = new Error('Аккаунт временно заблокирован из-за множественных неудачных попыток входа');
+            error.statusCode = 423;
+            throw error;
+        }
+
         // Проверяем пароль
         const isPasswordValid = await comparePassword(password, partner.password_hash);
         
@@ -165,7 +180,7 @@ export const loginPartner = async ({ email, password }) => {
             throw error;
         }
 
-        // Сбрасываем счетчик
+        // Сбрасываем счетчик неудачных попыток при успешном входе
         await metaInfo.resetFailedAttempts();
 
         // Обновляем активность
@@ -190,13 +205,64 @@ export const loginPartner = async ({ email, password }) => {
                 email: partner.email,
                 role: partner.role,
                 is_email_verified: partner.is_email_verified,
+                is_active: partner.is_active,
                 profile: profile
             }
         };
 
     } catch (error) {
+        console.error('🚨 LOGIN PARTNER ERROR:', error);
         throw error;
     }
 };
 
 
+export const checkPartnerExists = async (email) => {
+    try {
+        const normalizedEmail = email.toLowerCase().trim();
+        const metaInfo = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), 'partner');
+        
+        return !!metaInfo;
+    } catch (error) {
+        console.error('Check partner exists error:', error);
+        return false;
+    }
+};
+
+export const getPartnerById = async (partnerId) => {
+    try {
+        const partner = await User.findById(partnerId).select('-password_hash');
+        if (!partner) return null;
+
+        if (partner.role !== 'partner') {
+            return null;
+        }
+
+        const profile = await PartnerProfile.findOne({ user_id: partnerId });
+        const request = await InitialPartnerRequest.findOne({ user_id: partnerId });
+        const legalInfo = await PartnerLegalInfo.findOne({ user_id: partnerId });
+
+        return {
+            ...partner.toObject(),
+            profile,
+            request,
+            legalInfo
+        };
+    } catch (error) {
+        console.error('Get partner by ID error:', error);
+        return null;
+    }
+};
+
+
+export const checkUserByEmailAndRole = async (email, role = 'partner') => {
+    try {
+        const normalizedEmail = email.toLowerCase().trim();
+        const metaInfo = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), role);
+        
+        return !!metaInfo;
+    } catch (error) {
+        console.error('Check user by email and role error:', error);
+        return false;
+    }
+};

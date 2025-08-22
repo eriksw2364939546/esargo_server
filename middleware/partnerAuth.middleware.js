@@ -1,10 +1,10 @@
-// ================ middleware/partnerAuth.middleware.js (ИСПРАВЛЕННЫЙ С META) ================
+// ================ middleware/partnerAuth.middleware.js (ПО ВАШЕЙ АРХИТЕКТУРЕ) ================
 import jwt from "jsonwebtoken";
 import Meta from "../models/Meta.model.js";
 import { InitialPartnerRequest, PartnerProfile } from "../models/index.js";
 
 /**
- * Декодирование и проверка токена партнера через Meta
+ * Декодирование и проверка токена партнера (по аналогии с adminAuth)
  */
 const decodeToken = async (token) => {
     try {
@@ -33,7 +33,7 @@ const decodeToken = async (token) => {
 
         console.log('🔍 SEARCHING FOR PARTNER IN META:', partnerId);
 
-        // ВАЖНО: Ищем через Meta с populate
+        // Ищем через Meta с populate (как в вашей архитектуре)
         const metaInfo = await Meta.findOne({
             partner: partnerId,
             role: "partner"
@@ -54,8 +54,7 @@ const decodeToken = async (token) => {
             id: partner._id,
             email: partner.email,
             role: partner.role,
-            is_active: partner.is_active,
-            meta_id: metaInfo._id
+            is_active: partner.is_active
         });
 
         // Проверяем активность в Meta
@@ -111,17 +110,14 @@ const decodeToken = async (token) => {
 };
 
 /**
- * Базовая проверка токена партнера
+ * Базовая проверка токена партнера (по аналогии с checkAdminToken)
  */
 const checkPartnerToken = async (req, res, next) => {
     try {
         console.log('🔍 CHECK PARTNER TOKEN - START');
         
         const authHeader = req.headers["authorization"];
-        console.log('🔍 AUTH HEADER:', authHeader);
-        
         const token = authHeader?.split(" ")[1];
-        console.log('🔍 EXTRACTED TOKEN:', token ? 'Present' : 'Missing');
 
         if (!token) {
             console.log('🚨 NO TOKEN PROVIDED');
@@ -158,7 +154,7 @@ const checkPartnerToken = async (req, res, next) => {
 };
 
 /**
- * Проверка статуса партнера
+ * 🆕 ИСПРАВЛЕНО: Проверка статуса партнера (по аналогии с checkAccessByGroup)
  */
 const checkPartnerStatus = (requiredStatuses) => {
     return async (req, res, next) => {
@@ -187,7 +183,7 @@ const checkPartnerStatus = (requiredStatuses) => {
 
             const partner = data.partner;
 
-            // Получаем заявку партнера
+            // 🆕 ИСПРАВЛЕНО: Получаем заявку партнера и добавляем в req
             const partnerRequest = await InitialPartnerRequest.findOne({ 
                 user_id: partner._id 
             });
@@ -218,7 +214,7 @@ const checkPartnerStatus = (requiredStatuses) => {
             req.partner = partner;
             req.user = partner;
             req.metaInfo = data.metaInfo;
-            req.partnerRequest = partnerRequest;
+            req.partnerRequest = partnerRequest; // 🆕 ИСПРАВЛЕНО: Добавляем partnerRequest в req
 
             next();
 
@@ -238,22 +234,22 @@ const checkPartnerStatus = (requiredStatuses) => {
  */
 const requirePartnerProfile = async (req, res, next) => {
     try {
-        console.log('🔍 REQUIRE PARTNER PROFILE - START');
+        console.log('🔍 REQUIRE PARTNER PROFILE');
         
         const authHeader = req.headers["authorization"];
         const token = authHeader?.split(" ")[1];
 
         if (!token) {
-            console.log('🚨 NO TOKEN');
+            console.log('🚨 NO TOKEN IN PROFILE CHECK');
             return res.status(401).json({ 
                 message: "Access denied! Token required!", 
                 result: false 
             });
         }
 
-        const data = await decodeToken(token);
+        const data = await decodePartnerToken(token);
         if (!data.result) {
-            console.log('🚨 TOKEN DECODE FAILED');
+            console.log('🚨 TOKEN FAILED IN PROFILE CHECK');
             return res.status(data.status).json({
                 message: data.message,
                 result: false
@@ -269,14 +265,13 @@ const requirePartnerProfile = async (req, res, next) => {
 
         if (!partnerProfile) {
             console.log('🚨 PARTNER PROFILE NOT FOUND');
-            return res.status(403).json({
-                message: "Partner profile not created yet! Complete legal verification first.",
+            return res.status(404).json({
+                message: "Partner profile not found! Profile must be created first.",
                 result: false
             });
         }
 
-        console.log('✅ PARTNER PROFILE FOUND:', partnerProfile._id);
-        
+        console.log('✅ PROFILE CHECK PASSED');
         req.partner = partner;
         req.user = partner;
         req.metaInfo = data.metaInfo;
@@ -295,7 +290,7 @@ const requirePartnerProfile = async (req, res, next) => {
 };
 
 /**
- * Проверка доступа по типу партнера (restaurant/store)
+ * Проверка типа партнера (restaurant или store)
  */
 const checkPartnerType = (allowedTypes) => {
     return async (req, res, next) => {
@@ -306,14 +301,14 @@ const checkPartnerType = (allowedTypes) => {
             const token = authHeader?.split(" ")[1];
 
             if (!token) {
-                console.log('🚨 NO TOKEN');
+                console.log('🚨 NO TOKEN IN TYPE CHECK');
                 return res.status(401).json({ 
                     message: "Access denied! Token required!", 
                     result: false 
                 });
             }
 
-            const data = await decodeToken(token);
+            const data = await decodePartnerToken(token);
             if (!data.result) {
                 console.log('🚨 TOKEN FAILED');
                 return res.status(data.status).json({
