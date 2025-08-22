@@ -1,16 +1,15 @@
-// models/User.model.js (исправленный)
+// models/User.model.js (БЕЗОПАСНАЯ ВЕРСИЯ С ЗАШИФРОВАННЫМ EMAIL)
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
 const userSchema = new mongoose.Schema({
-  // Основная информация
+  // 🔐 EMAIL ЗАШИФРОВАН для безопасного хранения
   email: {
-    type: String,
+    type: String, // 🔐 ЗАШИФРОВАННЫЙ EMAIL
     required: true,
-    unique: true,
-    lowercase: true,
-    trim: true,
-    index: true
+    // 🔐 УБИРАЕМ unique и index - поиск только через Meta!
+    // unique: true,
+    // index: true
   },
   
   password_hash: {
@@ -18,7 +17,7 @@ const userSchema = new mongoose.Schema({
     required: true
   },
   
-  // Роль пользователя (включая админов)
+  // Роль пользователя
   role: {
     type: String,
     enum: ['customer', 'partner', 'courier', 'admin', 'manager', 'owner'],
@@ -73,7 +72,7 @@ const userSchema = new mongoose.Schema({
     type: String
   },
   
-  // Упрощенная система попыток входа
+  // Система попыток входа
   login_attempts: {
     count: {
       type: Number,
@@ -100,25 +99,15 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Индексы
-userSchema.index({ email: 1, role: 1 });
-userSchema.index({ is_active: 1, role: 1 });
+// 🔐 ИНДЕКСЫ БЕЗ EMAIL - поиск только через Meta
+userSchema.index({ role: 1, is_active: 1 });
 userSchema.index({ last_activity_at: -1 });
 
-// 🆕 ИСПРАВЛЕНО: Убираем pre hook - хеширование делается в сервисах
-// userSchema.pre('save', async function(next) {
-//   if (!this.isModified('password_hash')) {
-//     return next();
-//   }
-//   // ... код хеширования перенесен в сервисы
-// });
+// ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
-// Методы экземпляра
-
-// 🆕 ИСПРАВЛЕНО: Простой метод сравнения - логика в utils/hash.js
+// Метод сравнения паролей
 userSchema.methods.comparePassword = async function(candidatePassword) {
   try {
-    // Импортируем функцию из utils/hash.js для консистентности
     const { comparePassword } = await import('../utils/hash.js');
     return await comparePassword(candidatePassword, this.password_hash);
   } catch (error) {
@@ -127,12 +116,22 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   }
 };
 
+// 🔐 МЕТОД ДЛЯ ПОЛУЧЕНИЯ РАСШИФРОВАННОГО EMAIL
+userSchema.methods.getDecryptedEmail = function() {
+  try {
+    const { decryptString } = require('../utils/crypto.js');
+    return decryptString(this.email);
+  } catch (error) {
+    console.error('Email decryption error:', error);
+    return '[EMAIL_DECRYPT_ERROR]';
+  }
+};
+
 // Увеличение счетчика неудачных попыток
 userSchema.methods.incrementLoginAttempts = function() {
   this.login_attempts.count += 1;
   this.login_attempts.last_attempt = new Date();
   
-  // Блокируем после 5 неудачных попыток на 15 минут
   if (this.login_attempts.count >= 5) {
     this.login_attempts.blocked_until = new Date(Date.now() + 15 * 60 * 1000);
   }
@@ -170,12 +169,13 @@ userSchema.methods.isAdmin = function() {
   return this.hasRole(['admin', 'manager', 'owner']);
 };
 
-// Статические методы
+// ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
-// Поиск по email
-userSchema.statics.findByEmail = function(email) {
-  return this.findOne({ email: email.toLowerCase() });
-};
+// 🔐 УБИРАЕМ ПОИСК ПО EMAIL - только через Meta!
+// userSchema.statics.findByEmail = function(email) {
+//   // ПОИСК ТОЛЬКО ЧЕРЕЗ Meta.findByEmailAndRole()
+//   throw new Error('Use Meta.findByEmailAndRole() for email search');
+// };
 
 // Поиск активных пользователей
 userSchema.statics.findActive = function() {
@@ -187,7 +187,8 @@ userSchema.statics.findByRole = function(role) {
   return this.find({ role, is_active: true });
 };
 
-// Виртуальные поля для связей с профилями
+// ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
+
 userSchema.virtual('customerProfile', {
   ref: 'CustomerProfile',
   localField: '_id',
@@ -209,8 +210,16 @@ userSchema.virtual('courierProfile', {
   justOne: true
 });
 
-// Настройка виртуальных полей в JSON
-userSchema.set('toJSON', { virtuals: true });
+// Настройка JSON вывода
+userSchema.set('toJSON', { 
+  virtuals: true,
+  transform: function(doc, ret) {
+    // Не показываем зашифрованные данные в JSON
+    delete ret.password_hash;
+    delete ret.email; // 🔐 Скрываем зашифрованный email
+    return ret;
+  }
+});
 userSchema.set('toObject', { virtuals: true });
 
 export default mongoose.model('User', userSchema);

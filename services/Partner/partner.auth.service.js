@@ -200,33 +200,21 @@ export const createPartnerAccount = async (partnerData) => {
         // Нормализация email
         email = email.toLowerCase().trim();
 
-        // ✅ ИСПРАВЛЕНО: Проверяем существование в ОБА источниках
-        
-        // 1. Проверяем Meta записи
+        // ✅ ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ТОЛЬКО ЧЕРЕЗ META
         const existingMeta = await Meta.findByEmailAndRole(hashMeta(email), 'partner');
         if (existingMeta) {
             throw new Error('Партнер с таким email уже существует');
         }
 
-        // 2. Проверяем User записи (может быть битая регистрация)
-        const existingUser = await User.findOne({ email: email });
-        if (existingUser) {
-            // Если есть User но нет Meta - это битая регистрация
-            // Удаляем битого пользователя
-            await User.findByIdAndDelete(existingUser._id);
-            
-            // Удаляем возможные осиротевшие записи
-            await InitialPartnerRequest.deleteOne({ user_id: existingUser._id });
-            
-            console.log('🧹 Cleaned up broken registration for:', email);
-        }
+        // 🔐 НЕ ПРОВЕРЯЕМ User по email - поиск только через Meta!
+        // const existingUser = await User.findOne({ email: email });
 
         // Хешируем пароль
         const hashedPassword = await hashString(password);
 
-        // Создаем пользователя
+        // Создаем пользователя с ЗАШИФРОВАННЫМ EMAIL
         const newUser = new User({
-            email: email,
+            email: cryptoString(email), // 🔐 ЗАШИФРОВАННЫЙ EMAIL
             password_hash: hashedPassword,
             role: 'partner',
             is_active: true,
@@ -335,9 +323,9 @@ export const createPartnerAccount = async (partnerData) => {
             isNewPartner: true,
             partner: {
                 id: newUser._id,
-                email: newUser.email,
                 role: newUser.role,
                 request: partnerRequest
+                // 🔐 EMAIL НЕ ВОЗВРАЩАЕМ - он зашифрован в request
             }
         };
 
@@ -414,11 +402,11 @@ export const loginPartner = async ({ email, password }) => {
             token,
             partner: {
                 id: partner._id,
-                email: partner.email,
                 role: partner.role,
                 is_email_verified: partner.is_email_verified,
                 is_active: partner.is_active,
                 profile: profile
+                // 🔐 EMAIL НЕ ВОЗВРАЩАЕМ - он зашифрован
             }
         };
 
@@ -445,7 +433,7 @@ export const checkPartnerExists = async (email) => {
             hashed_email: hashMeta(normalizedEmail)
         });
         
-        // 1. Проверяем Meta записи
+        // 1. ✅ ПОИСК ТОЛЬКО ЧЕРЕЗ META (по хешу email)
         const metaInfo = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), 'partner');
         console.log('🔍 Meta check result:', {
             metaInfo_found: !!metaInfo,
@@ -454,51 +442,25 @@ export const checkPartnerExists = async (email) => {
         });
         
         if (metaInfo) {
-            console.log('❌ Partner EXISTS in Meta table');
-            return true;
+            // Проверяем есть ли соответствующий User
+            const correspondingUser = await User.findById(metaInfo.partner);
+            
+            if (!correspondingUser) {
+                // Meta есть, но User нет - удаляем Meta
+                console.log('🧹 Found orphaned Meta record - cleaning up...');
+                await Meta.findByIdAndDelete(metaInfo._id);
+                await InitialPartnerRequest.deleteOne({ user_id: metaInfo.partner });
+                await PartnerProfile.deleteOne({ user_id: metaInfo.partner });
+                console.log('✅ Orphaned Meta record cleaned up successfully');
+                return false;
+            } else {
+                console.log('❌ Partner EXISTS in Meta table with valid User');
+                return true;
+            }
         }
         
-        // 2. Проверяем User записи (может быть битая регистрация)
-        const userInfo = await User.findOne({ 
-            email: normalizedEmail, 
-            role: 'partner' 
-        });
-        console.log('🔍 User check result:', {
-            userInfo_found: !!userInfo,
-            userInfo_id: userInfo?._id,
-            userInfo_email: userInfo?.email,
-            userInfo_role: userInfo?.role
-        });
-        
-        if (userInfo) {
-            // ✅ АВТОМАТИЧЕСКАЯ ОЧИСТКА БИТОЙ РЕГИСТРАЦИИ
-            console.log('🧹 Found broken partner registration - cleaning up...');
-            
-            // Удаляем битого пользователя
-            await User.findByIdAndDelete(userInfo._id);
-            
-            // Удаляем возможные осиротевшие записи
-            await InitialPartnerRequest.deleteOne({ user_id: userInfo._id });
-            await PartnerProfile.deleteOne({ user_id: userInfo._id });
-            
-            console.log('✅ Broken registration cleaned up successfully');
-            return false; // Теперь можно регистрировать
-        }
-        
-        // 3. Дополнительная проверка - может быть в базе есть User с любой ролью
-        const anyUser = await User.findOne({ email: normalizedEmail });
-        console.log('🔍 Any user check result:', {
-            anyUser_found: !!anyUser,
-            anyUser_id: anyUser?._id,
-            anyUser_email: anyUser?.email,
-            anyUser_role: anyUser?.role
-        });
-        
-        if (anyUser) {
-            console.log('⚠️ User exists with different role:', anyUser.role);
-            // Если пользователь существует но с другой ролью - это конфликт
-            return true;
-        }
+        // 2. 🔐 НЕ ИЩЕМ В USER - поиск только через Meta
+        // Поиск по email в User больше не поддерживается для безопасности
         
         console.log('✅ Partner does NOT exist - OK to register');
         return false;
