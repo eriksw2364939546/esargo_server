@@ -7,7 +7,7 @@ import {
     publishPartnerProfile,
     getPartnerRequests,
     getPartnerRequestDetails
-} from '../services/admin.partner.service.js';
+} from '../services/Partner/admin.partner.service.js';
 import { decryptString } from '../utils/crypto.js';
 import mongoose from 'mongoose';
 

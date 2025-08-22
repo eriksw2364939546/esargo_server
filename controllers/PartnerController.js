@@ -10,8 +10,8 @@ const getProfile = async (req, res) => {
         console.log('🔍 GET PROFILE - Start:', { profile_id: id });
 
         // Если профиль уже получен в middleware, используем// ================ controllers/PartnerController.js (ПО ВАШЕЙ АРХИТЕКТУРЕ) ================
-import { createPartnerAccount, loginPartner, checkPartnerExists } from '../services/partner.auth.service.js';
-import * as partnerService from '../services/partner.service.js';
+import { createPartnerAccount, loginPartner, checkPartnerExists } from '../services/Partner/partner.auth.service.js';
+import * as partnerService from '../services/Partner/partner.service.js';
 
 /**
  * ================== КОНТРОЛЛЕРЫ РАБОТАЮТ ТОЛЬКО С REQ/RES ==================

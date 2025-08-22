@@ -1,4 +1,4 @@
-import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo, Product } from '../models/index.js';
+import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo, Product } from '../../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { cryptoString, decryptString } from '../utils/crypto.js';
 import { hashMeta } from '../utils/hash.js';
