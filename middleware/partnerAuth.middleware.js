@@ -1,29 +1,20 @@
-// ================ middleware/partnerAuth.middleware.js (ПО ВАШЕЙ АРХИТЕКТУРЕ) ================
+// ================ middleware/partnerAuth.middleware.js (ПО АРХИТЕКТУРЕ ADMINAUTH) ================
 import jwt from "jsonwebtoken";
 import Meta from "../models/Meta.model.js";
 import { InitialPartnerRequest, PartnerProfile } from "../models/index.js";
 
 /**
- * Декодирование и проверка токена партнера (по аналогии с adminAuth)
+ * Декодирование и проверка токена партнера (аналог adminAuth)
  */
 const decodeToken = async (token) => {
     try {
         console.log('🔍 DECODING PARTNER TOKEN...');
         
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        console.log('🔍 DECODED TOKEN:', {
-            user_id: decoded.user_id,
-            _id: decoded._id,
-            role: decoded.role,
-            email: decoded.email
-        });
-
         const { user_id, _id, role } = decoded;
         const partnerId = user_id || _id;
 
-        // Проверяем что это партнер
         if (role !== "partner") {
-            console.log('🚨 ROLE NOT PARTNER:', role);
             return { 
                 message: "Access denied! Not a partner account!", 
                 result: false, 
@@ -31,16 +22,13 @@ const decodeToken = async (token) => {
             };
         }
 
-        console.log('🔍 SEARCHING FOR PARTNER IN META:', partnerId);
-
-        // Ищем через Meta с populate (как в вашей архитектуре)
+        // Ищем через Meta с populate (как в adminAuth)
         const metaInfo = await Meta.findOne({
             partner: partnerId,
             role: "partner"
         }).populate("partner");
 
         if (!metaInfo || !metaInfo.partner) {
-            console.log('🚨 PARTNER NOT FOUND IN META');
             return { 
                 message: "Access denied! Partner not found!", 
                 result: false, 
@@ -50,16 +38,8 @@ const decodeToken = async (token) => {
 
         const partner = metaInfo.partner;
 
-        console.log('✅ PARTNER FOUND:', {
-            id: partner._id,
-            email: partner.email,
-            role: partner.role,
-            is_active: partner.is_active
-        });
-
-        // Проверяем активность в Meta
-        if (!metaInfo.is_active) {
-            console.log('🚨 META NOT ACTIVE');
+        // Проверяем активность
+        if (!metaInfo.is_active || !partner.is_active) {
             return {
                 message: "Access denied! Account is inactive!",
                 result: false,
@@ -67,27 +47,14 @@ const decodeToken = async (token) => {
             };
         }
 
-        // Проверяем активность партнера
-        if (!partner.is_active) {
-            console.log('🚨 PARTNER NOT ACTIVE');
-            return {
-                message: "Access denied! Partner account is inactive!",
-                result: false,
-                status: 403
-            };
-        }
-
-        // Проверяем блокировку через Meta
+        // Проверяем блокировку
         if (metaInfo.isAccountLocked && metaInfo.isAccountLocked()) {
-            console.log('🚨 ACCOUNT LOCKED IN META');
             return {
                 message: "Access denied! Account is locked!",
                 result: false,
                 status: 423
             };
         }
-
-        console.log('✅ PARTNER ACCESS APPROVED');
 
         return { 
             message: "Access approved!", 
@@ -97,8 +64,6 @@ const decodeToken = async (token) => {
         };
 
     } catch (err) {
-        console.error('🚨 TOKEN DECODE ERROR:', err);
-        
         if (err.name === 'TokenExpiredError') {
             return { message: "Access denied! Token expired!", result: false, status: 401 };
         } else if (err.name === 'JsonWebTokenError') {
@@ -110,7 +75,7 @@ const decodeToken = async (token) => {
 };
 
 /**
- * Базовая проверка токена партнера (по аналогии с checkAdminToken)
+ * Базовая проверка токена партнера (аналог checkAdminToken)
  */
 const checkPartnerToken = async (req, res, next) => {
     try {
@@ -120,7 +85,6 @@ const checkPartnerToken = async (req, res, next) => {
         const token = authHeader?.split(" ")[1];
 
         if (!token) {
-            console.log('🚨 NO TOKEN PROVIDED');
             return res.status(401).json({ 
                 message: "Access denied! Token required!", 
                 result: false 
@@ -129,18 +93,18 @@ const checkPartnerToken = async (req, res, next) => {
 
         const data = await decodeToken(token);
         if (!data.result) {
-            console.log('🚨 TOKEN DECODE FAILED:', data.message);
             return res.status(data.status).json({
                 message: data.message,
                 result: false
             });
         }
 
-        console.log('✅ TOKEN VERIFIED, SETTING REQ DATA');
+        // Добавляем данные в req (как в adminAuth)
         req.partner = data.partner;
         req.user = data.partner;
         req.metaInfo = data.metaInfo;
 
+        console.log('✅ TOKEN VERIFIED');
         next();
 
     } catch (error) {
@@ -154,7 +118,8 @@ const checkPartnerToken = async (req, res, next) => {
 };
 
 /**
- * 🆕 ИСПРАВЛЕНО: Проверка статуса партнера (по аналогии с checkAccessByGroup)
+ * Проверка статуса партнера (аналог checkAccessByGroup)
+ * ✅ ПРАВА ПРОВЕРЯЮТСЯ В MIDDLEWARE
  */
 const checkPartnerStatus = (requiredStatuses) => {
     return async (req, res, next) => {
@@ -165,16 +130,15 @@ const checkPartnerStatus = (requiredStatuses) => {
             const token = authHeader?.split(" ")[1];
 
             if (!token) {
-                console.log('🚨 NO TOKEN IN STATUS CHECK');
                 return res.status(401).json({ 
                     message: "Access denied! Token required!", 
                     result: false 
                 });
             }
 
+            // Сначала проверяем токен
             const data = await decodeToken(token);
             if (!data.result) {
-                console.log('🚨 TOKEN FAILED IN STATUS CHECK');
                 return res.status(data.status).json({
                     message: data.message,
                     result: false
@@ -183,27 +147,20 @@ const checkPartnerStatus = (requiredStatuses) => {
 
             const partner = data.partner;
 
-            // 🆕 ИСПРАВЛЕНО: Получаем заявку партнера и добавляем в req
+            // ✅ ПРОВЕРКА ПРАВ В MIDDLEWARE - получаем заявку
             const partnerRequest = await InitialPartnerRequest.findOne({ 
                 user_id: partner._id 
             });
 
             if (!partnerRequest) {
-                console.log('🚨 PARTNER REQUEST NOT FOUND');
                 return res.status(404).json({
                     message: "Partner request not found!",
                     result: false
                 });
             }
 
-            console.log('🔍 PARTNER REQUEST STATUS:', partnerRequest.status);
-
-            // Проверяем статус
+            // ✅ ПРОВЕРКА СТАТУСА В MIDDLEWARE (аналог проверки ролей в adminAuth)
             if (!requiredStatuses.includes(partnerRequest.status)) {
-                console.log('🚨 INSUFFICIENT STATUS:', {
-                    required: requiredStatuses,
-                    current: partnerRequest.status
-                });
                 return res.status(403).json({
                     message: `Access denied! Required status: ${requiredStatuses.join(' or ')}. Current: ${partnerRequest.status}`,
                     result: false
@@ -214,7 +171,7 @@ const checkPartnerStatus = (requiredStatuses) => {
             req.partner = partner;
             req.user = partner;
             req.metaInfo = data.metaInfo;
-            req.partnerRequest = partnerRequest; // 🆕 ИСПРАВЛЕНО: Добавляем partnerRequest в req
+            req.partnerRequest = partnerRequest;
 
             next();
 
@@ -230,7 +187,8 @@ const checkPartnerStatus = (requiredStatuses) => {
 };
 
 /**
- * Проверка наличия профиля партнера
+ * Проверка наличия профиля партнера (права в middleware)
+ * ✅ ПРАВА ПРОВЕРЯЮТСЯ В MIDDLEWARE
  */
 const requirePartnerProfile = async (req, res, next) => {
     try {
@@ -240,16 +198,15 @@ const requirePartnerProfile = async (req, res, next) => {
         const token = authHeader?.split(" ")[1];
 
         if (!token) {
-            console.log('🚨 NO TOKEN IN PROFILE CHECK');
             return res.status(401).json({ 
                 message: "Access denied! Token required!", 
                 result: false 
             });
         }
 
-        const data = await decodePartnerToken(token);
+        // Проверяем токен
+        const data = await decodeToken(token);
         if (!data.result) {
-            console.log('🚨 TOKEN FAILED IN PROFILE CHECK');
             return res.status(data.status).json({
                 message: data.message,
                 result: false
@@ -258,13 +215,12 @@ const requirePartnerProfile = async (req, res, next) => {
 
         const partner = data.partner;
 
-        // Проверяем наличие профиля
+        // ✅ ПРОВЕРКА ПРАВ В MIDDLEWARE - проверяем наличие профиля
         const partnerProfile = await PartnerProfile.findOne({ 
             user_id: partner._id 
         });
 
         if (!partnerProfile) {
-            console.log('🚨 PARTNER PROFILE NOT FOUND');
             return res.status(404).json({
                 message: "Partner profile not found! Profile must be created first.",
                 result: false
@@ -290,6 +246,70 @@ const requirePartnerProfile = async (req, res, next) => {
 };
 
 /**
+ * Проверка прав на редактирование профиля (аналог проверки в CustomerController)
+ * ✅ ПРАВА ПРОВЕРЯЮТСЯ В MIDDLEWARE
+ */
+const checkProfileAccess = async (req, res, next) => {
+    try {
+        console.log('🔍 CHECK PROFILE ACCESS');
+        
+        const authHeader = req.headers["authorization"];
+        const token = authHeader?.split(" ")[1];
+
+        if (!token) {
+            return res.status(401).json({ 
+                message: "Access denied! Token required!", 
+                result: false 
+            });
+        }
+
+        const data = await decodeToken(token);
+        if (!data.result) {
+            return res.status(data.status).json({
+                message: data.message,
+                result: false
+            });
+        }
+
+        const partner = data.partner;
+        const { id } = req.params;
+
+        // ✅ ПРОВЕРКА ПРАВ В MIDDLEWARE - партнер может редактировать только свой профиль
+        const partnerProfile = await PartnerProfile.findById(id);
+        
+        if (!partnerProfile) {
+            return res.status(404).json({
+                message: "Profile not found!",
+                result: false
+            });
+        }
+
+        if (partnerProfile.user_id.toString() !== partner._id.toString()) {
+            return res.status(403).json({
+                message: "Access denied! You can only edit your own profile.",
+                result: false
+            });
+        }
+
+        console.log('✅ PROFILE ACCESS GRANTED');
+        req.partner = partner;
+        req.user = partner;
+        req.metaInfo = data.metaInfo;
+        req.partnerProfile = partnerProfile;
+
+        next();
+
+    } catch (error) {
+        console.error('🚨 PROFILE ACCESS ERROR:', error);
+        res.status(500).json({ 
+            message: "Access denied! Server error!", 
+            result: false, 
+            error: error.message 
+        });
+    }
+};
+
+/**
  * Проверка типа партнера (restaurant или store)
  */
 const checkPartnerType = (allowedTypes) => {
@@ -301,29 +321,26 @@ const checkPartnerType = (allowedTypes) => {
             const token = authHeader?.split(" ")[1];
 
             if (!token) {
-                console.log('🚨 NO TOKEN IN TYPE CHECK');
                 return res.status(401).json({ 
                     message: "Access denied! Token required!", 
                     result: false 
                 });
             }
 
-            const data = await decodePartnerToken(token);
+            const data = await decodeToken(token);
             if (!data.result) {
-                console.log('🚨 TOKEN FAILED');
                 return res.status(data.status).json({
                     message: data.message,
                     result: false
                 });
             }
 
-            // Получаем заявку для проверки типа
+            // ✅ ПРОВЕРКА ТИПА В MIDDLEWARE
             const partnerRequest = await InitialPartnerRequest.findOne({ 
                 user_id: data.partner._id 
-            });
+            }).select('business_data.category');
 
             if (!partnerRequest) {
-                console.log('🚨 REQUEST NOT FOUND');
                 return res.status(404).json({
                     message: "Partner request not found!",
                     result: false
@@ -333,19 +350,18 @@ const checkPartnerType = (allowedTypes) => {
             const partnerType = partnerRequest.business_data?.category;
 
             if (!allowedTypes.includes(partnerType)) {
-                console.log('🚨 INVALID PARTNER TYPE:', partnerType);
                 return res.status(403).json({
                     message: `Access denied! Required type: ${allowedTypes.join(' or ')}`,
                     result: false
                 });
             }
 
-            console.log('✅ PARTNER TYPE CHECK PASSED:', partnerType);
             req.partner = data.partner;
             req.user = data.partner;
             req.metaInfo = data.metaInfo;
             req.partnerType = partnerType;
 
+            console.log('✅ PARTNER TYPE CHECK PASSED:', partnerType);
             next();
 
         } catch (error) {
@@ -363,5 +379,6 @@ export {
     checkPartnerToken, 
     checkPartnerStatus, 
     requirePartnerProfile,
+    checkProfileAccess,
     checkPartnerType
 };
