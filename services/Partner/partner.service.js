@@ -3,6 +3,7 @@ import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo, Product 
 import Meta from '../../models/Meta.model.js';
 import { cryptoString, decryptString } from '../../utils/crypto.js';
 import { hashMeta } from '../../utils/hash.js';
+import mongoose from 'mongoose';
 
 /**
  * ================== ОСНОВНАЯ БИЗНЕС-ЛОГИКА ПАРТНЕРОВ ==================
