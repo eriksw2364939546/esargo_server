@@ -1,14 +1,15 @@
-// models/User.model.js (БЕЗОПАСНАЯ ВЕРСИЯ С ЗАШИФРОВАННЫМ EMAIL)
+// models/User.model.js (ФИНАЛЬНАЯ БЕЗОПАСНАЯ ВЕРСИЯ)
 import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
 
 const userSchema = new mongoose.Schema({
   // 🔐 EMAIL ЗАШИФРОВАН для безопасного хранения
   email: {
     type: String, // 🔐 ЗАШИФРОВАННЫЙ EMAIL
-    required: true,
-    // 🔐 УБИРАЕМ unique и index - поиск только через Meta!
+    required: true
+    // 🔐 УБИРАЕМ ВСЕ ИНДЕКСЫ И ОГРАНИЧЕНИЯ - поиск только через Meta!
     // unique: true,
+    // lowercase: true, 
+    // trim: true,
     // index: true
   },
   
@@ -116,7 +117,7 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   }
 };
 
-// 🔐 МЕТОД ДЛЯ ПОЛУЧЕНИЯ РАСШИФРОВАННОГО EMAIL
+// 🔐 МЕТОД ДЛЯ ПОЛУЧЕНИЯ РАСШИФРОВАННОГО EMAIL (для админов)
 userSchema.methods.getDecryptedEmail = function() {
   try {
     const { decryptString } = require('../utils/crypto.js');
@@ -173,8 +174,7 @@ userSchema.methods.isAdmin = function() {
 
 // 🔐 УБИРАЕМ ПОИСК ПО EMAIL - только через Meta!
 // userSchema.statics.findByEmail = function(email) {
-//   // ПОИСК ТОЛЬКО ЧЕРЕЗ Meta.findByEmailAndRole()
-//   throw new Error('Use Meta.findByEmailAndRole() for email search');
+//   throw new Error('Email search not allowed. Use Meta.findByEmailAndRole() instead');
 // };
 
 // Поиск активных пользователей
@@ -210,16 +210,28 @@ userSchema.virtual('courierProfile', {
   justOne: true
 });
 
-// Настройка JSON вывода
+// ✅ НАСТРОЙКА БЕЗОПАСНОГО JSON ВЫВОДА
 userSchema.set('toJSON', { 
   virtuals: true,
   transform: function(doc, ret) {
-    // Не показываем зашифрованные данные в JSON
+    // 🔐 ПОЛНОСТЬЮ СКРЫВАЕМ ЗАШИФРОВАННЫЕ ДАННЫЕ
     delete ret.password_hash;
-    delete ret.email; // 🔐 Скрываем зашифрованный email
-    return ret;
+    delete ret.email; // Зашифрованный email скрыт
+    
+    // Оставляем только безопасные поля
+    return {
+      id: ret._id,
+      role: ret.role,
+      is_active: ret.is_active,
+      is_email_verified: ret.is_email_verified,
+      created_at: ret.createdAt,
+      updated_at: ret.updatedAt,
+      last_login_at: ret.last_login_at,
+      registration_source: ret.registration_source
+    };
   }
 });
+
 userSchema.set('toObject', { virtuals: true });
 
 export default mongoose.model('User', userSchema);

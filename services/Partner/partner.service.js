@@ -263,7 +263,7 @@ export const updatePartnerProfile = async (profileId, updateData) => {
 
 /**
  * Полное удаление партнера из системы
- * Только бизнес-логика каскадного удаления, БЕЗ проверки прав
+ * ✅ ИСПРАВЛЕНО: Не возвращаем зашифрованный email
  */
 export const deletePartnerCompletely = async (partnerId) => {
     const session = await mongoose.startSession();
@@ -300,10 +300,12 @@ export const deletePartnerCompletely = async (partnerId) => {
             // 7. Удаляем самого пользователя
             await User.findByIdAndDelete(partnerId).session(session);
 
+            // ✅ ИСПРАВЛЕНО: Не возвращаем зашифрованный email
             result = {
                 deleted_partner_id: partnerId,
-                deleted_email: partner.email,
+                deleted_role: partner.role,
                 deleted_at: new Date()
+                // 🔐 НЕ ВОЗВРАЩАЕМ EMAIL - он был зашифрован
             };
         });
 

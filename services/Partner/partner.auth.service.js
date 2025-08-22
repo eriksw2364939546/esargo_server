@@ -390,12 +390,12 @@ export const loginPartner = async ({ email, password }) => {
         // Получаем профиль
         const profile = await PartnerProfile.findOne({ user_id: partner._id });
 
-        // Генерируем токен
+        // ✅ ИСПРАВЛЕНО: Генерируем токен БЕЗ EMAIL
         const token = generateCustomerToken({
             _id: partner._id,
             user_id: partner._id,
-            email: partner.email,
             role: 'partner'
+            // 🔐 НЕ ВКЛЮЧАЕМ EMAIL в токен - он зашифрован
         }, '30d');
 
         return {
@@ -473,10 +473,12 @@ export const checkPartnerExists = async (email) => {
 
 /**
  * Получение партнера по ID с полной информацией
+ * ✅ ИСПРАВЛЕНО: Не возвращаем зашифрованный email
  */
 export const getPartnerById = async (partnerId) => {
     try {
-        const partner = await User.findById(partnerId).select('-password_hash');
+        // ✅ ИСПРАВЛЕНО: Исключаем зашифрованные поля
+        const partner = await User.findById(partnerId).select('-password_hash -email');
         if (!partner || partner.role !== 'partner') {
             return null;
         }
@@ -486,7 +488,14 @@ export const getPartnerById = async (partnerId) => {
         const legalInfo = await PartnerLegalInfo.findOne({ user_id: partnerId });
 
         return {
-            ...partner.toObject(),
+            // ✅ ИСПРАВЛЕНО: Возвращаем только безопасные данные
+            id: partner._id,
+            role: partner.role,
+            is_active: partner.is_active,
+            is_email_verified: partner.is_email_verified,
+            created_at: partner.createdAt,
+            last_login_at: partner.last_login_at,
+            // 🔐 EMAIL НЕ ВОЗВРАЩАЕМ - он зашифрован в User и request
             profile,
             request,
             legalInfo
