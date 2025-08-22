@@ -13,14 +13,13 @@ import { requestLogger, startupLogger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import routes from './routes/index.js';
 import initOwnerAccount from './services/initOwner.service.js';
-import { initTestPartner } from './services/partner.auth.service.js';
+
 
 const app = express();
 
 
 connectDB().then(() => {
   initOwnerAccount(); 
-  initTestPartner();
 });
 
 app.set('trust proxy', 1);
