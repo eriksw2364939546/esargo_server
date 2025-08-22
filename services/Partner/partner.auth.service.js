@@ -449,7 +449,7 @@ export const checkUserByEmailAndRole = async (email, role = 'partner') => {
     }
 };
 
-export default {
+export {
     verifyPartnerToken,
     verifyPartnerByStatus,
     verifyPartnerProfile,

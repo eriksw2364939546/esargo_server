@@ -1,4 +1,7 @@
-import { InitialPartnerRequest, PartnerLegalInfo, PartnerProfile} from '../models/index.js';
+// ================ services/Partner/admin.partner.service.js (ИСПРАВЛЕННЫЕ ПУТИ) ================
+import { InitialPartnerRequest, PartnerLegalInfo, PartnerProfile, User, Product } from '../../models/index.js';
+import Meta from '../../models/Meta.model.js';
+import { cryptoString } from '../../utils/crypto.js';
 import mongoose from 'mongoose';
 
 /**

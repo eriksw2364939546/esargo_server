@@ -1,27 +1,14 @@
-/**
- * Получение профиля партнера
- * Права проверяются в middleware
- */
-const getProfile = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { partnerProfile } = req; // Из middleware checkProfileAccess
-
-        console.log('🔍 GET PROFILE - Start:', { profile_id: id });
-
-        // Если профиль уже получен в middleware, используем// ================ controllers/PartnerController.js (ПО ВАШЕЙ АРХИТЕКТУРЕ) ================
+// ================ controllers/PartnerController.js (ИСПРАВЛЕННЫЙ) ================
 import { createPartnerAccount, loginPartner, checkPartnerExists } from '../services/Partner/partner.auth.service.js';
 import * as partnerService from '../services/Partner/partner.service.js';
+// ================== КОНТРОЛЛЕРЫ РАБОТАЮТ ТОЛЬКО С REQ/RES ==================
+// Вся бизнес-логика в сервисах
 
-/**
- * ================== КОНТРОЛЛЕРЫ РАБОТАЮТ ТОЛЬКО С REQ/RES ==================
- * Вся бизнес-логика в сервисах
- */
 
-/**
- * ЭТАП 1: Регистрация партнера
- * Только валидация и передача в сервис
- */
+
+// ЭТАП 1: Регистрация партнера
+// Только валидация и передача в сервис
+ 
 const registerPartner = async (req, res) => {
     try {
         const partnerData = req.body;
