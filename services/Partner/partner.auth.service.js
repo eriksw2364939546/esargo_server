@@ -1,4 +1,4 @@
-// ================ services/Partner/partner.auth.service.js (ПОЛНЫЙ ФАЙЛ) ================
+// ================ services/Partner/partner.auth.service.js (ИСПРАВЛЕННЫЙ) ================
 import jwt from "jsonwebtoken";
 import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo } from '../../models/index.js';
 import Meta from '../../models/Meta.model.js';
@@ -16,7 +16,7 @@ import mongoose from 'mongoose';
  * Верификация токена партнера (для middleware)
  * Возвращает стандартный ответ для middleware
  */
-export const verifyPartnerToken = async (token) => {
+const verifyPartnerToken = async (token) => {
     try {
         // Декодируем токен
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -87,7 +87,7 @@ export const verifyPartnerToken = async (token) => {
 /**
  * Верификация партнера по статусу (для middleware)
  */
-export const verifyPartnerByStatus = async (token, requiredStatuses) => {
+ const verifyPartnerByStatus = async (token, requiredStatuses) => {
     try {
         // Сначала проверяем токен
         const tokenResult = await verifyPartnerToken(token);
@@ -140,7 +140,7 @@ export const verifyPartnerByStatus = async (token, requiredStatuses) => {
 /**
  * Верификация наличия профиля партнера (для middleware)
  */
-export const verifyPartnerProfile = async (token) => {
+ const verifyPartnerProfile = async (token) => {
     try {
         // Сначала проверяем токен
         const tokenResult = await verifyPartnerToken(token);
@@ -182,150 +182,115 @@ export const verifyPartnerProfile = async (token) => {
 };
 
 /**
- * ================== ОСНОВНЫЕ МЕТОДЫ АВТОРИЗАЦИИ ==================
+ * ================== БИЗНЕС-ЛОГИКА АВТОРИЗАЦИИ ==================
  */
 
 /**
  * Создание аккаунта партнера
- * Полная бизнес-логика регистрации
+ * Содержит всю логику создания партнера
  */
-export const createPartnerAccount = async (partnerData) => {
-    const session = await mongoose.startSession();
-    
+const createPartnerAccount = async (partnerData) => {
     try {
-        let result = null;
-        
-        await session.withTransaction(async () => {
-            const {
-                first_name, last_name, email, password,
-                phone, business_name, category, address, location,
-                registration_ip, user_agent
-            } = partnerData;
+        let { 
+            first_name, last_name, email, password, phone,
+            business_name, category, address, location,
+            registration_ip, user_agent
+        } = partnerData;
 
-            const normalizedEmail = email.toLowerCase().trim();
+        // Нормализация email
+        email = email.toLowerCase().trim();
 
-            // 1. Создаем User
-            const hashedPassword = await hashString(password);
-            
-            const newUser = new User({
-                email: normalizedEmail,
-                password_hash: hashedPassword,
-                role: 'partner',
-                is_active: true,
-                is_email_verified: false,
-                created_at: new Date(),
-                last_activity_at: new Date()
-            });
+        // Проверяем существование через Meta
+        const existingMeta = await Meta.findByEmailAndRole(hashMeta(email), 'partner');
+        if (existingMeta) {
+            throw new Error('Партнер с таким email уже существует');
+        }
 
-            await newUser.save({ session });
+        // Хешируем пароль
+        const hashedPassword = await hashString(password);
 
-            // 2. Создаем Meta
-            const newMeta = new Meta({
-                em: hashMeta(normalizedEmail),
-                role: 'partner',
-                partner: newUser._id,
-                is_active: true,
-                created_at: new Date()
-            });
-
-            await newMeta.save({ session });
-
-            // 3. Создаем InitialPartnerRequest
-            const newRequest = new InitialPartnerRequest({
-                user_id: newUser._id,
-                personal_data: {
-                    first_name: cryptoString(first_name),
-                    last_name: cryptoString(last_name),
-                    phone: cryptoString(phone),
-                    email: cryptoString(normalizedEmail)
-                },
-                business_data: {
-                    business_name: cryptoString(business_name),
-                    category: category,
-                    description: cryptoString(`${category === 'restaurant' ? 'Ресторан' : 'Магазин'} ${business_name}`),
-                    address: cryptoString(address),
-                    phone: cryptoString(phone),
-                    email: cryptoString(normalizedEmail),
-                    
-                    // ОБЯЗАТЕЛЬНЫЕ ПОЛЯ
-                    owner_name: first_name,
-                    owner_surname: last_name,
-                    
-                    // Location внутри business_data
-                    location: {
-                        type: 'Point',
-                        coordinates: location?.lng && location?.lat ? 
-                            [location.lng, location.lat] : 
-                            [0, 0]
-                    }
-                },
-                
-                // Location на уровне InitialPartnerRequest
-                location: location || {
-                    coordinates: {
-                        type: 'Point',
-                        coordinates: [0, 0]
-                    },
-                    address: address
-                },
-                
-                status: 'pending',
-                workflow_stage: 1,
-                submitted_at: new Date(),
-                security_info: {
-                    registration_ip: registration_ip,
-                    user_agent: user_agent
-                },
-                marketing_consent: {
-                    whatsapp: partnerData.whatsapp_consent || false,
-                    email_newsletter: false,
-                    sms: false
-                }
-            });
-
-            await newRequest.save({ session });
-
-            // 4. Генерируем токен
-            const token = generateCustomerToken({
-                _id: newUser._id,
-                user_id: newUser._id,
-                email: newUser.email,
-                role: 'partner'
-            }, '30d');
-
-            result = {
-                isNewPartner: true,
-                user: newUser,
-                meta: newMeta,
-                request: newRequest,
-                token: token
-            };
+        // Создаем пользователя
+        const newUser = new User({
+            email: email,
+            password_hash: hashedPassword,
+            role: 'partner',
+            is_active: true,
+            is_email_verified: false,
+            gdpr_consent: {
+                data_processing: true,
+                marketing: false,
+                analytics: false,
+                consent_date: new Date()
+            },
+            registration_source: 'web'
         });
 
-        return result;
+        await newUser.save();
+
+        // Создаем Meta запись
+        const newMeta = new Meta({
+            email_hash: hashMeta(email),
+            role: 'partner',
+            partner: newUser._id,
+            encrypted_email: cryptoString(email),
+            is_active: true,
+            registration_ip: registration_ip,
+            user_agent: user_agent,
+            failed_login_attempts: 0,
+            last_failed_login: null,
+            account_locked_until: null
+        });
+
+        await newMeta.save();
+
+        // Создаем заявку на партнерство
+        const partnerRequest = new InitialPartnerRequest({
+            user_id: newUser._id,
+            first_name: first_name,
+            last_name: last_name,
+            email: email,
+            phone: phone,
+            business_name: business_name,
+            category: category,
+            address: address,
+            location: location,
+            status: 'pending_documents',
+            created_at: new Date()
+        });
+
+        await partnerRequest.save();
+
+        return {
+            isNewPartner: true,
+            partner: {
+                id: newUser._id,
+                email: newUser.email,
+                role: newUser.role,
+                request: partnerRequest
+            }
+        };
 
     } catch (error) {
         throw error;
-    } finally {
-        await session.endSession();
     }
 };
 
 /**
  * Авторизация партнера
- * Только проверка в БД и возврат данных
+ * Полная логика входа с проверками безопасности
  */
-export const loginPartner = async ({ email, password }) => {
+const loginPartner = async (email, password) => {
     try {
+        // Нормализация
         const normalizedEmail = email.toLowerCase().trim();
         
-        // Ищем через Meta
+        // Ищем через Meta с populate
         const metaInfo = await Meta.findOne({
-            em: hashMeta(normalizedEmail),
+            email_hash: hashMeta(normalizedEmail),
             role: 'partner'
         }).populate('partner');
 
-        if (!metaInfo || !metaInfo.partner) {
+        if (!metaInfo) {
             const error = new Error('Партнер не найден');
             error.statusCode = 404;
             throw error;
@@ -398,13 +363,28 @@ export const loginPartner = async ({ email, password }) => {
 
 /**
  * Проверка существования партнера по email
+ * ✅ ИСПРАВЛЕНО: Проверяем и Meta и User таблицы
  */
-export const checkPartnerExists = async (email) => {
+const checkPartnerExists = async (email) => {
     try {
         const normalizedEmail = email.toLowerCase().trim();
-        const metaInfo = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), 'partner');
         
-        return !!metaInfo;
+        // 1. Проверяем Meta записи
+        const metaInfo = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), 'partner');
+        if (metaInfo) {
+            return true;
+        }
+        
+        // 2. Проверяем User записи (может быть битая регистрация)
+        const userInfo = await User.findOne({ 
+            email: normalizedEmail, 
+            role: 'partner' 
+        });
+        if (userInfo) {
+            return true;
+        }
+        
+        return false;
     } catch (error) {
         return false;
     }
@@ -413,7 +393,7 @@ export const checkPartnerExists = async (email) => {
 /**
  * Получение партнера по ID с полной информацией
  */
-export const getPartnerById = async (partnerId) => {
+ const getPartnerById = async (partnerId) => {
     try {
         const partner = await User.findById(partnerId).select('-password_hash');
         if (!partner || partner.role !== 'partner') {
@@ -438,7 +418,7 @@ export const getPartnerById = async (partnerId) => {
 /**
  * Проверка пользователя по email и роли
  */
-export const checkUserByEmailAndRole = async (email, role = 'partner') => {
+ const checkUserByEmailAndRole = async (email, role = 'partner') => {
     try {
         const normalizedEmail = email.toLowerCase().trim();
         const metaInfo = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), role);
@@ -449,6 +429,7 @@ export const checkUserByEmailAndRole = async (email, role = 'partner') => {
     }
 };
 
+// ✅ ИСПРАВЛЕНО: Убрали дублированный экспорт checkUserByEmailAndRole
 export {
     verifyPartnerToken,
     verifyPartnerByStatus,
@@ -456,6 +437,5 @@ export {
     createPartnerAccount,
     loginPartner,
     checkPartnerExists,
-    getPartnerById,
-    checkUserByEmailAndRole
+    getPartnerById
 };
