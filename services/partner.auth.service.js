@@ -5,10 +5,8 @@ import { hashString, hashMeta, comparePassword } from '../utils/hash.js';
 import { generateCustomerToken } from './token.service.js';
 import mongoose from 'mongoose';
 
-/**
- * Создание аккаунта партнера в БД
- * Только сохранение - без валидации и бизнес-логики
- */
+// ================ Исправленная функция createPartnerAccount в services/partner.auth.service.js ================
+
 export const createPartnerAccount = async (partnerData) => {
     const session = await mongoose.startSession();
     
@@ -51,12 +49,52 @@ export const createPartnerAccount = async (partnerData) => {
 
             await newMeta.save({ session });
 
-            // 3. Создаем InitialPartnerRequest
+            // 3. Создаем InitialPartnerRequest с правильной структурой
             const newRequest = new InitialPartnerRequest({
                 user_id: newUser._id,
-                personal_data: partnerData.personal_data,
-                business_data: partnerData.business_data,
-                location: partnerData.location,
+                
+                // Персональные данные (уже подготовлены)
+                personal_data: partnerData.personal_data || {
+                    first_name: partnerData.first_name,
+                    last_name: partnerData.last_name,
+                    phone: cryptoString(partnerData.phone),
+                    email: normalizedEmail
+                },
+                
+                // Бизнес данные с ОБЯЗАТЕЛЬНЫМИ полями
+                business_data: partnerData.business_data || {
+                    business_name: partnerData.business_name,
+                    brand_name: partnerData.brand_name || partnerData.business_name,
+                    category: partnerData.category,
+                    description: partnerData.description || `${partnerData.category === 'restaurant' ? 'Ресторан' : 'Магазин'} ${partnerData.business_name}`,
+                    address: cryptoString(partnerData.address),
+                    phone: cryptoString(partnerData.phone),
+                    email: cryptoString(normalizedEmail),
+                    floor_unit: partnerData.floor_unit ? cryptoString(partnerData.floor_unit) : null,
+                    
+                    // ОБЯЗАТЕЛЬНЫЕ ПОЛЯ
+                    owner_name: partnerData.owner_name || partnerData.first_name,
+                    owner_surname: partnerData.owner_surname || partnerData.last_name,
+                    
+                    // Location внутри business_data
+                    location: {
+                        type: 'Point',
+                        coordinates: partnerData.location?.lng && partnerData.location?.lat ? 
+                            [partnerData.location.lng, partnerData.location.lat] : 
+                            [0, 0]
+                    }
+                },
+                
+                // Location на уровне InitialPartnerRequest
+                location: partnerData.location || {
+                    coordinates: {
+                        type: 'Point',
+                        coordinates: [0, 0]
+                    },
+                    address: partnerData.address,
+                    floor_unit: partnerData.floor_unit
+                },
+                
                 status: 'pending',
                 workflow_stage: 1,
                 marketing_consent: {
@@ -93,6 +131,7 @@ export const createPartnerAccount = async (partnerData) => {
         await session.endSession();
     }
 };
+
 
 /**
  * Авторизация партнера
@@ -160,6 +199,7 @@ export const loginPartner = async ({ email, password }) => {
     }
 };
 
+
 /**
  * Инициализация тестового партнера (как initOwnerAccount)
  */
@@ -175,33 +215,53 @@ export const initTestPartner = async () => {
             return;
         }
 
+        // Подготавливаем зашифрованные данные
+        const { cryptoString } = await import('../utils/crypto.js');
+        
         const testPartnerData = {
             email: 'partner@test.com',
             password: 'partner123',
+            whatsapp_consent: false,
+            registration_ip: '127.0.0.1',
+            user_agent: 'Test',
+            
+            // Данные для InitialPartnerRequest
             personal_data: {
                 first_name: 'Test',
                 last_name: 'Partner',
-                phone: '+33612345678',
+                phone: cryptoString('+33612345678'),
                 email: 'partner@test.com'
             },
+            
             business_data: {
                 business_name: 'Test Restaurant',
                 brand_name: 'Test Restaurant',
                 category: 'restaurant',
                 description: 'Test restaurant for development',
-                address: '123 Test Street, Paris',
-                phone: '+33612345678',
-                email: 'partner@test.com'
+                address: cryptoString('123 Test Street, Paris'),
+                phone: cryptoString('+33612345678'),
+                email: cryptoString('partner@test.com'),
+                
+                // ДОБАВЛЯЕМ ОБЯЗАТЕЛЬНЫЕ ПОЛЯ
+                owner_name: 'Test',
+                owner_surname: 'Partner',
+                
+                // ДОБАВЛЯЕМ location как вложенный объект
+                location: {
+                    type: 'Point',
+                    coordinates: [2.3522, 48.8566] // [longitude, latitude] - Paris
+                }
             },
+            
+            // Location для InitialPartnerRequest (другая структура)
             location: {
                 coordinates: {
                     type: 'Point',
                     coordinates: [2.3522, 48.8566]
                 },
-                address: '123 Test Street, Paris'
-            },
-            registration_ip: '127.0.0.1',
-            user_agent: 'Test'
+                address: '123 Test Street, Paris',
+                floor_unit: null
+            }
         };
 
         const result = await createPartnerAccount(testPartnerData);
@@ -209,7 +269,8 @@ export const initTestPartner = async () => {
         console.log("🎉 Test partner created:", {
             email: 'partner@test.com',
             password: 'partner123',
-            id: result.user._id
+            id: result.user._id,
+            request_id: result.request._id
         });
 
     } catch (error) {
