@@ -1,4 +1,4 @@
-// models/InitialPartnerRequest.model.js - ИСПРАВЛЕННАЯ МОДЕЛЬ 🎯
+// models/InitialPartnerRequest.model.js - ИСПРАВЛЕННАЯ ВАЛИДАЦИЯ 🎯
 import mongoose from 'mongoose';
 
 const initialPartnerRequestSchema = new mongoose.Schema({
@@ -29,10 +29,8 @@ const initialPartnerRequestSchema = new mongoose.Schema({
       required: true
     },
     email: {
-      type: String, // ✅ Открытый (копия из User)
-      required: true,
-      lowercase: true,
-      trim: true
+      type: String, // 🔐 ЗАШИФРОВАН (но копия есть в User открытая)
+      required: true
     }
   },
   
@@ -111,249 +109,227 @@ const initialPartnerRequestSchema = new mongoose.Schema({
     }
   },
   
-  // 🎯 СТАТУС ЗАЯВКИ (ИСПРАВЛЕННЫЙ!)
+  // 🎯 СТАТУС ЗАЯВКИ
   status: {
     type: String,
     enum: [
-      'pending',           // ЭТАП 1: Ждет одобрения админом
-      'approved',          // ЭТАП 2: Одобрено, можно подавать юр.данные
-      'under_review',      // ЭТАП 3: Юр.данные на проверке
-      'legal_approved',    // 🆕 ЭТАП 4: Юр.данные одобрены, PartnerProfile создан
-      'content_review',    // ЭТАП 5: Контент на модерации
-      'completed',         // ЭТАП 6: ВСЁ ГОТОВО! Публичный доступ
-      'rejected'           // Отклонено на любом этапе
+      'pending_documents',    // ЭТАП 1: Ждет подачи документов партнером
+      'pending',             // ЭТАП 2: Ждет одобрения админом
+      'approved',            // ЭТАП 3: Одобрено, можно подавать юр.данные
+      'under_review',        // ЭТАП 4: Юр.данные на проверке
+      'legal_approved',      // ЭТАП 5: Юр.данные одобрены, можно создать профиль
+      'content_review',      // ЭТАП 6: Контент на модерации
+      'completed',           // ЭТАП 7: ВСЁ ГОТОВО!
+      'rejected'             // Отклонено на любом этапе
     ],
-    default: 'pending',
+    default: 'pending_documents',
     index: true
   },
   
-  // Информация о рассмотрении заявки
-  review_info: {
-    // Первичное рассмотрение (ЭТАП 1→2)
-    reviewed_by: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'AdminUser'
-    },
-    reviewed_at: {
-      type: Date
-    },
-    decision: {
-      type: String,
-      enum: ['approved', 'rejected']
-    },
-    admin_notes: {
-      type: String,
-      trim: true
-    },
-    rejection_reason: {
-      type: String,
-      trim: true
-    },
-    
-    // Одобрение юр.данных (ЭТАП 3→4)
-    legal_approved_by: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'AdminUser'
-    },
-    legal_approved_at: {
-      type: Date
-    },
-    legal_notes: {
-      type: String,
-      trim: true
-    },
-    
-    // Финальное завершение (ЭТАП 5→6)
-    completed_by: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'AdminUser'
-    },
-    completed_at: {
-      type: Date
-    },
-    completion_notes: {
-      type: String,
-      trim: true
-    }
+  // Workflow информация
+  workflow_stage: {
+    type: Number,
+    default: 1,
+    min: 1,
+    max: 7
   },
   
-  // Метаданные регистрации
-  registration_info: {
-    registration_ip: {
-      type: String,
-      index: true
-    },
-    user_agent: {
-      type: String
-    },
-    whatsapp_consent: {
-      type: Boolean,
-      default: false
-    },
-    consent_date: {
-      type: Date,
-      default: Date.now
-    }
-  },
-  
-  // Даты
+  // Временные метки
   submitted_at: {
     type: Date,
     default: Date.now,
     index: true
-  }
+  },
+  updated_at: {
+    type: Date,
+    default: Date.now
+  },
   
+  // Геолокация на уровне заявки
+  location: {
+    coordinates: {
+      type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point'
+      },
+      coordinates: {
+        type: [Number],
+        default: [0, 0]
+      }
+    },
+    address: String
+  },
+  
+  // Информация о рассмотрении
+  review_info: {
+    reviewed_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AdminUser'
+    },
+    reviewed_at: Date,
+    rejection_reason: String,
+    admin_notes: String,
+    approved_at: Date,
+    completed_at: Date
+  },
+  
+  // Безопасность и метаданные
+  security_info: {
+    registration_ip: String,
+    user_agent: String,
+    email_verified: {
+      type: Boolean,
+      default: false
+    },
+    phone_verified: {
+      type: Boolean,
+      default: false
+    }
+  },
+  
+  // Маркетинговые согласия
+  marketing_consent: {
+    whatsapp: {
+      type: Boolean,
+      default: false
+    },
+    email_newsletter: {
+      type: Boolean,
+      default: false
+    },
+    sms: {
+      type: Boolean,
+      default: false
+    }
+  }
 }, {
   timestamps: true
 });
 
 // ================ ИНДЕКСЫ ================
-initialPartnerRequestSchema.index({ 'business_data.category': 1, status: 1 });
+initialPartnerRequestSchema.index({ user_id: 1 });
+initialPartnerRequestSchema.index({ status: 1, submitted_at: -1 });
+initialPartnerRequestSchema.index({ 'business_data.category': 1 });
 initialPartnerRequestSchema.index({ 'business_data.location': '2dsphere' });
-initialPartnerRequestSchema.index({ status: 1, submitted_at: 1 });
+initialPartnerRequestSchema.index({ 'review_info.reviewed_by': 1 });
+initialPartnerRequestSchema.index({ workflow_stage: 1 });
 
-// ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
-initialPartnerRequestSchema.virtual('owner_full_name').get(function() {
-  return `${this.business_data.owner_name} ${this.business_data.owner_surname}`;
-});
-
-initialPartnerRequestSchema.virtual('days_pending').get(function() {
-  const now = new Date();
-  const submitted = this.submitted_at;
-  return Math.floor((now - submitted) / (1000 * 60 * 60 * 24));
+// Составной индекс для админской панели
+initialPartnerRequestSchema.index({
+  status: 1,
+  'business_data.category': 1,
+  submitted_at: -1
 });
 
 // ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
 /**
- * 🎯 ЭТАП 1→2: Одобрение первичной заявки (переход к юр.данным)
+ * Обновление статуса с автоматическим workflow_stage
  */
-initialPartnerRequestSchema.methods.approve = function(adminId, notes = '') {
-  this.status = 'approved';
-  this.review_info = {
-    ...this.review_info,
-    reviewed_by: adminId,
-    reviewed_at: new Date(),
-    decision: 'approved',
-    admin_notes: notes
+initialPartnerRequestSchema.methods.updateStatus = function(newStatus, adminId = null, notes = '') {
+  // Маппинг статус -> этап
+  const statusToStage = {
+    'pending_documents': 1,
+    'pending': 2,
+    'approved': 3,
+    'under_review': 4,
+    'legal_approved': 5,
+    'content_review': 6,
+    'completed': 7,
+    'rejected': this.workflow_stage // Остается на текущем этапе
   };
-  
-  return this.save();
-};
-
-/**
- * ❌ Отклонение заявки
- */
-initialPartnerRequestSchema.methods.reject = function(adminId, reason) {
-  this.status = 'rejected';
-  this.review_info = {
-    ...this.review_info,
-    reviewed_by: adminId,
-    reviewed_at: new Date(),
-    decision: 'rejected',
-    rejection_reason: reason
-  };
-  
-  return this.save();
-};
-
-/**
- * 🆕 ЭТАП 3→4: Перевод в статус "юр.данные одобрены"
- * Вызывается после одобрения PartnerLegalInfo и создания PartnerProfile
- */
-initialPartnerRequestSchema.methods.approveLegal = function(adminId, notes = '') {
-  this.status = 'legal_approved';
-  if (!this.review_info) {
-    this.review_info = {};
-  }
-  this.review_info.legal_approved_by = adminId;
-  this.review_info.legal_approved_at = new Date();
-  this.review_info.legal_notes = notes;
-  
-  return this.save();
-};
-
-/**
- * 🆕 ЭТАП 4→5: Перевод в статус "контент на модерации"
- * Вызывается когда партнер отправляет контент на проверку
- */
-initialPartnerRequestSchema.methods.submitForContentReview = function() {
-  this.status = 'content_review';
-  return this.save();
-};
-
-/**
- * 🆕 ЭТАП 5→6: Финальное завершение (публичный доступ)
- * Вызывается после одобрения контента админом
- */
-initialPartnerRequestSchema.methods.complete = function(adminId, notes = '') {
-  this.status = 'completed';
-  if (!this.review_info) {
-    this.review_info = {};
-  }
-  this.review_info.completed_by = adminId;
-  this.review_info.completed_at = new Date();
-  this.review_info.completion_notes = notes;
-  
-  return this.save();
-};
-
-/**
- * 🔄 Возврат к предыдущему статусу (если нужно исправить ошибку)
- */
-initialPartnerRequestSchema.methods.revertStatus = function(newStatus, reason) {
-  const allowedReverts = {
-    'approved': ['pending'],
-    'under_review': ['approved'],
-    'legal_approved': ['under_review'],
-    'content_review': ['legal_approved'],
-    'completed': ['content_review']
-  };
-  
-  if (!allowedReverts[this.status] || !allowedReverts[this.status].includes(newStatus)) {
-    throw new Error(`Нельзя изменить статус с '${this.status}' на '${newStatus}'`);
-  }
   
   this.status = newStatus;
-  this.review_info.revert_reason = reason;
-  this.review_info.reverted_at = new Date();
+  this.workflow_stage = statusToStage[newStatus];
+  this.updated_at = new Date();
+  
+  // Обновляем review_info
+  if (adminId) {
+    this.review_info.reviewed_by = adminId;
+    this.review_info.reviewed_at = new Date();
+    
+    if (newStatus === 'approved') {
+      this.review_info.approved_at = new Date();
+    } else if (newStatus === 'completed') {
+      this.review_info.completed_at = new Date();
+    }
+  }
+  
+  if (notes) {
+    this.review_info.admin_notes = notes;
+  }
   
   return this.save();
+};
+
+/**
+ * Получение следующего действия для workflow
+ */
+initialPartnerRequestSchema.methods.getNextAction = function() {
+  const actions = {
+    'pending_documents': {
+      action: 'submit_documents',
+      description: 'Подача документов для рассмотрения',
+      actor: 'partner'
+    },
+    'pending': {
+      action: 'admin_review',
+      description: 'Рассмотрение заявки администратором',
+      actor: 'admin'
+    },
+    'approved': {
+      action: 'submit_legal_info',
+      description: 'Подача юридических документов',
+      actor: 'partner'
+    },
+    'under_review': {
+      action: 'admin_legal_review',
+      description: 'Проверка юридических документов',
+      actor: 'admin'
+    },
+    'legal_approved': {
+      action: 'create_profile',
+      description: 'Создание профиля партнера',
+      actor: 'system'
+    },
+    'content_review': {
+      action: 'admin_content_review',
+      description: 'Модерация контента и публикация',
+      actor: 'admin'
+    },
+    'completed': {
+      action: 'manage_business',
+      description: 'Управление бизнесом и товарами',
+      actor: 'partner'
+    },
+    'rejected': {
+      action: 'appeal_or_resubmit',
+      description: 'Обжалование или повторная подача',
+      actor: 'partner'
+    }
+  };
+  
+  return actions[this.status] || null;
 };
 
 // ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
 /**
- * Поиск заявок по статусу
+ * Поиск заявок на рассмотрении
  */
-initialPartnerRequestSchema.statics.findByStatus = function(status) {
-  return this.find({ status }).sort({ submitted_at: 1 });
-};
-
-/**
- * Поиск заявок ожидающих одобрения админом
- */
-initialPartnerRequestSchema.statics.findPendingApproval = function() {
+initialPartnerRequestSchema.statics.findPending = function() {
   return this.find({ 
-    status: { $in: ['pending', 'under_review', 'content_review'] }
+    status: 'pending' // На рассмотрении у админа
   }).sort({ submitted_at: 1 });
 };
 
 /**
- * 🆕 Поиск заявок готовых для подачи юр.данных
+ * Поиск заявок с документами на проверке
  */
-initialPartnerRequestSchema.statics.findReadyForLegalInfo = function() {
+initialPartnerRequestSchema.statics.findUnderReview = function() {
   return this.find({ 
-    status: 'approved' // Одобрены, но еще нет юр.данных
-  }).sort({ submitted_at: 1 });
-};
-
-/**
- * 🆕 Поиск заявок с одобренными юр.данными (готовые для контента)
- */
-initialPartnerRequestSchema.statics.findWithApprovedLegal = function() {
-  return this.find({ 
-    status: 'legal_approved' // Юр.данные одобрены, можно наполнять контент
+    status: 'under_review' // Юридические документы на проверке
   }).sort({ submitted_at: 1 });
 };
 
@@ -429,19 +405,19 @@ initialPartnerRequestSchema.statics.findOverdue = function(days = 7) {
 
 // ================ MIDDLEWARE ================
 
-// Валидация перед сохранением
+// ✅ ИСПРАВЛЕНО: Убрали проблемную валидацию email
+// Поскольку email зашифрован, валидация должна происходить в контроллере до шифрования
 initialPartnerRequestSchema.pre('save', function(next) {
-  // Валидация email
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(this.personal_data.email)) {
-    return next(new Error('Неверный формат email'));
+  // Валидация координат (если они есть)
+  if (this.business_data?.location?.coordinates) {
+    const [lng, lat] = this.business_data.location.coordinates;
+    if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+      return next(new Error('Неверные координаты'));
+    }
   }
   
-  // Валидация координат
-  const [lng, lat] = this.business_data.location.coordinates;
-  if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
-    return next(new Error('Неверные координаты'));
-  }
+  // Обновляем updated_at при любом сохранении
+  this.updated_at = new Date();
   
   next();
 });
@@ -459,6 +435,7 @@ initialPartnerRequestSchema.set('toJSON', {
     }
     if (ret.personal_data) {
       delete ret.personal_data.phone;
+      delete ret.personal_data.email;
     }
     return ret;
   }

@@ -1,4 +1,4 @@
-// ================ services/Partner/partner.auth.service.js (ИСПРАВЛЕННЫЙ) ================
+// ================ services/Partner/partner.auth.service.js (ИСПРАВЛЕННЫЕ ЭКСПОРТЫ) ================
 import jwt from "jsonwebtoken";
 import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo } from '../../models/index.js';
 import Meta from '../../models/Meta.model.js';
@@ -16,7 +16,7 @@ import mongoose from 'mongoose';
  * Верификация токена партнера (для middleware)
  * Возвращает стандартный ответ для middleware
  */
-const verifyPartnerToken = async (token) => {
+export const verifyPartnerToken = async (token) => {
     try {
         // Декодируем токен
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -87,7 +87,7 @@ const verifyPartnerToken = async (token) => {
 /**
  * Верификация партнера по статусу (для middleware)
  */
- const verifyPartnerByStatus = async (token, requiredStatuses) => {
+export const verifyPartnerByStatus = async (token, requiredStatuses) => {
     try {
         // Сначала проверяем токен
         const tokenResult = await verifyPartnerToken(token);
@@ -140,7 +140,7 @@ const verifyPartnerToken = async (token) => {
 /**
  * Верификация наличия профиля партнера (для middleware)
  */
- const verifyPartnerProfile = async (token) => {
+export const verifyPartnerProfile = async (token) => {
     try {
         // Сначала проверяем токен
         const tokenResult = await verifyPartnerToken(token);
@@ -189,7 +189,7 @@ const verifyPartnerToken = async (token) => {
  * Создание аккаунта партнера
  * Содержит всю логику создания партнера
  */
-const createPartnerAccount = async (partnerData) => {
+export const createPartnerAccount = async (partnerData) => {
     try {
         let { 
             first_name, last_name, email, password, phone,
@@ -200,10 +200,25 @@ const createPartnerAccount = async (partnerData) => {
         // Нормализация email
         email = email.toLowerCase().trim();
 
-        // Проверяем существование через Meta
+        // ✅ ИСПРАВЛЕНО: Проверяем существование в ОБА источниках
+        
+        // 1. Проверяем Meta записи
         const existingMeta = await Meta.findByEmailAndRole(hashMeta(email), 'partner');
         if (existingMeta) {
             throw new Error('Партнер с таким email уже существует');
+        }
+
+        // 2. Проверяем User записи (может быть битая регистрация)
+        const existingUser = await User.findOne({ email: email });
+        if (existingUser) {
+            // Если есть User но нет Meta - это битая регистрация
+            // Удаляем битого пользователя
+            await User.findByIdAndDelete(existingUser._id);
+            
+            // Удаляем возможные осиротевшие записи
+            await InitialPartnerRequest.deleteOne({ user_id: existingUser._id });
+            
+            console.log('🧹 Cleaned up broken registration for:', email);
         }
 
         // Хешируем пароль
@@ -229,33 +244,89 @@ const createPartnerAccount = async (partnerData) => {
 
         // Создаем Meta запись
         const newMeta = new Meta({
-            email_hash: hashMeta(email),
+            em: hashMeta(email), // ✅ ИСПРАВЛЕНО: используем правильное поле em
             role: 'partner',
             partner: newUser._id,
-            encrypted_email: cryptoString(email),
             is_active: true,
-            registration_ip: registration_ip,
-            user_agent: user_agent,
-            failed_login_attempts: 0,
-            last_failed_login: null,
-            account_locked_until: null
+            security_info: {
+                last_login_attempt: null,
+                failed_login_attempts: 0,
+                account_locked_until: null
+            }
         });
 
         await newMeta.save();
 
-        // Создаем заявку на партнерство
+        // ✅ ИСПРАВЛЕНО: Правильная структура данных для InitialPartnerRequest
         const partnerRequest = new InitialPartnerRequest({
             user_id: newUser._id,
-            first_name: first_name,
-            last_name: last_name,
-            email: email,
-            phone: phone,
-            business_name: business_name,
-            category: category,
-            address: address,
-            location: location,
-            status: 'pending_documents',
-            created_at: new Date()
+            
+            // Персональные данные (зашифрованы)
+            personal_data: {
+                first_name: cryptoString(first_name),
+                last_name: cryptoString(last_name),
+                phone: cryptoString(phone),
+                email: cryptoString(email) // Зашифрованная копия
+            },
+            
+            // Бизнес данные (микс открытого и зашифрованного)
+            business_data: {
+                // Открытые данные
+                business_name: business_name, // ✅ НЕ шифруем для поиска
+                category: category, // ✅ НЕ шифруем для фильтров
+                description: `${category === 'restaurant' ? 'Ресторан' : 'Магазин'} ${business_name}`,
+                
+                // Владелец (имена не критичны)
+                owner_name: first_name,
+                owner_surname: last_name,
+                
+                // Зашифрованные данные
+                address: cryptoString(address),
+                phone: cryptoString(phone),
+                email: cryptoString(email),
+                
+                // Геолокация
+                location: {
+                    type: 'Point',
+                    coordinates: location?.longitude && location?.latitude ? 
+                        [parseFloat(location.longitude), parseFloat(location.latitude)] : 
+                        [0, 0] // Default coordinates if not provided
+                }
+            },
+            
+            // Геолокация на уровне заявки
+            location: {
+                coordinates: {
+                    type: 'Point',
+                    coordinates: location?.longitude && location?.latitude ? 
+                        [parseFloat(location.longitude), parseFloat(location.latitude)] : 
+                        [0, 0]
+                },
+                address: address
+            },
+            
+            // Статус и workflow
+            status: 'pending', // ✅ ИСПРАВЛЕНО: используем правильный статус из enum
+            workflow_stage: 1,
+            
+            // Временные метки
+            submitted_at: new Date(),
+            updated_at: new Date(),
+            
+            // Безопасность
+            security_info: {
+                registration_ip: registration_ip,
+                user_agent: user_agent,
+                email_verified: false,
+                phone_verified: false
+            },
+            
+            // Маркетинговые согласия
+            marketing_consent: {
+                whatsapp: partnerData.whatsapp_consent || false,
+                email_newsletter: false,
+                sms: false
+            }
         });
 
         await partnerRequest.save();
@@ -279,18 +350,17 @@ const createPartnerAccount = async (partnerData) => {
  * Авторизация партнера
  * Полная логика входа с проверками безопасности
  */
-const loginPartner = async (email, password) => {
+export const loginPartner = async ({ email, password }) => {
     try {
-        // Нормализация
         const normalizedEmail = email.toLowerCase().trim();
         
-        // Ищем через Meta с populate
+        // Ищем через Meta
         const metaInfo = await Meta.findOne({
-            email_hash: hashMeta(normalizedEmail),
+            em: hashMeta(normalizedEmail),
             role: 'partner'
         }).populate('partner');
 
-        if (!metaInfo) {
+        if (!metaInfo || !metaInfo.partner) {
             const error = new Error('Партнер не найден');
             error.statusCode = 404;
             throw error;
@@ -363,15 +433,28 @@ const loginPartner = async (email, password) => {
 
 /**
  * Проверка существования партнера по email
- * ✅ ИСПРАВЛЕНО: Проверяем и Meta и User таблицы
+ * ✅ С АВТОМАТИЧЕСКОЙ ОЧИСТКОЙ БИТЫХ ЗАПИСЕЙ
  */
-const checkPartnerExists = async (email) => {
+export const checkPartnerExists = async (email) => {
     try {
         const normalizedEmail = email.toLowerCase().trim();
         
+        console.log('🔍 CHECK PARTNER EXISTS - Start:', {
+            original_email: email,
+            normalized_email: normalizedEmail,
+            hashed_email: hashMeta(normalizedEmail)
+        });
+        
         // 1. Проверяем Meta записи
         const metaInfo = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), 'partner');
+        console.log('🔍 Meta check result:', {
+            metaInfo_found: !!metaInfo,
+            metaInfo_id: metaInfo?._id,
+            metaInfo_role: metaInfo?.role
+        });
+        
         if (metaInfo) {
+            console.log('❌ Partner EXISTS in Meta table');
             return true;
         }
         
@@ -380,20 +463,56 @@ const checkPartnerExists = async (email) => {
             email: normalizedEmail, 
             role: 'partner' 
         });
+        console.log('🔍 User check result:', {
+            userInfo_found: !!userInfo,
+            userInfo_id: userInfo?._id,
+            userInfo_email: userInfo?.email,
+            userInfo_role: userInfo?.role
+        });
+        
         if (userInfo) {
+            // ✅ АВТОМАТИЧЕСКАЯ ОЧИСТКА БИТОЙ РЕГИСТРАЦИИ
+            console.log('🧹 Found broken partner registration - cleaning up...');
+            
+            // Удаляем битого пользователя
+            await User.findByIdAndDelete(userInfo._id);
+            
+            // Удаляем возможные осиротевшие записи
+            await InitialPartnerRequest.deleteOne({ user_id: userInfo._id });
+            await PartnerProfile.deleteOne({ user_id: userInfo._id });
+            
+            console.log('✅ Broken registration cleaned up successfully');
+            return false; // Теперь можно регистрировать
+        }
+        
+        // 3. Дополнительная проверка - может быть в базе есть User с любой ролью
+        const anyUser = await User.findOne({ email: normalizedEmail });
+        console.log('🔍 Any user check result:', {
+            anyUser_found: !!anyUser,
+            anyUser_id: anyUser?._id,
+            anyUser_email: anyUser?.email,
+            anyUser_role: anyUser?.role
+        });
+        
+        if (anyUser) {
+            console.log('⚠️ User exists with different role:', anyUser.role);
+            // Если пользователь существует но с другой ролью - это конфликт
             return true;
         }
         
+        console.log('✅ Partner does NOT exist - OK to register');
         return false;
+        
     } catch (error) {
-        return false;
+        console.error('🚨 CHECK PARTNER EXISTS - Error:', error);
+        return false; // В случае ошибки считаем что партнер не существует
     }
 };
 
 /**
  * Получение партнера по ID с полной информацией
  */
- const getPartnerById = async (partnerId) => {
+export const getPartnerById = async (partnerId) => {
     try {
         const partner = await User.findById(partnerId).select('-password_hash');
         if (!partner || partner.role !== 'partner') {
@@ -418,7 +537,7 @@ const checkPartnerExists = async (email) => {
 /**
  * Проверка пользователя по email и роли
  */
- const checkUserByEmailAndRole = async (email, role = 'partner') => {
+export const checkUserByEmailAndRole = async (email, role = 'partner') => {
     try {
         const normalizedEmail = email.toLowerCase().trim();
         const metaInfo = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), role);
@@ -427,15 +546,4 @@ const checkPartnerExists = async (email) => {
     } catch (error) {
         return false;
     }
-};
-
-// ✅ ИСПРАВЛЕНО: Убрали дублированный экспорт checkUserByEmailAndRole
-export {
-    verifyPartnerToken,
-    verifyPartnerByStatus,
-    verifyPartnerProfile,
-    createPartnerAccount,
-    loginPartner,
-    checkPartnerExists,
-    getPartnerById
 };

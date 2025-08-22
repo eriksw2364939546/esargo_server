@@ -74,26 +74,26 @@ const registerPartner = async (req, res) => {
             });
         }
 
-        console.log('✅ REGISTER PARTNER - Success');
+console.log('✅ REGISTER PARTNER - Success');
 
+        // ✅ ИСПРАВЛЕНО: Правильная структура ответа 
         res.status(201).json({
             result: true,
-            message: "Регистрация успешна! Следующий шаг - подача юридических документов.",
+            message: "Регистрация успешна! Следующий шаг - ждите одобрения администратора.",
             user: {
-                id: result.user._id,
-                email: result.user.email,
-                role: result.user.role
+                id: result.partner.id,
+                email: result.partner.email,
+                role: result.partner.role
             },
             request: {
-                id: result.request._id,
-                status: result.request.status,
-                business_name: result.request.business_data.business_name
+                id: result.partner.request._id,
+                status: result.partner.request.status,
+                business_name: result.partner.request.business_data.business_name
             },
-            token: result.token,
             next_step: {
-                action: "submit_legal_info",
-                endpoint: `POST /api/partners/legal-info/${result.request._id}`,
-                description: "Подайте юридические документы для проверки"
+                action: "wait_for_admin_approval",
+                description: "Ваша заявка отправлена на рассмотрение администратору",
+                current_status: "pending"
             }
         });
 
