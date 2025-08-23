@@ -333,7 +333,7 @@ export const addProduct = async (req, res) => {
       image_url,
       subcategory, // slug категории меню
       preparation_time,
-      options_groups,
+      options_groups, // ⚠️ Только для ресторанов
       dish_info,
       product_info,
       tags
@@ -346,7 +346,7 @@ export const addProduct = async (req, res) => {
       });
     }
 
-    // Валидация обязательных полей
+    // Валидация обязательных полей (логика не тронута)
     const requiredFields = { title, price, subcategory };
     const missingFields = Object.entries(requiredFields)
       .filter(([key, value]) => !value)
@@ -375,7 +375,7 @@ export const addProduct = async (req, res) => {
       });
     }
 
-    // Проверяем существование категории
+    // Проверяем существование категории (логика не тронута)
     const category = partner.menu_categories.find(cat => cat.slug === subcategory);
     if (!category) {
       return res.status(400).json({
@@ -384,7 +384,102 @@ export const addProduct = async (req, res) => {
       });
     }
 
-    // Создаем новый продукт
+    // ✅ НОВАЯ ЛОГИКА: Проверка добавок в зависимости от категории партнера
+    let finalOptionsGroups = [];
+    let validationWarnings = [];
+
+    if (partner.category === 'restaurant') {
+      // 🍽️ РЕСТОРАН: Разрешены добавки
+      if (options_groups && Array.isArray(options_groups)) {
+        // Валидация структуры добавок
+        const validatedGroups = [];
+        
+        options_groups.forEach((group, groupIndex) => {
+          if (!group.name || typeof group.name !== 'string') {
+            validationWarnings.push(`Группа добавок ${groupIndex + 1}: отсутствует название`);
+            return;
+          }
+
+          if (!group.options || !Array.isArray(group.options) || group.options.length === 0) {
+            validationWarnings.push(`Группа "${group.name}": отсутствуют опции`);
+            return;
+          }
+
+          // Валидация опций в группе
+          const validatedOptions = [];
+          group.options.forEach((option, optionIndex) => {
+            if (!option.name || typeof option.name !== 'string') {
+              validationWarnings.push(`Опция ${optionIndex + 1} в группе "${group.name}": отсутствует название`);
+              return;
+            }
+
+            if (typeof option.price !== 'number' || option.price < 0) {
+              validationWarnings.push(`Опция "${option.name}": некорректная цена`);
+              return;
+            }
+
+            validatedOptions.push({
+              name: option.name.trim(),
+              price: parseFloat(option.price),
+              is_available: option.is_available !== false // по умолчанию true
+            });
+          });
+
+          if (validatedOptions.length > 0) {
+            validatedGroups.push({
+              name: group.name.trim(),
+              description: group.description?.trim() || '',
+              required: Boolean(group.required),
+              multiple_choice: Boolean(group.multiple_choice),
+              max_selections: parseInt(group.max_selections) || 1,
+              options: validatedOptions
+            });
+          }
+        });
+
+        finalOptionsGroups = validatedGroups;
+        
+        console.log('🍽️ RESTAURANT - Options groups processed:', {
+          input_groups: options_groups.length,
+          validated_groups: finalOptionsGroups.length,
+          warnings: validationWarnings.length
+        });
+      }
+      
+    } else if (partner.category === 'store') {
+      // 🏪 МАГАЗИН: Добавки запрещены
+      if (options_groups && options_groups.length > 0) {
+        return res.status(400).json({
+          result: false,
+          message: "Магазины не могут добавлять опции к товарам",
+          business_rule: "Только рестораны поддерживают добавки к блюдам",
+          partner_category: partner.category
+        });
+      }
+      
+      finalOptionsGroups = []; // Принудительно пустой массив
+      
+      console.log('🏪 STORE - No options allowed:', {
+        partner_category: partner.category,
+        options_blocked: true
+      });
+    }
+
+    // ✅ ЛОГИКА ВРЕМЕНИ ПРИГОТОВЛЕНИЯ В ЗАВИСИМОСТИ ОТ КАТЕГОРИИ
+    let finalPreparationTime = 0;
+    
+    if (partner.category === 'restaurant') {
+      // Рестораны: время приготовления важно
+      finalPreparationTime = preparation_time || 15; // по умолчанию 15 минут
+    } else if (partner.category === 'store') {
+      // Магазины: время не важно (товар готов)
+      finalPreparationTime = 0;
+      if (preparation_time && preparation_time > 0) {
+        validationWarnings.push('Время приготовления игнорируется для магазинов');
+      }
+    }
+
+    // ✅ СОЗДАЕМ ПРОДУКТ С ПРАВИЛЬНОЙ ЛОГИКОЙ
     const newProduct = new Product({
       partner_id: partner._id,
       title: title.trim(),
@@ -395,22 +490,37 @@ export const addProduct = async (req, res) => {
       category: partner.category, // restaurant/store
       subcategory: subcategory,
       menu_category_id: category._id,
-      preparation_time: preparation_time || (partner.category === 'restaurant' ? 15 : 0),
-      options_groups: options_groups || [],
-      dish_info: dish_info || {},
-      product_info: product_info || {},
+      
+      // ✅ ВРЕМЯ ПРИГОТОВЛЕНИЯ: зависит от категории
+      preparation_time: finalPreparationTime,
+      
+      // ✅ ДОБАВКИ: только для ресторанов
+      options_groups: finalOptionsGroups,
+      
+      // Дополнительная информация (зависит от категории)
+      dish_info: partner.category === 'restaurant' ? (dish_info || {}) : {},
+      product_info: partner.category === 'store' ? (product_info || {}) : {},
+      
       tags: tags || [],
       last_updated_by: user._id
     });
 
-    // Валидируем принадлежность к категории партнера
+    // Валидируем принадлежность к категории партнера (логика не тронута)
     await newProduct.validateCategory();
     
     await newProduct.save();
 
-    // Обновляем статистику партнера
+    // Обновляем статистику партнера (логика не тронута)
     await partner.updateProductStats();
 
+    console.log('✅ PRODUCT CREATED:', {
+      partner_category: partner.category,
+      has_options: finalOptionsGroups.length > 0,
+      preparation_time: finalPreparationTime,
+      warnings_count: validationWarnings.length
+    });
+
+    // ✅ ОТВЕТ С ИНФОРМАЦИЕЙ О КАТЕГОРИИ
     res.status(201).json({
       result: true,
       message: "Продукт добавлен",
@@ -418,7 +528,15 @@ export const addProduct = async (req, res) => {
       category_info: {
         name: category.name,
         slug: category.slug
-      }
+      },
+      business_rules: {
+        partner_category: partner.category,
+        supports_options: partner.category === 'restaurant',
+        supports_preparation_time: partner.category === 'restaurant',
+        options_groups_count: finalOptionsGroups.length,
+        preparation_time: finalPreparationTime
+      },
+      warnings: validationWarnings.length > 0 ? validationWarnings : undefined
     });
 
   } catch (error) {
@@ -464,7 +582,7 @@ export const updateProduct = async (req, res) => {
       });
     }
 
-    // Находим продукт принадлежащий этому партнеру
+    // Находим продукт принадлежащий этому партнеру (логика не тронута)
     const product = await Product.findOne({ 
       _id: product_id, 
       partner_id: partner._id 
@@ -477,7 +595,7 @@ export const updateProduct = async (req, res) => {
       });
     }
 
-    // Валидация изменения категории
+    // Валидация изменения категории (логика не тронута)
     if (updateData.subcategory && updateData.subcategory !== product.subcategory) {
       const category = partner.menu_categories.find(cat => cat.slug === updateData.subcategory);
       if (!category) {
@@ -489,7 +607,7 @@ export const updateProduct = async (req, res) => {
       updateData.menu_category_id = category._id;
     }
 
-    // Валидация цены
+    // Валидация цены (логика не тронута)
     if (updateData.price && updateData.price <= 0) {
       return res.status(400).json({
         result: false,
@@ -497,7 +615,75 @@ export const updateProduct = async (req, res) => {
       });
     }
 
-    // Обновляем поля
+    // ✅ НОВАЯ ЛОГИКА: Проверка добавок при обновлении
+    let validationWarnings = [];
+
+    if (updateData.options_groups !== undefined) {
+      if (partner.category === 'restaurant') {
+        // 🍽️ РЕСТОРАН: Разрешено обновление добавок
+        if (Array.isArray(updateData.options_groups)) {
+          // Валидация структуры (аналогично addProduct)
+          const validatedGroups = [];
+          
+          updateData.options_groups.forEach((group, groupIndex) => {
+            if (!group.name || typeof group.name !== 'string') {
+              validationWarnings.push(`Группа добавок ${groupIndex + 1}: отсутствует название`);
+              return;
+            }
+
+            if (!group.options || !Array.isArray(group.options)) {
+              validationWarnings.push(`Группа "${group.name}": отсутствуют опции`);
+              return;
+            }
+
+            const validatedOptions = group.options
+              .filter(option => option.name && typeof option.name === 'string' && typeof option.price === 'number')
+              .map(option => ({
+                name: option.name.trim(),
+                price: parseFloat(option.price),
+                is_available: option.is_available !== false
+              }));
+
+            if (validatedOptions.length > 0) {
+              validatedGroups.push({
+                name: group.name.trim(),
+                description: group.description?.trim() || '',
+                required: Boolean(group.required),
+                multiple_choice: Boolean(group.multiple_choice),
+                max_selections: parseInt(group.max_selections) || 1,
+                options: validatedOptions
+              });
+            }
+          });
+
+          updateData.options_groups = validatedGroups;
+          
+          console.log('🍽️ RESTAURANT UPDATE - Options groups validated:', {
+            input_groups: updateData.options_groups.length,
+            validated_groups: validatedGroups.length
+          });
+        }
+        
+      } else if (partner.category === 'store') {
+        // 🏪 МАГАЗИН: Запрещено добавление добавок
+        return res.status(400).json({
+          result: false,
+          message: "Магазины не могут изменять опции товаров",
+          business_rule: "Только рестораны поддерживают добавки",
+          partner_category: partner.category
+        });
+      }
+    }
+
+    // ✅ ЛОГИКА ВРЕМЕНИ ПРИГОТОВЛЕНИЯ
+    if (updateData.preparation_time !== undefined) {
+      if (partner.category === 'store' && updateData.preparation_time > 0) {
+        validationWarnings.push('Время приготовления сброшено до 0 для магазинов');
+        updateData.preparation_time = 0;
+      }
+    }
+
+    // Обновляем поля (логика расширена)
     const allowedFields = [
       'title', 'description', 'price', 'discount_price', 'image_url',
       'subcategory', 'menu_category_id', 'preparation_time', 'options_groups',
@@ -511,35 +697,39 @@ export const updateProduct = async (req, res) => {
       }
     });
 
-    // Обновляем кто последний раз изменил
+    // Обновляем кто последний раз изменил (логика не тронута)
     product.last_updated_by = user._id;
 
-    // Валидируем категорию если изменилась
+    // Валидируем категорию если изменилась (логика не тронута)
     if (updateData.subcategory) {
       await product.validateCategory();
     }
 
     await product.save();
 
-    // Обновляем статистику партнера
+    // Обновляем статистику партнера (логика не тронута)
     await partner.updateProductStats();
+
+    console.log('✅ PRODUCT UPDATED:', {
+      partner_category: partner.category,
+      has_options: product.options_groups.length > 0,
+      warnings_count: validationWarnings.length
+    });
 
     res.status(200).json({
       result: true,
       message: "Продукт обновлен",
-      product: product
+      product: product,
+      business_rules: {
+        partner_category: partner.category,
+        supports_options: partner.category === 'restaurant',
+        options_groups_count: product.options_groups.length
+      },
+      warnings: validationWarnings.length > 0 ? validationWarnings : undefined
     });
 
   } catch (error) {
     console.error('Update product error:', error);
-    
-    if (error.message.includes('категории')) {
-      return res.status(400).json({
-        result: false,
-        message: error.message
-      });
-    }
-    
     res.status(500).json({
       result: false,
       message: "Ошибка обновления продукта"
