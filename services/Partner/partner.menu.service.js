@@ -48,7 +48,7 @@ import mongoose from 'mongoose';
  * @param {object} categoryData - Данные категории
  * @returns {object} - Добавленная категория
  */
- const addMenuCategory = async (partnerId, categoryData) => {
+ const addMenuCategoryService = async (partnerId, categoryData) => {
     try {
         if (!partnerId) {
             throw new Error('Partner ID обязателен');
@@ -610,7 +610,7 @@ function validateAndProcessOptionsGroups(optionsGroups, warnings) {
 
 
 export { getPartnerMenuCategories
-       , addMenuCategory
+       , addMenuCategoryService
        , updateMenuCategory
        , deleteMenuCategory
        , getPartnerProducts

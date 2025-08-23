@@ -1,7 +1,7 @@
 // ================ controllers/PartnerMenuController.js (АРХИТЕКТУРНО ПРАВИЛЬНЫЙ) ================
 import {
     getPartnerMenuCategories,
-    addMenuCategory,
+    addMenuCategoryService,
     updateMenuCategory,
     deleteMenuCategory,
     getPartnerProducts,
@@ -54,7 +54,7 @@ export const addMenuCategory = async (req, res) => {
         const categoryData = req.body;
 
         // ✅ ВСЯ ЛОГИКА В СЕРВИСЕ
-        const result = await addMenuCategory(user._id, categoryData);
+        const result = await addMenuCategoryService(user._id, categoryData);
 
         res.status(201).json({
             result: true,
