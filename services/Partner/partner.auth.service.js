@@ -1,4 +1,4 @@
-// ================ services/Partner/partner.auth.service.js (ОБНОВЛЕННЫЙ) ================
+// ================ services/Partner/partner.auth.service.js (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ) ================
 import jwt from "jsonwebtoken";
 import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo } from '../../models/index.js';
 import Meta from '../../models/Meta.model.js';
@@ -13,9 +13,9 @@ import mongoose from 'mongoose';
 
 /**
  * Создание аккаунта партнера
- * ✅ ОБНОВЛЕНО: Создает InitialPartnerRequest с полями из новой модели
+ * ✅ ПОЛНОСТЬЮ ИСПРАВЛЕНО: Создает данные точно по новым моделям
  */
-export const createPartnerAccount = async (partnerData) => {
+ const createPartnerAccount = async (partnerData) => {
     try {
         let { 
             first_name, last_name, email, password, phone,
@@ -24,19 +24,26 @@ export const createPartnerAccount = async (partnerData) => {
             registration_ip, user_agent
         } = partnerData;
 
-        // Нормализация email (логика не тронута)
+        // Нормализация email
         email = email.toLowerCase().trim();
 
-        // ✅ ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ТОЛЬКО ЧЕРЕЗ META (логика не тронута)
+        console.log('🔍 CREATE PARTNER ACCOUNT - Data check:', {
+            has_brand_name: !!brand_name,
+            has_floor_unit: !!floor_unit,
+            whatsapp_consent: whatsapp_consent,
+            coordinates: location
+        });
+
+        // ✅ ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ТОЛЬКО ЧЕРЕЗ META
         const existingMeta = await Meta.findByEmailAndRole(hashMeta(email), 'partner');
         if (existingMeta) {
             throw new Error('Партнер с таким email уже существует');
         }
 
-        // Хешируем пароль (логика не тронута)
+        // Хешируем пароль
         const hashedPassword = await hashString(password);
 
-        // Создаем пользователя с ЗАШИФРОВАННЫМ EMAIL (логика не тронута)
+        // Создаем пользователя с ЗАШИФРОВАННЫМ EMAIL
         const newUser = new User({
             email: cryptoString(email), // 🔐 ЗАШИФРОВАННЫЙ EMAIL
             password_hash: hashedPassword,
@@ -54,9 +61,9 @@ export const createPartnerAccount = async (partnerData) => {
 
         await newUser.save();
 
-        // Создаем Meta запись (логика не тронута)
+        // Создаем Meta запись
         const newMeta = new Meta({
-            em: hashMeta(email), // ✅ ИСПРАВЛЕНО: используем правильное поле em
+            em: hashMeta(email),
             role: 'partner',
             partner: newUser._id,
             is_active: true,
@@ -69,7 +76,7 @@ export const createPartnerAccount = async (partnerData) => {
 
         await newMeta.save();
 
-        // ✅ СОЗДАЕМ InitialPartnerRequest ПО НОВОЙ МОДЕЛИ
+        // ✅ СОЗДАЕМ InitialPartnerRequest ТОЧНО ПО НОВОЙ МОДЕЛИ
         const partnerRequest = new InitialPartnerRequest({
             user_id: newUser._id,
             
@@ -84,35 +91,35 @@ export const createPartnerAccount = async (partnerData) => {
             // 🏪 БИЗНЕС ДАННЫЕ (точно как в модели business_data)
             business_data: {
                 // Адрес и этаж
-                address: cryptoString(address),                    // 🔐 ЗАШИФРОВАНО - "Адрес магазина"
-                floor_unit: floor_unit ? cryptoString(floor_unit) : null, // 🔐 ЗАШИФРОВАНО - "Этаж/люкс (по желанию)"
+                address: cryptoString(address),                                    // 🔐 ЗАШИФРОВАНО
+                floor_unit: floor_unit ? cryptoString(floor_unit.trim()) : null,  // 🔐 ЗАШИФРОВАНО (опционально)
                 
-                // Названия
-                business_name: business_name,  // ✅ ОТКРЫТО - "Название магазина"
-                brand_name: brand_name,        // ✅ ОТКРЫТО - "Название бренда" 🆕 НОВОЕ ПОЛЕ
+                // Названия  
+                business_name: business_name.trim(),                               // ✅ ОТКРЫТО
+                brand_name: brand_name ? brand_name.trim() : business_name.trim(), // ✅ ОТКРЫТО (fallback к business_name)
                 
                 // Тип бизнеса
-                category: category,            // ✅ ОТКРЫТО - "Тип бизнеса" (restaurant/store)
+                category: category,                                                // ✅ ОТКРЫТО
                 
-                // Геолокация (структура из модели)
+                // Геолокация (точно по модели)
                 location: {
                     type: 'Point',
                     coordinates: location?.longitude && location?.latitude ? 
                         [parseFloat(location.longitude), parseFloat(location.latitude)] : 
-                        [0, 0] // Default coordinates if not provided
+                        [2.3522, 48.8566] // Default: Paris coordinates
                 },
                 
                 // Владелец (для внутреннего использования)
-                owner_name: first_name,        // ✅ ОТКРЫТО
-                owner_surname: last_name       // ✅ ОТКРЫТО
+                owner_name: first_name.trim(),                                     // ✅ ОТКРЫТО
+                owner_surname: last_name.trim()                                    // ✅ ОТКРЫТО
             },
             
-            // 📱 WHATSAPP СОГЛАСИЕ (точно как в модели marketing_consent)
+            // 📱 WHATSAPP СОГЛАСИЕ (✅ ИСПРАВЛЕНО: правильное поле)
             marketing_consent: {
-                whatsapp_consent: Boolean(whatsapp_consent) // 🆕 ИСПРАВЛЕНО: правильное поле
+                whatsapp_consent: Boolean(whatsapp_consent) // 🆕 ИСПРАВЛЕНО: whatsapp_consent вместо whatsapp
             },
             
-            // 🎯 СТАТУС ЗАЯВКИ (логика не тронута)
+            // 🎯 СТАТУС ЗАЯВКИ
             status: 'pending',
             workflow_stage: 1,
             
@@ -125,52 +132,44 @@ export const createPartnerAccount = async (partnerData) => {
                 admin_notes: null
             },
             
-            // 🛡️ БЕЗОПАСНОСТЬ (обновлено под модель)
+            // 🛡️ БЕЗОПАСНОСТЬ (точно по модели)
             security_info: {
-                registration_ip: registration_ip,
-                user_agent: user_agent,
-                country_code: 'FR',           // Соответствует французской системе
-                phone_country: 'FR'           // Соответствует выпадающему "FR" на скрине
+                registration_ip: registration_ip || null,
+                user_agent: user_agent || null,
+                country_code: 'FR',           // Точно по модели
+                phone_country: 'FR'           // Точно по модели
             },
             
-            // 📅 ВРЕМЕННЫЕ МЕТКИ (соответствуют модели)
+            // 📅 ВРЕМЕННЫЕ МЕТКИ
             submitted_at: new Date(),
             updated_at: new Date()
         });
 
         await partnerRequest.save();
 
-        // 🆕 ГЕНЕРИРУЕМ ТОКЕН (логика не тронута)
-        console.log('🔍 GENERATING TOKEN FOR NEW PARTNER:', {
-            user_id: newUser._id,
-            role: newUser.role,
-            has_brand_name: !!brand_name, // 🆕 ЛОГИРУЕМ НОВОЕ ПОЛЕ
-            has_floor_unit: !!floor_unit,  // 🆕 ЛОГИРУЕМ НОВОЕ ПОЛЕ
-            whatsapp_consent: whatsapp_consent // 🆕 ЛОГИРУЕМ НОВОЕ ПОЛЕ
+        console.log('✅ PARTNER REQUEST CREATED:', {
+            has_brand_name: !!partnerRequest.business_data.brand_name,
+            has_floor_unit: !!partnerRequest.business_data.floor_unit,
+            whatsapp_consent: partnerRequest.marketing_consent.whatsapp_consent,
+            coordinates: partnerRequest.business_data.location.coordinates
         });
 
+        // Генерируем токен
         const token = generateCustomerToken({
             _id: newUser._id,
             user_id: newUser._id,
             role: 'partner'
-            // 🔐 НЕ ВКЛЮЧАЕМ EMAIL в токен - он зашифрован
         }, '30d');
 
-        console.log('✅ TOKEN GENERATED FOR NEW PARTNER WITH NEW FIELDS:', {
-            token_length: token ? token.length : 0,
-            token_preview: token ? token.substring(0, 20) + '...' : null
-        });
-
-        // Возвращаем результат (структура обновлена)
         return {
             isNewPartner: true,
             partner: {
                 id: newUser._id,
                 role: newUser.role,
-                email: email, // ✅ Возвращаем оригинальный email для ответа
+                email: email, // ✅ Возвращаем оригинальный email
                 request: partnerRequest
             },
-            token: token // 🆕 Возвращаем токен
+            token: token
         };
 
     } catch (error) {
@@ -181,9 +180,9 @@ export const createPartnerAccount = async (partnerData) => {
 
 /**
  * Авторизация партнера
- * Полная логика входа с проверками безопасности
+ * ✅ Логика не тронута - работает корректно
  */
-export const loginPartner = async ({ email, password }) => {
+ const loginPartner = async ({ email, password }) => {
     try {
         const normalizedEmail = email.toLowerCase().trim();
         
@@ -260,12 +259,13 @@ export const loginPartner = async ({ email, password }) => {
 
 /**
  * ================== МЕТОДЫ ДЛЯ MIDDLEWARE ==================
+ * ✅ Все методы остаются без изменений - работают корректно
  */
 
 /**
  * Верификация токена партнера (для middleware)
  */
-export const verifyPartnerToken = async (token) => {
+ const verifyPartnerToken = async (token) => {
     try {
         // Декодируем токен
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -335,8 +335,9 @@ export const verifyPartnerToken = async (token) => {
 
 /**
  * Проверка существования партнера по email
+ * ✅ Логика не тронута - работает корректно
  */
-export const checkPartnerExists = async (email) => {
+ const checkPartnerExists = async (email) => {
     try {
         const normalizedEmail = email.toLowerCase().trim();
         
@@ -364,3 +365,6 @@ export const checkPartnerExists = async (email) => {
         return false;
     }
 };
+
+
+export { createPartnerAccount,loginPartner,verifyPartnerToken,checkPartnerExists }

@@ -191,6 +191,11 @@ const rejectPartnerRequest = async (req, res) => {
 };
 
 
+/**
+ * 3. Одобрение юридических документов и создание профиля  
+ * POST /api/admin/partners/legal/:id/approve
+ * ✅ ИСПРАВЛЕНО: Безопасная работа с совместимостью старых/новых данных
+ */
 const approveLegalInfo = async (req, res) => {
     try {
         const { id } = req.params;
@@ -217,7 +222,7 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        // Получаем юридические данные (логика не тронута)
+        // Получаем юридические данные
         const legalInfo = await PartnerLegalInfo.findById(id)
             .populate('user_id')
             .populate('partner_request_id');
@@ -229,7 +234,7 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        // Проверяем статус (логика не тронута)
+        // Проверяем статус
         if (legalInfo.verification_status !== 'pending') {
             return res.status(400).json({
                 result: false,
@@ -237,7 +242,7 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        // Проверяем не создан ли уже профиль (логика не тронута)
+        // Проверяем не создан ли уже профиль
         const existingProfile = await PartnerProfile.findOne({ 
             user_id: legalInfo.user_id._id 
         });
@@ -249,7 +254,7 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        // Обновляем статус документов (логика не тронута)
+        // Обновляем статус документов
         const legalUpdateData = {
             verification_status: 'verified',
             'verification_info.verified_by': admin._id,
@@ -259,47 +264,50 @@ const approveLegalInfo = async (req, res) => {
 
         await updateLegalInfoStatus(id, legalUpdateData);
 
-        // ✅ ИСПРАВЛЕНО: Безопасное создание профиля с новыми полями
+        // ✅ БЕЗОПАСНОЕ СОЗДАНИЕ ПРОФИЛЯ с проверкой совместимости
         const request = legalInfo.partner_request_id;
         
-        console.log('🔍 CREATING PROFILE - Checking fields:', {
-            has_business_name: !!request.business_data?.business_name,
+        console.log('🔍 CREATING PROFILE - Data compatibility check:', {
+            request_id: request._id,
+            has_business_data: !!request.business_data,
             has_brand_name: !!request.business_data?.brand_name,
             has_floor_unit: !!request.business_data?.floor_unit,
-            has_category: !!request.business_data?.category
+            whatsapp_consent: request.marketing_consent?.whatsapp_consent
         });
+
+        // ✅ ИСПОЛЬЗУЕМ ФУНКЦИЮ НОРМАЛИЗАЦИИ ДЛЯ СОВМЕСТИМОСТИ
+        const normalizedData = partnerService.normalizePartnerData(request);
 
         const profileData = {
             user_id: legalInfo.user_id._id,
             
-            // ✅ ОБЯЗАТЕЛЬНЫЕ поля (всегда есть)
-            business_name: request.business_data?.business_name || 'Не указано',
-            category: request.business_data?.category || 'store',
-            description: request.business_data?.description || `Партнер ${request.business_data?.business_name || 'без названия'}`,
-            address: request.business_data?.address || '',
-            phone: request.business_data?.phone || '',
-            email: request.business_data?.email || '',
+            // ✅ НОРМАЛИЗОВАННЫЕ поля (работают со старыми и новыми данными)
+            business_name: normalizedData.business_name,
+            brand_name: normalizedData.brand_name,
+            category: normalizedData.category,
+            description: normalizedData.description,
+            address: normalizedData.address,
+            phone: normalizedData.phone,
+            email: normalizedData.email,
+            floor_unit: normalizedData.floor_unit,
+            location: normalizedData.location,
             
-            // ✅ НОВЫЕ поля (безопасное извлечение)
-            brand_name: request.business_data?.brand_name || request.business_data?.business_name || 'Не указано', // Fallback к business_name
-            floor_unit: request.business_data?.floor_unit || null, // Может отсутствовать
+            // Владелец (безопасное извлечение)
+            owner_name: request.business_data?.owner_name || 
+                       request.personal_data?.first_name || 'Не указано',
+            owner_surname: request.business_data?.owner_surname || 
+                          request.personal_data?.last_name || 'Не указано',
             
-            // Геолокация (безопасное извлечение)
-            location: request.business_data?.location || request.location || {
-                type: 'Point',
-                coordinates: [0, 0] // Default coordinates
-            },
-            
-            // Связи и статусы (логика не тронута)
+            // Связи и статусы
             legal_info_id: legalInfo._id,
             status: 'draft',
             content_status: 'awaiting_content',
             approval_status: 'awaiting_content',
-            is_active: false,
             is_approved: false,
+            is_active: false,
             is_public: false,
             
-            // Административные (логика не тронута)
+            // Административные
             created_by_admin: admin._id
         };
 
@@ -307,20 +315,17 @@ const approveLegalInfo = async (req, res) => {
             business_name: profileData.business_name,
             brand_name: profileData.brand_name,
             has_floor_unit: !!profileData.floor_unit,
-            category: profileData.category
+            category: profileData.category,
+            compatibility_used: true
         });
 
         const newProfile = await createPartnerProfile(profileData);
 
         console.log('✅ APPROVE LEGAL - Success:', {
             profile_id: newProfile._id,
-            has_new_fields: {
-                brand_name: !!newProfile.brand_name,
-                floor_unit: !!newProfile.floor_unit
-            }
+            data_normalized: true
         });
 
-        // ✅ ОТВЕТ ОБНОВЛЕН: Показываем новые поля
         res.status(200).json({
             result: true,
             message: "Юридические документы одобрены, профиль партнера создан",
@@ -332,9 +337,14 @@ const approveLegalInfo = async (req, res) => {
                 id: newProfile._id,
                 status: newProfile.status,
                 business_name: newProfile.business_name,
-                brand_name: newProfile.brand_name,      // 🆕 НОВОЕ ПОЛЕ
-                has_floor_unit: !!newProfile.floor_unit, // 🆕 НОВОЕ ПОЛЕ
+                brand_name: newProfile.brand_name,
+                has_floor_unit: !!newProfile.floor_unit,
                 category: newProfile.category
+            },
+            compatibility_info: {
+                data_normalized: true,
+                source: 'partner_request',
+                supports_new_fields: true
             },
             next_step: {
                 action: "fill_content",
@@ -671,6 +681,8 @@ const publishPartner = async (req, res) => {
         });
     }
 };
+
+
 
 export {
     approvePartnerRequest,

@@ -1,39 +1,33 @@
-// ================ middleware/adminAuth.middleware.js (ИСПРАВЛЕННЫЙ) ================
+// ================ middleware/adminAuth.middleware.js (ОПТИМИЗИРОВАННЫЙ) ================
 import jwt from "jsonwebtoken";
-import Meta from "../models/Meta.model.js";
 import { AdminUser } from "../models/index.js";
 
+/**
+ * ✅ ОПТИМИЗИРОВАННАЯ функция декодирования токена
+ */
 const decodeToken = async (token) => {
     try {
-        console.log('🔍 DECODING TOKEN...');
+        console.log('🔍 DECODING ADMIN TOKEN...');
         
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        console.log('🔍 DECODED TOKEN:', {
-            user_id: decoded.user_id,
-            role: decoded.role,
-            admin_role: decoded.admin_role,
-            email: decoded.email
-        });
-
         const { user_id, _id, role, admin_role } = decoded;
         const adminId = user_id || _id;
 
+        // Быстрая проверка роли
         if (role !== "admin") {
-            console.log('🚨 ROLE NOT ADMIN:', role);
             return { 
-                message: "Access denied! Role invalid!", 
+                message: "Access denied! Invalid role!", 
                 result: false, 
                 status: 403 
             };
         }
 
-        console.log('🔍 SEARCHING FOR ADMIN:', adminId);
+        console.log('🔍 SEARCHING FOR ADMIN:', { adminId, expected_role: admin_role });
 
-        // ✅ ИСПРАВЛЕНО: Ищем админа напрямую в AdminUser
-        const admin = await AdminUser.findById(adminId);
+        // ✅ ОПТИМИЗАЦИЯ: Прямой поиск в AdminUser без лишних запросов
+        const admin = await AdminUser.findById(adminId).select('-password_hash');
 
         if (!admin) {
-            console.log('🚨 ADMIN NOT FOUND');
             return { 
                 message: "Access denied! Admin not found!", 
                 result: false, 
@@ -41,15 +35,8 @@ const decodeToken = async (token) => {
             };
         }
 
-        console.log('✅ ADMIN FOUND:', {
-            id: admin._id,
-            email: admin.email,
-            role: admin.role,
-            is_active: admin.is_active
-        });
-
+        // ✅ РАСШИРЕННЫЕ ПРОВЕРКИ БЕЗОПАСНОСТИ
         if (!admin.is_active) {
-            console.log('🚨 ADMIN NOT ACTIVE');
             return {
                 message: "Access denied! Admin account is inactive!",
                 result: false,
@@ -57,8 +44,16 @@ const decodeToken = async (token) => {
             };
         }
 
+        if (admin.account_status !== 'active') {
+            return {
+                message: `Access denied! Account status: ${admin.account_status}`,
+                result: false,
+                status: 403
+            };
+        }
+
+        // Проверяем блокировку аккаунта
         if (admin.isSuspended && admin.isSuspended()) {
-            console.log('🚨 ADMIN SUSPENDED');
             return {
                 message: "Access denied! Admin account is suspended!",
                 result: false,
@@ -66,7 +61,31 @@ const decodeToken = async (token) => {
             };
         }
 
-        console.log('✅ ADMIN ACCESS APPROVED');
+        // ✅ НОВОЕ: Проверка времени сессии
+        const now = new Date();
+        const sessionTimeout = admin.security_settings?.session_timeout || 8; // часы
+        const lastActivity = admin.last_activity_at || admin.last_login_at;
+        
+        if (lastActivity) {
+            const sessionExpiry = new Date(lastActivity.getTime() + (sessionTimeout * 60 * 60 * 1000));
+            if (now > sessionExpiry) {
+                return {
+                    message: "Access denied! Session expired!",
+                    result: false,
+                    status: 401
+                };
+            }
+        }
+
+        // Обновляем активность
+        admin.last_activity_at = now;
+        await admin.save();
+
+        console.log('✅ ADMIN ACCESS APPROVED:', {
+            admin_id: admin._id,
+            role: admin.role,
+            session_valid: true
+        });
 
         return { 
             message: "Access approved!", 
@@ -88,15 +107,15 @@ const decodeToken = async (token) => {
     }
 };
 
+/**
+ * ✅ ОПТИМИЗИРОВАННАЯ базовая проверка токена админа
+ */
 const checkAdminToken = async (req, res, next) => {
     try {
         console.log('🔍 CHECK ADMIN TOKEN - START');
         
         const authHeader = req.headers["authorization"];
-        console.log('🔍 AUTH HEADER:', authHeader);
-        
         const token = authHeader?.split(" ")[1];
-        console.log('🔍 EXTRACTED TOKEN:', token ? 'Present' : 'Missing');
 
         if (!token) {
             console.log('🚨 NO TOKEN PROVIDED');
@@ -108,14 +127,14 @@ const checkAdminToken = async (req, res, next) => {
 
         const data = await decodeToken(token);
         if (!data.result) {
-            console.log('🚨 TOKEN DECODE FAILED:', data.message);
+            console.log('🚨 TOKEN VALIDATION FAILED:', data.message);
             return res.status(data.status).json({
                 message: data.message,
                 result: false
             });
         }
 
-        console.log('✅ TOKEN VERIFIED, SETTING REQ DATA');
+        console.log('✅ ADMIN TOKEN VERIFIED');
         req.admin = data.admin;
         req.admin_role = data.admin_role;
 
@@ -131,16 +150,22 @@ const checkAdminToken = async (req, res, next) => {
     }
 };
 
-const checkAccessByGroup = (adminRoles) => {
+/**
+ * ✅ ОПТИМИЗИРОВАННАЯ проверка доступа по группам ролей
+ */
+const checkAccessByGroup = (requiredRoles) => {
     return async (req, res, next) => {
         try {
-            console.log('🔍 CHECK ACCESS BY GROUP:', adminRoles);
+            console.log('🔍 CHECK ACCESS BY GROUP:', { 
+                required: requiredRoles,
+                endpoint: req.path,
+                method: req.method
+            });
             
             const authHeader = req.headers["authorization"];
             const token = authHeader?.split(" ")[1];
 
             if (!token) {
-                console.log('🚨 NO TOKEN IN ACCESS CHECK');
                 return res.status(401).json({ 
                     message: "Access denied! Token required!", 
                     result: false 
@@ -149,28 +174,50 @@ const checkAccessByGroup = (adminRoles) => {
 
             const data = await decodeToken(token);
             if (!data.result) {
-                console.log('🚨 TOKEN FAILED IN ACCESS CHECK');
                 return res.status(data.status).json({
                     message: data.message,
                     result: false
                 });
             }
 
-            console.log('🔍 CHECKING ROLE ACCESS:', {
-                required_roles: adminRoles,
-                user_role: data.admin_role,
-                has_access: adminRoles.includes(data.admin_role)
+            const userRole = data.admin_role;
+
+            console.log('🔍 ROLE ACCESS CHECK:', {
+                required_roles: requiredRoles,
+                user_role: userRole,
+                has_access: requiredRoles.includes(userRole)
             });
 
-            if (!adminRoles.includes(data.admin_role)) {
-                console.log('🚨 INSUFFICIENT ROLE PERMISSIONS');
+            // ✅ РАСШИРЕННАЯ проверка ролей
+            if (!requiredRoles.includes(userRole)) {
+                // Логируем попытку несанкционированного доступа
+                console.warn(`🚨 UNAUTHORIZED ACCESS ATTEMPT:`, {
+                    admin_id: data.admin._id,
+                    admin_email: data.admin.email,
+                    required_roles: requiredRoles,
+                    actual_role: userRole,
+                    endpoint: req.path,
+                    method: req.method,
+                    ip: req.ip,
+                    timestamp: new Date()
+                });
+
                 return res.status(403).json({ 
-                    message: `Access denied! Required roles: ${adminRoles.join(', ')}. Your role: ${data.admin_role}`, 
-                    result: false 
+                    message: `Access denied! Required roles: ${requiredRoles.join(', ')}. Your role: ${userRole}`, 
+                    result: false,
+                    security_info: {
+                        required_permissions: requiredRoles,
+                        current_role: userRole,
+                        upgrade_needed: true
+                    }
                 });
             }
 
-            console.log('✅ ACCESS GRANTED FOR ROLE:', data.admin_role);
+            console.log('✅ ACCESS GRANTED:', {
+                admin_role: userRole,
+                endpoint: req.path
+            });
+
             req.admin = data.admin;
             req.admin_role = data.admin_role;
 
@@ -187,4 +234,35 @@ const checkAccessByGroup = (adminRoles) => {
     };
 };
 
-export { checkAdminToken, checkAccessByGroup };
+/**
+ * ✅ НОВЫЙ MIDDLEWARE: Логирование действий админа
+ */
+const logAdminAction = (action_type) => {
+    return (req, res, next) => {
+        // Логируем действие админа
+        const logData = {
+            admin_id: req.admin?._id,
+            admin_role: req.admin_role,
+            action_type: action_type,
+            endpoint: req.path,
+            method: req.method,
+            ip: req.ip,
+            user_agent: req.get('User-Agent'),
+            timestamp: new Date(),
+            request_data: req.method === 'GET' ? req.query : req.body
+        };
+
+        console.log('📝 ADMIN ACTION LOG:', logData);
+
+        // В будущем можно сохранять в AdminLog модель
+        // await AdminLog.create(logData);
+
+        next();
+    };
+};
+
+export { 
+    checkAdminToken, 
+    checkAccessByGroup,
+    logAdminAction // 🆕 НОВЫЙ ЭКСПОРТ
+};

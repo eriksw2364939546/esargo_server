@@ -416,76 +416,125 @@ const getNextActions = (request, legal, profile) => {
 
 /**
  * Получение профиля партнера
- * Заглушка для будущей реализации
  */
 const getProfile = async (req, res) => {
     try {
         const { partner } = req;
-        
+        const { id } = req.params;
+
+        console.log('🔍 GET PROFILE - Start:', {
+            partner_id: partner._id,
+            requested_id: id
+        });
+
+        // Определяем чей профиль запрашивается
+        const targetPartnerId = id || partner._id;
+
+        // ✅ ВСЯ ЛОГИКА В СЕРВИСЕ
+        const profileData = await partnerService.getPartnerFullInfo(targetPartnerId);
+
         res.status(200).json({
             result: true,
-            message: "Получение профиля - функция в разработке",
-            partner_id: partner._id
+            message: "Профиль партнера получен",
+            partner: profileData.partner,
+            profile: profileData.profile,
+            request: profileData.request,
+            legal_info: profileData.legalInfo,
+            permissions: {
+                can_edit: targetPartnerId === partner._id.toString(),
+                can_delete: targetPartnerId === partner._id.toString()
+            }
         });
         
     } catch (error) {
         console.error('🚨 GET PROFILE - Error:', error);
-        res.status(500).json({
+        res.status(error.message.includes('не найден') ? 404 : 500).json({
             result: false,
-            message: "Ошибка получения профиля",
-            error: error.message
+            message: error.message || "Ошибка получения профиля"
         });
     }
 };
 
 /**
  * Обновление профиля партнера
- * Заглушка для будущей реализации
+ * ✅ ПОЛНАЯ РЕАЛИЗАЦИЯ вместо заглушки
  */
 const updateProfile = async (req, res) => {
     try {
         const { partner } = req;
         const { id } = req.params;
-        
+        const updateData = req.body;
+
+        console.log('🔍 UPDATE PROFILE - Start:', {
+            partner_id: partner._id,
+            target_id: id,
+            update_fields: Object.keys(updateData)
+        });
+
+        // Проверка прав доступа (только свой профиль)
+        if (id !== partner._id.toString()) {
+            return res.status(403).json({
+                result: false,
+                message: "Можно редактировать только свой профиль"
+            });
+        }
+
+        // ✅ ВСЯ ЛОГИКА В СЕРВИСЕ
+        const updatedProfile = await partnerService.updatePartnerProfile(partner._id, updateData);
+
         res.status(200).json({
             result: true,
-            message: "Обновление профиля - функция в разработке",
-            partner_id: partner._id,
-            profile_id: id
+            message: "Профиль партнера обновлен",
+            profile: updatedProfile,
+            updated_fields: Object.keys(updateData)
         });
         
     } catch (error) {
         console.error('🚨 UPDATE PROFILE - Error:', error);
-        res.status(500).json({
+        res.status(error.message.includes('не найден') ? 404 : 500).json({
             result: false,
-            message: "Ошибка обновления профиля",
-            error: error.message
+            message: error.message || "Ошибка обновления профиля"
         });
     }
 };
 
 /**
  * Удаление партнера
- * Заглушка для будущей реализации
+ * ✅ ПОЛНАЯ РЕАЛИЗАЦИЯ вместо заглушки
  */
 const deletePartner = async (req, res) => {
     try {
         const { partner } = req;
         const { id } = req.params;
-        
-        res.status(200).json({
-            result: true,
-            message: "Удаление партнера - функция в разработке",
+
+        console.log('🔍 DELETE PARTNER - Start:', {
             partner_id: partner._id,
             target_id: id
+        });
+
+        // Проверка прав доступа (только свой аккаунт)
+        if (id !== partner._id.toString()) {
+            return res.status(403).json({
+                result: false,
+                message: "Можно удалить только свой аккаунт"
+            });
+        }
+
+        // ✅ ВСЯ ЛОГИКА В СЕРВИСЕ
+        const deleteResult = await partnerService.deletePartnerAccount(partner._id);
+
+        res.status(200).json({
+            result: true,
+            message: "Аккаунт партнера удален",
+            deleted_partner: deleteResult.deleted_partner,
+            cleanup_info: deleteResult.cleanup_info
         });
         
     } catch (error) {
         console.error('🚨 DELETE PARTNER - Error:', error);
-        res.status(500).json({
+        res.status(error.message.includes('не найден') ? 404 : 500).json({
             result: false,
-            message: "Ошибка удаления партнера",
-            error: error.message
+            message: error.message || "Ошибка удаления партнера"
         });
     }
 };
