@@ -1,9 +1,13 @@
 // ================ controllers/PartnerController.js (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ) ================
 import { createPartnerAccount, loginPartner, checkPartnerExists } from '../services/Partner/partner.auth.service.js';
 import * as partnerService from '../services/Partner/partner.service.js';
+import { PartnerLegalInfo } from '../models/index.js';
+import { cryptoString } from '../utils/crypto.js';
+import mongoose from 'mongoose';
 
 /**
  * ЭТАП 1: Регистрация партнера
+ * ✅ ОБНОВЛЕНО: Добавлены поля из новой модели InitialPartnerRequest
  */
 const registerPartner = async (req, res) => {
     try {
@@ -13,21 +17,22 @@ const registerPartner = async (req, res) => {
             email: partnerData.email,
             business_name: partnerData.business_name,
             brand_name: partnerData.brand_name, // 🆕 НОВОЕ ПОЛЕ
-            category: partnerData.category
+            category: partnerData.category,
+            has_floor_unit: !!partnerData.floor_unit // 🆕 НОВОЕ ПОЛЕ
         });
 
-        // ✅ ОБНОВЛЕННАЯ валидация обязательных полей под скрин 1
+        // ✅ ОБНОВЛЕННАЯ валидация обязательных полей (точно по модели InitialPartnerRequest)
         const requiredFields = [
-            // Личные данные (как на скрине)
+            // Личные данные (personal_data)
             'first_name', 'last_name', 'email', 'password', 'confirm_password', 'phone',
             
-            // Бизнес данные (как на скрине)
+            // Бизнес данные (business_data) 
             'address', 'business_name', 'brand_name', 'category',
             
-            // Координаты (вместо объекта location)
+            // Координаты (для location)
             'latitude', 'longitude',
             
-            // WhatsApp согласие (как на скрине)
+            // WhatsApp согласие (marketing_consent.whatsapp_consent)
             'whatsapp_consent'
         ];
 
@@ -36,40 +41,60 @@ const registerPartner = async (req, res) => {
         if (missingFields.length > 0) {
             return res.status(400).json({
                 result: false,
-                message: `Обязательные поля по скрину 1: ${missingFields.join(', ')}`
+                message: `Обязательные поля из модели InitialPartnerRequest: ${missingFields.join(', ')}`
             });
         }
 
-        // ✅ НОВАЯ французская валидация телефона
+        // ✅ НОВАЯ французская валидация телефона (соответствует модели)
         const frenchPhoneRegex = /^(\+33|0)[1-9](\d{8})$/;
         const cleanPhone = partnerData.phone.replace(/\s/g, '');
         if (!frenchPhoneRegex.test(cleanPhone)) {
             return res.status(400).json({
                 result: false,
-                message: "Некорректный формат французского телефона",
-                examples: ["+33 1 42 34 56 78", "01 42 34 56 78"]
+                message: "Телефон должен быть французский формат",
+                expected_format: "+33 1 42 34 56 78 или 01 42 34 56 78"
             });
         }
 
-        // ✅ Валидация координат (вместо объекта location)
+        // ✅ Валидация координат (для поля location в модели)
         const latitude = parseFloat(partnerData.latitude);
         const longitude = parseFloat(partnerData.longitude);
         
-        if (isNaN(latitude) || isNaN(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        if (isNaN(latitude) || isNaN(longitude) || 
+            latitude < -90 || latitude > 90 || 
+            longitude < -180 || longitude > 180) {
             return res.status(400).json({
                 result: false,
                 message: "Некорректные координаты (latitude: -90 до 90, longitude: -180 до 180)"
             });
         }
 
-        // ✅ Валидация WhatsApp согласия
+        // ✅ Валидация WhatsApp согласия (соответствует marketing_consent.whatsapp_consent)
         if (typeof partnerData.whatsapp_consent !== 'boolean') {
             return res.status(400).json({
                 result: false,
-                message: "WhatsApp согласие должно быть true или false"
+                message: "whatsapp_consent должно быть true или false"
             });
         }
 
+        // ✅ Валидация brand_name (новое обязательное поле)
+        if (!partnerData.brand_name || partnerData.brand_name.trim().length === 0) {
+            return res.status(400).json({
+                result: false,
+                message: "brand_name обязательное поле из модели"
+            });
+        }
+
+        // floor_unit опциональное, но валидируем если есть
+        if (partnerData.floor_unit && typeof partnerData.floor_unit !== 'string') {
+            return res.status(400).json({
+                result: false,
+                message: "floor_unit должно быть строкой"
+            });
+        }
+
+        // ===== ВСЯ ОСТАЛЬНАЯ ЛОГИКА НЕ ТРОНУТА =====
+        
         // Проверка паролей (логика не тронута)
         if (partnerData.password !== partnerData.confirm_password) {
             return res.status(400).json({
@@ -96,7 +121,7 @@ const registerPartner = async (req, res) => {
             });
         }
 
-        // ✅ ОБНОВЛЕНО: Формируем объект location из координат для совместимости
+        // ✅ ФОРМИРУЕМ location объект из координат (для совместимости с сервисом)
         partnerData.location = {
             latitude: latitude,
             longitude: longitude
@@ -116,9 +141,9 @@ const registerPartner = async (req, res) => {
             });
         }
 
-        console.log('✅ REGISTER PARTNER - Success with token');
+        console.log('✅ REGISTER PARTNER - Success with new fields');
 
-        // ✅ ОТВЕТ ОБНОВЛЕН: Показываем новые поля
+        // ✅ ОТВЕТ ОБНОВЛЕН: Показываем новые поля из модели
         res.status(201).json({
             result: true,
             message: "Регистрация успешна! Вы получили токен доступа. Следующий шаг - ждите одобрения администратора.",
@@ -131,11 +156,15 @@ const registerPartner = async (req, res) => {
             business: {
                 id: result.partner.request._id,
                 business_name: result.partner.request.business_data.business_name,
-                brand_name: partnerData.brand_name, // 🆕 НОВОЕ ПОЛЕ в ответе
+                brand_name: partnerData.brand_name, // 🆕 НОВОЕ ПОЛЕ
                 category: result.partner.request.business_data.category,
                 status: result.partner.request.status,
-                has_floor_unit: !!partnerData.floor_unit, // 🆕 НОВОЕ ПОЛЕ
-                whatsapp_consent: partnerData.whatsapp_consent // 🆕 НОВОЕ ПОЛЕ
+                floor_unit: partnerData.floor_unit || null, // 🆕 НОВОЕ ПОЛЕ
+                whatsapp_consent: partnerData.whatsapp_consent, // 🆕 НОВОЕ ПОЛЕ
+                coordinates: {
+                    latitude: latitude,
+                    longitude: longitude
+                }
             },
             next_step: {
                 action: "wait_for_admin_approval",
@@ -463,25 +492,240 @@ const deletePartner = async (req, res) => {
 
 /**
  * Подача юридических документов
- * Заглушка для будущей реализации
+ * ✅ ПОЛНАЯ РЕАЛИЗАЦИЯ: Обработка всех полей модели PartnerLegalInfo
  */
 const submitLegalInfo = async (req, res) => {
     try {
         const { partner } = req;
         const { request_id } = req.params;
-        
-        res.status(200).json({
-            result: true,
-            message: "Подача юридических документов - функция в разработке",
+        const legalData = req.body;
+
+        console.log('🔍 SUBMIT LEGAL INFO - Start:', {
             partner_id: partner._id,
-            request_id: request_id
+            request_id: request_id,
+            has_legal_name: !!legalData.legal_name,
+            has_siret: !!legalData.siret_number,
+            legal_form: legalData.legal_form
         });
+
+        // ✅ ВАЛИДАЦИЯ ОБЯЗАТЕЛЬНЫХ ПОЛЕЙ (точно по модели PartnerLegalInfo)
+        const requiredFields = [
+            // 🏢 ЮРИДИЧЕСКИЕ ДАННЫЕ (legal_data)
+            'legal_name',           // "Название юридического лица"
+            'siret_number',         // "SIRET номер"
+            'legal_form',          // "Форма юридического лица"
+            'legal_address',       // "Юридический адрес (siège social)"
+            'legal_representative', // "Имя и фамилия юр. представителя"
+            
+            // 🏦 БАНКОВСКИЕ ДАННЫЕ (bank_details)
+            'iban',                // "IBAN"
+            'bic',                 // "BIC"
+            
+            // 📞 КОНТАКТНЫЕ ДАННЫЕ (legal_contact)
+            'legal_email',         // "Email юр. лица"
+            'legal_phone'          // "Телефон юр. лица"
+        ];
+
+        const missingFields = requiredFields.filter(field => !legalData[field]);
         
+        if (missingFields.length > 0) {
+            return res.status(400).json({
+                result: false,
+                message: `Обязательные поля из модели PartnerLegalInfo: ${missingFields.join(', ')}`
+            });
+        }
+
+        // ✅ ФРАНЦУЗСКИЕ ВАЛИДАЦИИ
+
+        // Валидация SIRET номера (14 цифр)
+        const cleanSiret = legalData.siret_number.replace(/\s/g, '');
+        const siretRegex = /^\d{14}$/;
+        if (!siretRegex.test(cleanSiret)) {
+            return res.status(400).json({
+                result: false,
+                message: "SIRET номер должен содержать 14 цифр",
+                example: "123 456 789 00014"
+            });
+        }
+
+        // Валидация французского IBAN
+        const cleanIban = legalData.iban.replace(/\s/g, '');
+        const frenchIbanRegex = /^FR\d{2}[A-Z0-9]{23}$/;
+        if (!frenchIbanRegex.test(cleanIban)) {
+            return res.status(400).json({
+                result: false,
+                message: "IBAN должен быть французским форматом",
+                example: "FR76 3000 6000 0112 3456 7890 189"
+            });
+        }
+
+        // Валидация TVA номера (опционально)
+        if (legalData.tva_number) {
+            const cleanTva = legalData.tva_number.replace(/\s/g, '');
+            const frenchTvaRegex = /^FR\d{11}$/;
+            if (!frenchTvaRegex.test(cleanTva)) {
+                return res.status(400).json({
+                    result: false,
+                    message: "TVA номер должен быть французским форматом",
+                    example: "FR12 345678912"
+                });
+            }
+        }
+
+        // Валидация формы юридического лица
+        const allowedLegalForms = [
+            'Auto-entrepreneur', 'SASU', 'SARL', 'SAS', 'EURL', 
+            'SA', 'SNC', 'SCI', 'SELARL', 'Micro-entreprise', 
+            'EI', 'EIRL', 'Autre'
+        ];
+        
+        if (!allowedLegalForms.includes(legalData.legal_form)) {
+            return res.status(400).json({
+                result: false,
+                message: "Недопустимая форма юридического лица",
+                allowed_forms: allowedLegalForms
+            });
+        }
+
+        // Валидация французского телефона для юр. лица
+        const frenchPhoneRegex = /^(\+33|0)[1-9](\d{8})$/;
+        const cleanLegalPhone = legalData.legal_phone.replace(/\s/g, '');
+        if (!frenchPhoneRegex.test(cleanLegalPhone)) {
+            return res.status(400).json({
+                result: false,
+                message: "Телефон юр. лица должен быть французским",
+                example: "+33 1 42 34 56 78"
+            });
+        }
+
+        // Валидация email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(legalData.legal_email)) {
+            return res.status(400).json({
+                result: false,
+                message: "Некорректный email юр. лица"
+            });
+        }
+
+        // ✅ ПРОВЕРЯЕМ ЗАЯВКУ ПАРТНЕРА
+        if (!mongoose.Types.ObjectId.isValid(request_id)) {
+            return res.status(400).json({
+                result: false,
+                message: "Некорректный ID заявки"
+            });
+        }
+
+        // Ищем заявку партнера
+        const partnerRequest = await InitialPartnerRequest.findOne({
+            _id: request_id,
+            user_id: partner._id
+        });
+
+        if (!partnerRequest) {
+            return res.status(404).json({
+                result: false,
+                message: "Заявка партнера не найдена"
+            });
+        }
+
+        // Проверяем статус заявки
+        if (partnerRequest.status !== 'approved') {
+            return res.status(400).json({
+                result: false,
+                message: "Заявка должна быть одобрена админом",
+                current_status: partnerRequest.status
+            });
+        }
+
+        // Проверяем не поданы ли уже документы
+        const existingLegal = await PartnerLegalInfo.findOne({
+            user_id: partner._id,
+            partner_request_id: request_id
+        });
+
+        if (existingLegal) {
+            return res.status(400).json({
+                result: false,
+                message: "Юридические документы уже поданы",
+                status: existingLegal.verification_status
+            });
+        }
+
+        // ✅ СОЗДАЕМ PartnerLegalInfo (точно по модели)
+        const newLegalInfo = new PartnerLegalInfo({
+            user_id: partner._id,
+            partner_request_id: request_id,
+            
+            // 🏢 ЮРИДИЧЕСКИЕ ДАННЫЕ (точно как в модели legal_data)
+            legal_data: {
+                legal_name: cryptoString(legalData.legal_name),                    // 🔐 ЗАШИФРОВАНО
+                siret_number: cryptoString(legalData.siret_number),                // 🔐 ЗАШИФРОВАНО
+                legal_form: legalData.legal_form,                                  // ✅ ОТКРЫТО
+                tva_number: legalData.tva_number ? cryptoString(legalData.tva_number) : null, // 🔐 ЗАШИФРОВАНО
+                legal_address: cryptoString(legalData.legal_address),              // 🔐 ЗАШИФРОВАНО
+                legal_representative: cryptoString(legalData.legal_representative) // 🔐 ЗАШИФРОВАНО
+            },
+            
+            // 🏦 БАНКОВСКИЕ ДАННЫЕ (точно как в модели bank_details)
+            bank_details: {
+                iban: cryptoString(legalData.iban), // 🔐 ЗАШИФРОВАНО
+                bic: cryptoString(legalData.bic)    // 🔐 ЗАШИФРОВАНО
+            },
+            
+            // 📞 КОНТАКТНЫЕ ДАННЫЕ (точно как в модели legal_contact)
+            legal_contact: {
+                email: cryptoString(legalData.legal_email), // 🔐 ЗАШИФРОВАНО
+                phone: cryptoString(legalData.legal_phone)  // 🔐 ЗАШИФРОВАНО
+            },
+            
+            // 📄 СТАТУС ВЕРИФИКАЦИИ
+            verification_status: 'pending',
+            
+            // 🛡️ ВАЛИДАЦИЯ (автоматическая проверка)
+            validation_info: {
+                siret_validated: siretRegex.test(cleanSiret),
+                iban_validated: frenchIbanRegex.test(cleanIban),
+                tva_status: legalData.tva_number ? 'pending' : 'not_applicable'
+            },
+            
+            // 📅 ВРЕМЕННЫЕ МЕТКИ
+            submitted_at: new Date(),
+            updated_at: new Date()
+        });
+
+        await newLegalInfo.save();
+
+        console.log('✅ SUBMIT LEGAL INFO - Success:', {
+            legal_info_id: newLegalInfo._id,
+            verification_status: newLegalInfo.verification_status
+        });
+
+        // ✅ УСПЕШНЫЙ ОТВЕТ
+        res.status(201).json({
+            result: true,
+            message: "Юридические документы успешно поданы",
+            legal_info: {
+                id: newLegalInfo._id,
+                status: newLegalInfo.verification_status,
+                legal_form: newLegalInfo.legal_data.legal_form,
+                validation: {
+                    siret_valid: newLegalInfo.validation_info.siret_validated,
+                    iban_valid: newLegalInfo.validation_info.iban_validated,
+                    tva_status: newLegalInfo.validation_info.tva_status
+                }
+            },
+            next_step: {
+                action: "wait_for_admin_verification",
+                description: "Документы отправлены на проверку администратору",
+                expected_time: "2-5 рабочих дней"
+            }
+        });
+
     } catch (error) {
         console.error('🚨 SUBMIT LEGAL INFO - Error:', error);
         res.status(500).json({
             result: false,
-            message: "Ошибка подачи документов",
+            message: "Ошибка при подаче документов",
             error: error.message
         });
     }

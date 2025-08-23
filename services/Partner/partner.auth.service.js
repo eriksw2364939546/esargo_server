@@ -13,29 +13,30 @@ import mongoose from 'mongoose';
 
 /**
  * Создание аккаунта партнера
- * ✅ ОБНОВЛЕНО: Теперь генерирует токен при регистрации
+ * ✅ ОБНОВЛЕНО: Создает InitialPartnerRequest с полями из новой модели
  */
 export const createPartnerAccount = async (partnerData) => {
     try {
         let { 
             first_name, last_name, email, password, phone,
-            business_name, category, address, location,
+            business_name, brand_name, category, address, floor_unit, // 🆕 НОВЫЕ ПОЛЯ
+            location, whatsapp_consent, // 🆕 НОВЫЕ ПОЛЯ
             registration_ip, user_agent
         } = partnerData;
 
-        // Нормализация email
+        // Нормализация email (логика не тронута)
         email = email.toLowerCase().trim();
 
-        // ✅ ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ТОЛЬКО ЧЕРЕЗ META
+        // ✅ ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ТОЛЬКО ЧЕРЕЗ META (логика не тронута)
         const existingMeta = await Meta.findByEmailAndRole(hashMeta(email), 'partner');
         if (existingMeta) {
             throw new Error('Партнер с таким email уже существует');
         }
 
-        // Хешируем пароль
+        // Хешируем пароль (логика не тронута)
         const hashedPassword = await hashString(password);
 
-        // Создаем пользователя с ЗАШИФРОВАННЫМ EMAIL
+        // Создаем пользователя с ЗАШИФРОВАННЫМ EMAIL (логика не тронута)
         const newUser = new User({
             email: cryptoString(email), // 🔐 ЗАШИФРОВАННЫЙ EMAIL
             password_hash: hashedPassword,
@@ -53,7 +54,7 @@ export const createPartnerAccount = async (partnerData) => {
 
         await newUser.save();
 
-        // Создаем Meta запись
+        // Создаем Meta запись (логика не тронута)
         const newMeta = new Meta({
             em: hashMeta(email), // ✅ ИСПРАВЛЕНО: используем правильное поле em
             role: 'partner',
@@ -68,85 +69,84 @@ export const createPartnerAccount = async (partnerData) => {
 
         await newMeta.save();
 
-        // Создаем заявку партнера
+        // ✅ СОЗДАЕМ InitialPartnerRequest ПО НОВОЙ МОДЕЛИ
         const partnerRequest = new InitialPartnerRequest({
             user_id: newUser._id,
             
-            // Персональные данные (зашифрованы)
+            // 👤 ЛИЧНЫЕ ДАННЫЕ (точно как в модели personal_data)
             personal_data: {
-                first_name: cryptoString(first_name),
-                last_name: cryptoString(last_name),
-                phone: cryptoString(phone),
-                email: cryptoString(email) // Зашифрованная копия
+                first_name: cryptoString(first_name), // 🔐 ЗАШИФРОВАНО
+                last_name: cryptoString(last_name),   // 🔐 ЗАШИФРОВАНО
+                email: cryptoString(email),           // 🔐 ЗАШИФРОВАНО
+                phone: cryptoString(phone)            // 🔐 ЗАШИФРОВАНО
             },
             
-            // Бизнес данные (микс открытого и зашифрованного)
+            // 🏪 БИЗНЕС ДАННЫЕ (точно как в модели business_data)
             business_data: {
-                // Открытые данные
-                business_name: business_name, // ✅ НЕ шифруем для поиска
-                category: category, // ✅ НЕ шифруем для фильтров
-                description: `${category === 'restaurant' ? 'Ресторан' : 'Магазин'} ${business_name}`,
+                // Адрес и этаж
+                address: cryptoString(address),                    // 🔐 ЗАШИФРОВАНО - "Адрес магазина"
+                floor_unit: floor_unit ? cryptoString(floor_unit) : null, // 🔐 ЗАШИФРОВАНО - "Этаж/люкс (по желанию)"
                 
-                // Владелец (имена не критичны)
-                owner_name: first_name,
-                owner_surname: last_name,
+                // Названия
+                business_name: business_name,  // ✅ ОТКРЫТО - "Название магазина"
+                brand_name: brand_name,        // ✅ ОТКРЫТО - "Название бренда" 🆕 НОВОЕ ПОЛЕ
                 
-                // Зашифрованные данные
-                address: cryptoString(address),
-                phone: cryptoString(phone),
-                email: cryptoString(email),
+                // Тип бизнеса
+                category: category,            // ✅ ОТКРЫТО - "Тип бизнеса" (restaurant/store)
                 
-                // Геолокация
+                // Геолокация (структура из модели)
                 location: {
                     type: 'Point',
                     coordinates: location?.longitude && location?.latitude ? 
                         [parseFloat(location.longitude), parseFloat(location.latitude)] : 
                         [0, 0] // Default coordinates if not provided
-                }
-            },
-            
-            // Геолокация на уровне заявки
-            location: {
-                coordinates: {
-                    type: 'Point',
-                    coordinates: location?.longitude && location?.latitude ? 
-                        [parseFloat(location.longitude), parseFloat(location.latitude)] : 
-                        [0, 0]
                 },
-                address: address
+                
+                // Владелец (для внутреннего использования)
+                owner_name: first_name,        // ✅ ОТКРЫТО
+                owner_surname: last_name       // ✅ ОТКРЫТО
             },
             
-            // Статус и workflow
+            // 📱 WHATSAPP СОГЛАСИЕ (точно как в модели marketing_consent)
+            marketing_consent: {
+                whatsapp_consent: Boolean(whatsapp_consent) // 🆕 ИСПРАВЛЕНО: правильное поле
+            },
+            
+            // 🎯 СТАТУС ЗАЯВКИ (логика не тронута)
             status: 'pending',
             workflow_stage: 1,
             
-            // Временные метки
-            submitted_at: new Date(),
-            updated_at: new Date(),
+            // ℹ️ ИНФОРМАЦИЯ О РАССМОТРЕНИИ (пустая при создании)
+            review_info: {
+                reviewed_by: null,
+                reviewed_at: null,
+                approved_at: null,
+                rejection_reason: null,
+                admin_notes: null
+            },
             
-            // Безопасность
+            // 🛡️ БЕЗОПАСНОСТЬ (обновлено под модель)
             security_info: {
                 registration_ip: registration_ip,
                 user_agent: user_agent,
-                email_verified: false,
-                phone_verified: false
+                country_code: 'FR',           // Соответствует французской системе
+                phone_country: 'FR'           // Соответствует выпадающему "FR" на скрине
             },
             
-            // Маркетинговые согласия
-            marketing_consent: {
-                whatsapp: partnerData.whatsapp_consent || false,
-                email_newsletter: false,
-                sms: false
-            }
+            // 📅 ВРЕМЕННЫЕ МЕТКИ (соответствуют модели)
+            submitted_at: new Date(),
+            updated_at: new Date()
         });
 
         await partnerRequest.save();
 
-        // 🆕 НОВОЕ: Генерируем токен при регистрации
+        // 🆕 ГЕНЕРИРУЕМ ТОКЕН (логика не тронута)
         console.log('🔍 GENERATING TOKEN FOR NEW PARTNER:', {
             user_id: newUser._id,
             role: newUser.role,
-            email_encrypted: !!newUser.email
+            has_brand_name: !!brand_name, // 🆕 ЛОГИРУЕМ НОВОЕ ПОЛЕ
+            has_floor_unit: !!floor_unit,  // 🆕 ЛОГИРУЕМ НОВОЕ ПОЛЕ
+            whatsapp_consent: whatsapp_consent // 🆕 ЛОГИРУЕМ НОВОЕ ПОЛЕ
         });
 
         const token = generateCustomerToken({
@@ -156,11 +156,12 @@ export const createPartnerAccount = async (partnerData) => {
             // 🔐 НЕ ВКЛЮЧАЕМ EMAIL в токен - он зашифрован
         }, '30d');
 
-        console.log('✅ TOKEN GENERATED FOR NEW PARTNER:', {
+        console.log('✅ TOKEN GENERATED FOR NEW PARTNER WITH NEW FIELDS:', {
             token_length: token ? token.length : 0,
             token_preview: token ? token.substring(0, 20) + '...' : null
         });
 
+        // Возвращаем результат (структура обновлена)
         return {
             isNewPartner: true,
             partner: {
@@ -169,7 +170,7 @@ export const createPartnerAccount = async (partnerData) => {
                 email: email, // ✅ Возвращаем оригинальный email для ответа
                 request: partnerRequest
             },
-            token: token // 🆕 НОВОЕ: Возвращаем токен
+            token: token // 🆕 Возвращаем токен
         };
 
     } catch (error) {

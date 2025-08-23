@@ -190,10 +190,7 @@ const rejectPartnerRequest = async (req, res) => {
     }
 };
 
-/**
- * 3. Одобрение юридических документов и создание профиля
- * POST /api/admin/partners/legal/:id/approve
- */
+
 const approveLegalInfo = async (req, res) => {
     try {
         const { id } = req.params;
@@ -205,7 +202,7 @@ const approveLegalInfo = async (req, res) => {
             admin_id: admin._id
         });
 
-        // Проверка прав
+        // Проверка прав (логика не тронута)
         if (!['manager', 'owner'].includes(admin.role)) {
             return res.status(403).json({
                 result: false,
@@ -220,7 +217,7 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        // Получаем юридические данные
+        // Получаем юридические данные (логика не тронута)
         const legalInfo = await PartnerLegalInfo.findById(id)
             .populate('user_id')
             .populate('partner_request_id');
@@ -232,7 +229,7 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        // Проверяем статус
+        // Проверяем статус (логика не тронута)
         if (legalInfo.verification_status !== 'pending') {
             return res.status(400).json({
                 result: false,
@@ -240,7 +237,7 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        // Проверяем не создан ли уже профиль
+        // Проверяем не создан ли уже профиль (логика не тронута)
         const existingProfile = await PartnerProfile.findOne({ 
             user_id: legalInfo.user_id._id 
         });
@@ -252,7 +249,7 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        // Обновляем статус документов
+        // Обновляем статус документов (логика не тронута)
         const legalUpdateData = {
             verification_status: 'verified',
             'verification_info.verified_by': admin._id,
@@ -262,33 +259,68 @@ const approveLegalInfo = async (req, res) => {
 
         await updateLegalInfoStatus(id, legalUpdateData);
 
-        // Создаем профиль партнера
+        // ✅ ИСПРАВЛЕНО: Безопасное создание профиля с новыми полями
         const request = legalInfo.partner_request_id;
+        
+        console.log('🔍 CREATING PROFILE - Checking fields:', {
+            has_business_name: !!request.business_data?.business_name,
+            has_brand_name: !!request.business_data?.brand_name,
+            has_floor_unit: !!request.business_data?.floor_unit,
+            has_category: !!request.business_data?.category
+        });
+
         const profileData = {
             user_id: legalInfo.user_id._id,
-            business_name: request.business_data.business_name,
-            brand_name: request.business_data.brand_name,
-            category: request.business_data.category,
-            description: request.business_data.description,
-            address: request.business_data.address,
-            location: request.location,
-            phone: request.business_data.phone,
-            email: request.business_data.email,
-            floor_unit: request.business_data.floor_unit,
+            
+            // ✅ ОБЯЗАТЕЛЬНЫЕ поля (всегда есть)
+            business_name: request.business_data?.business_name || 'Не указано',
+            category: request.business_data?.category || 'store',
+            description: request.business_data?.description || `Партнер ${request.business_data?.business_name || 'без названия'}`,
+            address: request.business_data?.address || '',
+            phone: request.business_data?.phone || '',
+            email: request.business_data?.email || '',
+            
+            // ✅ НОВЫЕ поля (безопасное извлечение)
+            brand_name: request.business_data?.brand_name || request.business_data?.business_name || 'Не указано', // Fallback к business_name
+            floor_unit: request.business_data?.floor_unit || null, // Может отсутствовать
+            
+            // Геолокация (безопасное извлечение)
+            location: request.business_data?.location || request.location || {
+                type: 'Point',
+                coordinates: [0, 0] // Default coordinates
+            },
+            
+            // Связи и статусы (логика не тронута)
             legal_info_id: legalInfo._id,
             status: 'draft',
+            content_status: 'awaiting_content',
+            approval_status: 'awaiting_content',
             is_active: false,
             is_approved: false,
             is_public: false,
+            
+            // Административные (логика не тронута)
             created_by_admin: admin._id
         };
+
+        console.log('✅ PROFILE DATA PREPARED:', {
+            business_name: profileData.business_name,
+            brand_name: profileData.brand_name,
+            has_floor_unit: !!profileData.floor_unit,
+            category: profileData.category
+        });
 
         const newProfile = await createPartnerProfile(profileData);
 
         console.log('✅ APPROVE LEGAL - Success:', {
-            profile_id: newProfile._id
+            profile_id: newProfile._id,
+            has_new_fields: {
+                brand_name: !!newProfile.brand_name,
+                floor_unit: !!newProfile.floor_unit
+            }
         });
 
+        // ✅ ОТВЕТ ОБНОВЛЕН: Показываем новые поля
         res.status(200).json({
             result: true,
             message: "Юридические документы одобрены, профиль партнера создан",
@@ -298,7 +330,11 @@ const approveLegalInfo = async (req, res) => {
             },
             profile: {
                 id: newProfile._id,
-                status: newProfile.status
+                status: newProfile.status,
+                business_name: newProfile.business_name,
+                brand_name: newProfile.brand_name,      // 🆕 НОВОЕ ПОЛЕ
+                has_floor_unit: !!newProfile.floor_unit, // 🆕 НОВОЕ ПОЛЕ
+                category: newProfile.category
             },
             next_step: {
                 action: "fill_content",
