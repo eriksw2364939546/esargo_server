@@ -4,7 +4,6 @@ import * as partnerService from '../services/Partner/partner.service.js';
 
 /**
  * ЭТАП 1: Регистрация партнера
- * ✅ ОБНОВЛЕНО: Теперь возвращает токен при успешной регистрации
  */
 const registerPartner = async (req, res) => {
     try {
@@ -13,13 +12,23 @@ const registerPartner = async (req, res) => {
         console.log('🔍 REGISTER PARTNER - Start:', {
             email: partnerData.email,
             business_name: partnerData.business_name,
+            brand_name: partnerData.brand_name, // 🆕 НОВОЕ ПОЛЕ
             category: partnerData.category
         });
 
-        // Простая валидация обязательных полей
+        // ✅ ОБНОВЛЕННАЯ валидация обязательных полей под скрин 1
         const requiredFields = [
-            'first_name', 'last_name', 'email', 'password', 'confirm_password',
-            'phone', 'business_name', 'category', 'address', 'location'
+            // Личные данные (как на скрине)
+            'first_name', 'last_name', 'email', 'password', 'confirm_password', 'phone',
+            
+            // Бизнес данные (как на скрине)
+            'address', 'business_name', 'brand_name', 'category',
+            
+            // Координаты (вместо объекта location)
+            'latitude', 'longitude',
+            
+            // WhatsApp согласие (как на скрине)
+            'whatsapp_consent'
         ];
 
         const missingFields = requiredFields.filter(field => !partnerData[field]);
@@ -27,11 +36,41 @@ const registerPartner = async (req, res) => {
         if (missingFields.length > 0) {
             return res.status(400).json({
                 result: false,
-                message: `Обязательные поля: ${missingFields.join(', ')}`
+                message: `Обязательные поля по скрину 1: ${missingFields.join(', ')}`
             });
         }
 
-        // Проверка паролей
+        // ✅ НОВАЯ французская валидация телефона
+        const frenchPhoneRegex = /^(\+33|0)[1-9](\d{8})$/;
+        const cleanPhone = partnerData.phone.replace(/\s/g, '');
+        if (!frenchPhoneRegex.test(cleanPhone)) {
+            return res.status(400).json({
+                result: false,
+                message: "Некорректный формат французского телефона",
+                examples: ["+33 1 42 34 56 78", "01 42 34 56 78"]
+            });
+        }
+
+        // ✅ Валидация координат (вместо объекта location)
+        const latitude = parseFloat(partnerData.latitude);
+        const longitude = parseFloat(partnerData.longitude);
+        
+        if (isNaN(latitude) || isNaN(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+            return res.status(400).json({
+                result: false,
+                message: "Некорректные координаты (latitude: -90 до 90, longitude: -180 до 180)"
+            });
+        }
+
+        // ✅ Валидация WhatsApp согласия
+        if (typeof partnerData.whatsapp_consent !== 'boolean') {
+            return res.status(400).json({
+                result: false,
+                message: "WhatsApp согласие должно быть true или false"
+            });
+        }
+
+        // Проверка паролей (логика не тронута)
         if (partnerData.password !== partnerData.confirm_password) {
             return res.status(400).json({
                 result: false,
@@ -39,7 +78,7 @@ const registerPartner = async (req, res) => {
             });
         }
 
-        // Проверка категории
+        // Проверка категории (логика не тронута)
         if (!['restaurant', 'store'].includes(partnerData.category)) {
             return res.status(400).json({
                 result: false,
@@ -47,7 +86,7 @@ const registerPartner = async (req, res) => {
             });
         }
 
-        // Проверяем существование через сервис
+        // Проверяем существование через сервис (логика не тронута)
         const exists = await checkPartnerExists(partnerData.email);
         
         if (exists) {
@@ -57,11 +96,17 @@ const registerPartner = async (req, res) => {
             });
         }
 
-        // Добавляем метаданные
+        // ✅ ОБНОВЛЕНО: Формируем объект location из координат для совместимости
+        partnerData.location = {
+            latitude: latitude,
+            longitude: longitude
+        };
+
+        // Добавляем метаданные (логика не тронута)
         partnerData.registration_ip = req.ip;
         partnerData.user_agent = req.get('User-Agent');
 
-        // ✅ ВСЯ ЛОГИКА В СЕРВИСЕ
+        // ✅ ВСЯ ЛОГИКА В СЕРВИСЕ (не тронута)
         const result = await createPartnerAccount(partnerData);
 
         if (!result.isNewPartner) {
@@ -73,20 +118,24 @@ const registerPartner = async (req, res) => {
 
         console.log('✅ REGISTER PARTNER - Success with token');
 
-        // ✅ ОБНОВЛЕНО: Возвращаем токен при регистрации
+        // ✅ ОТВЕТ ОБНОВЛЕН: Показываем новые поля
         res.status(201).json({
             result: true,
             message: "Регистрация успешна! Вы получили токен доступа. Следующий шаг - ждите одобрения администратора.",
-            token: result.token, // 🆕 НОВОЕ: Токен при регистрации
+            token: result.token,
             user: {
                 id: result.partner.id,
                 email: result.partner.email,
                 role: result.partner.role
             },
-            request: {
+            business: {
                 id: result.partner.request._id,
+                business_name: result.partner.request.business_data.business_name,
+                brand_name: partnerData.brand_name, // 🆕 НОВОЕ ПОЛЕ в ответе
+                category: result.partner.request.business_data.category,
                 status: result.partner.request.status,
-                business_name: result.partner.request.business_data.business_name
+                has_floor_unit: !!partnerData.floor_unit, // 🆕 НОВОЕ ПОЛЕ
+                whatsapp_consent: partnerData.whatsapp_consent // 🆕 НОВОЕ ПОЛЕ
             },
             next_step: {
                 action: "wait_for_admin_approval",
