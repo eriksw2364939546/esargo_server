@@ -1,9 +1,9 @@
-// ================ middleware/adminAuth.middleware.js (ОПТИМИЗИРОВАННЫЙ) ================
+// ================ middleware/adminAuth.middleware.js (ИСПРАВЛЕННЫЙ) ================
 import jwt from "jsonwebtoken";
 import { AdminUser } from "../models/index.js";
 
 /**
- * ✅ ОПТИМИЗИРОВАННАЯ функция декодирования токена
+ * ✅ ИСПРАВЛЕННАЯ функция декодирования токена
  */
 const decodeToken = async (token) => {
     try {
@@ -13,8 +13,16 @@ const decodeToken = async (token) => {
         const { user_id, _id, role, admin_role } = decoded;
         const adminId = user_id || _id;
 
+        console.log('🔍 DECODED TOKEN DATA:', { 
+            adminId, 
+            role, 
+            admin_role,
+            token_type: decoded.type 
+        });
+
         // Быстрая проверка роли
         if (role !== "admin") {
+            console.log('❌ INVALID ROLE:', role);
             return { 
                 message: "Access denied! Invalid role!", 
                 result: false, 
@@ -28,6 +36,7 @@ const decodeToken = async (token) => {
         const admin = await AdminUser.findById(adminId).select('-password_hash');
 
         if (!admin) {
+            console.log('❌ ADMIN NOT FOUND:', adminId);
             return { 
                 message: "Access denied! Admin not found!", 
                 result: false, 
@@ -35,8 +44,17 @@ const decodeToken = async (token) => {
             };
         }
 
-        // ✅ РАСШИРЕННЫЕ ПРОВЕРКИ БЕЗОПАСНОСТИ
+        console.log('🔍 ADMIN FOUND:', {
+            admin_id: admin._id,
+            email: admin.email,
+            role: admin.role,
+            is_active: admin.is_active,
+            is_suspended: admin.suspension?.is_suspended
+        });
+
+        // ✅ ИСПРАВЛЕНО: Проверяем is_active вместо account_status
         if (!admin.is_active) {
+            console.log('❌ ADMIN ACCOUNT INACTIVE');
             return {
                 message: "Access denied! Admin account is inactive!",
                 result: false,
@@ -44,31 +62,38 @@ const decodeToken = async (token) => {
             };
         }
 
-        if (admin.account_status !== 'active') {
-            return {
-                message: `Access denied! Account status: ${admin.account_status}`,
-                result: false,
-                status: 403
-            };
+        // ✅ ИСПРАВЛЕНО: Правильная проверка приостановки
+        if (admin.suspension && admin.suspension.is_suspended) {
+            const now = new Date();
+            const suspendedUntil = admin.suspension.suspended_until;
+            
+            // Если есть дата окончания приостановки и она прошла
+            if (suspendedUntil && now > suspendedUntil) {
+                // Автоматически снимаем приостановку
+                admin.suspension.is_suspended = false;
+                admin.suspension.suspended_until = undefined;
+                await admin.save();
+                console.log('✅ AUTO-UNSUSPENDED ADMIN:', admin._id);
+            } else {
+                console.log('❌ ADMIN ACCOUNT SUSPENDED');
+                return {
+                    message: "Access denied! Admin account is suspended!",
+                    result: false,
+                    status: 403
+                };
+            }
         }
 
-        // Проверяем блокировку аккаунта
-        if (admin.isSuspended && admin.isSuspended()) {
-            return {
-                message: "Access denied! Admin account is suspended!",
-                result: false,
-                status: 403
-            };
-        }
-
-        // ✅ НОВОЕ: Проверка времени сессии
+        // ✅ УПРОЩЕНА: Проверка времени сессии (опционально)
         const now = new Date();
-        const sessionTimeout = admin.security_settings?.session_timeout || 8; // часы
         const lastActivity = admin.last_activity_at || admin.last_login_at;
         
         if (lastActivity) {
+            const sessionTimeout = 8; // 8 часов по умолчанию
             const sessionExpiry = new Date(lastActivity.getTime() + (sessionTimeout * 60 * 60 * 1000));
+            
             if (now > sessionExpiry) {
+                console.log('⏰ SESSION EXPIRED for admin:', admin._id);
                 return {
                     message: "Access denied! Session expired!",
                     result: false,
@@ -77,14 +102,19 @@ const decodeToken = async (token) => {
             }
         }
 
-        // Обновляем активность
-        admin.last_activity_at = now;
-        await admin.save();
+        // ✅ УПРОЩЕНО: Обновляем активность без блокирования
+        try {
+            admin.last_activity_at = now;
+            await admin.save();
+        } catch (updateError) {
+            console.warn('⚠️ Could not update admin activity:', updateError.message);
+            // Не блокируем запрос из-за ошибки обновления
+        }
 
         console.log('✅ ADMIN ACCESS APPROVED:', {
             admin_id: admin._id,
             role: admin.role,
-            session_valid: true
+            is_active: admin.is_active
         });
 
         return { 
@@ -108,7 +138,7 @@ const decodeToken = async (token) => {
 };
 
 /**
- * ✅ ОПТИМИЗИРОВАННАЯ базовая проверка токена админа
+ * ✅ ИСПРАВЛЕННАЯ базовая проверка токена админа
  */
 const checkAdminToken = async (req, res, next) => {
     try {
@@ -151,7 +181,7 @@ const checkAdminToken = async (req, res, next) => {
 };
 
 /**
- * ✅ ОПТИМИЗИРОВАННАЯ проверка доступа по группам ролей
+ * ✅ ИСПРАВЛЕННАЯ проверка доступа по группам ролей
  */
 const checkAccessByGroup = (requiredRoles) => {
     return async (req, res, next) => {
@@ -188,7 +218,7 @@ const checkAccessByGroup = (requiredRoles) => {
                 has_access: requiredRoles.includes(userRole)
             });
 
-            // ✅ РАСШИРЕННАЯ проверка ролей
+            // ✅ ПРОВЕРКА ролей
             if (!requiredRoles.includes(userRole)) {
                 // Логируем попытку несанкционированного доступа
                 console.warn(`🚨 UNAUTHORIZED ACCESS ATTEMPT:`, {
@@ -235,34 +265,53 @@ const checkAccessByGroup = (requiredRoles) => {
 };
 
 /**
- * ✅ НОВЫЙ MIDDLEWARE: Логирование действий админа
+ * ✅ НОВЫЙ: Простая проверка для debugging
  */
-const logAdminAction = (action_type) => {
-    return (req, res, next) => {
-        // Логируем действие админа
-        const logData = {
-            admin_id: req.admin?._id,
-            admin_role: req.admin_role,
-            action_type: action_type,
-            endpoint: req.path,
-            method: req.method,
-            ip: req.ip,
-            user_agent: req.get('User-Agent'),
-            timestamp: new Date(),
-            request_data: req.method === 'GET' ? req.query : req.body
-        };
+const debugAdminAuth = async (req, res, next) => {
+    try {
+        const authHeader = req.headers["authorization"];
+        const token = authHeader?.split(" ")[1];
+        
+        console.log('🐛 DEBUG ADMIN AUTH:', {
+            has_auth_header: !!authHeader,
+            has_token: !!token,
+            token_length: token ? token.length : 0,
+            token_preview: token ? token.substring(0, 20) + '...' : 'none'
+        });
 
-        console.log('📝 ADMIN ACTION LOG:', logData);
-
-        // В будущем можно сохранять в AdminLog модель
-        // await AdminLog.create(logData);
+        if (token) {
+            try {
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                console.log('🐛 DECODED TOKEN:', {
+                    user_id: decoded.user_id || decoded._id,
+                    role: decoded.role,
+                    admin_role: decoded.admin_role,
+                    exp: new Date(decoded.exp * 1000)
+                });
+                
+                const admin = await AdminUser.findById(decoded.user_id || decoded._id);
+                console.log('🐛 ADMIN FROM DB:', {
+                    found: !!admin,
+                    id: admin?._id,
+                    email: admin?.email,
+                    role: admin?.role,
+                    is_active: admin?.is_active,
+                    suspended: admin?.suspension?.is_suspended
+                });
+            } catch (debugError) {
+                console.log('🐛 TOKEN DECODE ERROR:', debugError.message);
+            }
+        }
 
         next();
-    };
+    } catch (error) {
+        console.error('🐛 DEBUG ERROR:', error);
+        next();
+    }
 };
 
 export { 
     checkAdminToken, 
     checkAccessByGroup,
-    logAdminAction // 🆕 НОВЫЙ ЭКСПОРТ
+    debugAdminAuth // 🆕 Для debugging
 };

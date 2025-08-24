@@ -5,6 +5,47 @@ import jwt from 'jsonwebtoken';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 /**
+ * ✅ НОВАЯ функция генерации админского токена
+ * @param {object} admin - Объект администратора
+ * @param {string} expiresIn - Время жизни токена
+ * @returns {string} - JWT токен
+ */
+export const generateAdminToken = (admin, expiresIn = '8h') => {
+  console.log('🔍 GENERATING ADMIN TOKEN:', {
+    admin_provided: !!admin,
+    admin_id: admin ? admin._id : null,
+    admin_email: admin ? admin.email : null,
+    admin_role: admin ? admin.role : null,
+    expires_in: expiresIn
+  });
+
+  // ✅ ИСПРАВЛЕННАЯ структура payload для админа
+  const payload = {
+    user_id: admin._id,
+    _id: admin._id, // Дублируем для совместимости
+    email: admin.email,
+    role: 'admin', // ✅ Основная роль
+    admin_role: admin.role, // ✅ Админская роль (manager, owner, etc)
+    type: 'admin_access_token',
+    full_name: admin.full_name,
+    department: admin.contact_info?.department
+  };
+
+  console.log('🔍 ADMIN TOKEN PAYLOAD PREPARED:', payload);
+
+  const token = generateJWTToken(payload, expiresIn);
+  
+  console.log('✅ ADMIN TOKEN GENERATED:', {
+    success: !!token,
+    token_length: token ? token.length : 0,
+    token_preview: token ? token.substring(0, 20) + '...' : null
+  });
+
+  return token;
+};
+
+
+/**
  * Генерация JWT токена
  * @param {object} payload - Данные для токена
  * @param {string} expiresIn - Время жизни токена (по умолчанию 3d)
@@ -69,34 +110,50 @@ export const verifyJWTToken = (token) => {
 };
 
 /**
- * Генерация токена для клиента
- * @param {object} user - Объект пользователя
- * @param {string} expiresIn - Время жизни токена
- * @returns {string} - JWT токен
+ * ✅ ОБНОВЛЕННАЯ универсальная функция (сохраняем для совместимости)
  */
 export const generateCustomerToken = (user, expiresIn = '30d') => {
-  console.log('🔍 GENERATING CUSTOMER TOKEN:', {
+  console.log('🔍 GENERATING UNIVERSAL TOKEN:', {
     user_provided: !!user,
     user_id: user ? (user._id || user.user_id) : null,
     email: user ? user.email : null,
     role: user ? user.role : null,
+    admin_role: user ? user.admin_role : null, // ✅ Добавлено для админов
     expires_in: expiresIn
   });
 
-  const payload = {
-    user_id: user._id || user.user_id,
-    email: user.email,
-    role: user.role || 'customer',
-    type: 'access_token'
-  };
+  // ✅ ИСПРАВЛЕНО: Различная логика для админов и обычных пользователей
+  let payload;
+  
+  if (user.role === 'admin' || user.admin_role) {
+    // Админский токен
+    payload = {
+      user_id: user._id || user.user_id,
+      _id: user._id || user.user_id,
+      email: user.email,
+      role: 'admin',
+      admin_role: user.admin_role || user.role,
+      type: 'admin_access_token',
+      full_name: user.full_name
+    };
+  } else {
+    // Обычный пользователь (customer/partner)
+    payload = {
+      user_id: user._id || user.user_id,
+      email: user.email,
+      role: user.role || 'customer',
+      type: 'access_token'
+    };
+  }
 
-  console.log('🔍 TOKEN PAYLOAD PREPARED:', payload);
+  console.log('🔍 UNIVERSAL TOKEN PAYLOAD PREPARED:', payload);
 
   const token = generateJWTToken(payload, expiresIn);
   
-  console.log('✅ CUSTOMER TOKEN GENERATED:', {
+  console.log('✅ UNIVERSAL TOKEN GENERATED:', {
     success: !!token,
-    token_length: token ? token.length : 0
+    token_length: token ? token.length : 0,
+    is_admin: payload.role === 'admin'
   });
 
   return token;
@@ -146,3 +203,4 @@ export const decodeToken = (token) => {
     return null;
   }
 };
+

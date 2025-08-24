@@ -2,7 +2,7 @@
 import { AdminUser } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import { hashString, hashMeta } from '../utils/hash.js';
-import { generateCustomerToken } from './token.service.js';
+import { generateAdminToken } from './token.service.js';
 
  const createAdminAccount = async (adminData) => {
     try {
@@ -197,7 +197,7 @@ import { generateCustomerToken } from './token.service.js';
 
         console.log('🔍 LOGIN ADMIN - Генерация токена...');
 
-        const token = generateCustomerToken({
+        const token = generateAdminToken({   
             _id: metaInfo.admin._id,
             email: metaInfo.admin.email,
             role: 'admin',
