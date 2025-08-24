@@ -8,6 +8,7 @@ import {
     getPartnerRequests,
     getPartnerRequestDetails
 } from '../services/Partner/admin.partner.service.js';
+import * as partnerService from '../services/Partner/partner.service.js';
 import { decryptString } from '../utils/crypto.js';
 import mongoose from 'mongoose';
 

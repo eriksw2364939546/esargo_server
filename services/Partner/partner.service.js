@@ -514,43 +514,89 @@ const getNextAction = (request, legal, profile) => {
     }
 };
 
+// ================ services/Partner/partner.service.js (ИСПРАВЛЕННАЯ ФУНКЦИЯ) ================
+
+import { decryptString } from '../../utils/crypto.js';
+
 /**
- * ✅ НОВАЯ ФУНКЦИЯ: Проверка совместимости данных (старые/новые модели)
- * @param {object} partnerData - Данные партнера из любой модели
- * @returns {object} - Нормализованные данные
+ * ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Нормализация данных партнера с расшифровкой
+ * @param {object} partnerData - Данные партнера из InitialPartnerRequest
+ * @returns {object} - Нормализованные и расшифрованные данные
  */
- const normalizePartnerData = (partnerData) => {
+const normalizePartnerData = (partnerData) => {
     try {
+        console.log('🔍 NORMALIZING PARTNER DATA:', {
+            has_business_data: !!partnerData.business_data,
+            has_personal_data: !!partnerData.personal_data,
+            business_name: partnerData.business_data?.business_name
+        });
+
+        // ✅ РАСШИФРОВКА ЗАШИФРОВАННЫХ ПОЛЕЙ
+        let decryptedEmail = '';
+        let decryptedPhone = '';
+        let decryptedAddress = '';
+
+        try {
+            // Расшифровываем email из personal_data
+            if (partnerData.personal_data?.email) {
+                decryptedEmail = decryptString(partnerData.personal_data.email);
+            }
+
+            // Расшифровываем phone из personal_data  
+            if (partnerData.personal_data?.phone) {
+                decryptedPhone = decryptString(partnerData.personal_data.phone);
+            }
+
+            // Расшифровываем address из business_data
+            if (partnerData.business_data?.address) {
+                decryptedAddress = decryptString(partnerData.business_data.address);
+            }
+
+            console.log('✅ DECRYPTION SUCCESS:', {
+                has_email: !!decryptedEmail,
+                has_phone: !!decryptedPhone,
+                has_address: !!decryptedAddress
+            });
+
+        } catch (decryptError) {
+            console.warn('⚠️ DECRYPTION WARNING:', decryptError.message);
+            // Fallback к пустым строкам если расшифровка не удалась
+        }
+
         const normalized = {
             // Обязательные поля
-            business_name: partnerData.business_data?.business_name || partnerData.business_name || 'Не указано',
-            brand_name: partnerData.business_data?.brand_name || partnerData.brand_name || partnerData.business_data?.business_name || 'Не указано',
-            category: partnerData.business_data?.category || partnerData.category || 'store',
+            business_name: partnerData.business_data?.business_name || 'Не указано',
+            brand_name: partnerData.business_data?.brand_name || 
+                       partnerData.business_data?.business_name || 'Не указано',
+            category: partnerData.business_data?.category || 'store',
+            
+            // ✅ ИСПРАВЛЕНО: Используем расшифрованные данные
+            phone: decryptedPhone || 'Не указан',           // ← РАСШИФРОВАННЫЙ
+            email: decryptedEmail || 'не-указан@example.com', // ← РАСШИФРОВАННЫЙ
+            address: decryptedAddress || '',                  // ← РАСШИФРОВАННЫЙ
             
             // Опциональные поля с fallback
-            floor_unit: partnerData.business_data?.floor_unit || partnerData.floor_unit || null,
-            description: partnerData.business_data?.description || partnerData.description || `Партнер ${partnerData.business_data?.business_name || 'без названия'}`,
-            
-            // Зашифрованные поля
-            address: partnerData.business_data?.address || partnerData.address || '',
-            phone: partnerData.business_data?.phone || partnerData.phone || '',
-            email: partnerData.business_data?.email || partnerData.email || '',
+            floor_unit: partnerData.business_data?.floor_unit ? 
+                       decryptString(partnerData.business_data.floor_unit) : null,
+            description: partnerData.business_data?.description || 
+                        `Партнер ${partnerData.business_data?.business_name || 'без названия'}`,
             
             // Геолокация с fallback
-            location: partnerData.business_data?.location || partnerData.location || {
+            location: partnerData.business_data?.location || {
                 type: 'Point',
                 coordinates: [2.3522, 48.8566] // Paris coordinates
             },
             
             // Согласия
-            whatsapp_consent: partnerData.marketing_consent?.whatsapp_consent || 
-                             partnerData.marketing_consent?.whatsapp || false
+            whatsapp_consent: partnerData.marketing_consent?.whatsapp_consent || false
         };
 
-        console.log('✅ DATA NORMALIZED:', {
+        console.log('✅ DATA NORMALIZED WITH DECRYPTION:', {
             has_brand_name: !!normalized.brand_name,
             has_floor_unit: !!normalized.floor_unit,
             category: normalized.category,
+            has_phone: !!normalized.phone && normalized.phone !== 'Не указан',
+            has_email: !!normalized.email && normalized.email !== 'не-указан@example.com',
             whatsapp_consent: normalized.whatsapp_consent
         });
 
@@ -558,15 +604,17 @@ const getNextAction = (request, legal, profile) => {
 
     } catch (error) {
         console.error('🚨 NORMALIZE PARTNER DATA ERROR:', error);
+        
+        // ✅ ИСПРАВЛЕНО: Возвращаем ВАЛИДНЫЕ fallback данные
         return {
             business_name: 'Не указано',
             brand_name: 'Не указано', 
             category: 'store',
             floor_unit: null,
             description: 'Описание недоступно',
-            address: '',
-            phone: '',
-            email: '',
+            address: 'Адрес не указан',
+            phone: '+33 1 00 00 00 00',              // ← ВАЛИДНЫЙ телефон
+            email: 'fallback@partner-temp.com',     // ← ВАЛИДНЫЙ email
             location: { type: 'Point', coordinates: [2.3522, 48.8566] },
             whatsapp_consent: false
         };

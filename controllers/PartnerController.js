@@ -1,7 +1,7 @@
 // ================ controllers/PartnerController.js (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ) ================
 import { createPartnerAccount, loginPartner, checkPartnerExists } from '../services/Partner/partner.auth.service.js';
 import * as partnerService from '../services/Partner/partner.service.js';
-import { PartnerLegalInfo } from '../models/index.js';
+import { PartnerLegalInfo, InitialPartnerRequest  } from '../models/index.js';
 import { cryptoString } from '../utils/crypto.js';
 import mongoose from 'mongoose';
 
