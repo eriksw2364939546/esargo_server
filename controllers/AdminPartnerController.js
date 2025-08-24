@@ -300,13 +300,13 @@ const approveLegalInfo = async (req, res) => {
                           request.personal_data?.last_name || 'Не указано',
             
             // Связи и статусы
-            legal_info_id: legalInfo._id,
-            status: 'draft',
-            content_status: 'awaiting_content',
-            approval_status: 'awaiting_content',
-            is_approved: false,
-            is_active: false,
-            is_public: false,
+              legal_info_id: legalInfo._id,
+              status: 'draft',
+              content_status: 'awaiting_content', 
+              approval_status: 'content_approved',  // ✅ ИСПРАВЛЕНО
+              is_approved: true,                    // ✅ ИСПРАВЛЕНО - разрешаем работу с меню
+              is_active: false,                     // Пока не активен публично
+              is_public: false, 
             
             // Административные
             created_by_admin: admin._id
