@@ -9,6 +9,7 @@ import mongoose from 'mongoose';
  * ЭТАП 1: Регистрация партнера
  * ✅ ПОЛНОСТЬЮ ИСПРАВЛЕНО: Завершена валидация телефона и создание location
  */
+
 const registerPartner = async (req, res) => {
     try {
         const partnerData = req.body;
@@ -27,7 +28,7 @@ const registerPartner = async (req, res) => {
             coordinates: { latitude, longitude }
         });
 
-        // ✅ ЗАВЕРШЕННАЯ валидация обязательных полей
+        // ✅ Валидация обязательных полей
         const requiredFields = [
             'first_name', 'last_name', 'email', 'password', 'confirm_password', 'phone',
             'address', 'business_name', 'brand_name', 'category',
@@ -43,9 +44,9 @@ const registerPartner = async (req, res) => {
             });
         }
 
-        // ✅ ИСПРАВЛЕНО: Завершенная валидация французского телефона
+        // ✅ Валидация французского телефона
         const frenchPhoneRegex = /^(\+33|0)[1-9](\d{8})$/;
-        const cleanPhone = phone.replace(/\s+/g, ''); // Убираем все пробелы
+        const cleanPhone = phone.replace(/\s+/g, '');
         
         if (!frenchPhoneRegex.test(cleanPhone)) {
             return res.status(400).json({
@@ -80,7 +81,23 @@ const registerPartner = async (req, res) => {
         if (!emailRegex.test(email)) {
             return res.status(400).json({
                 result: false,
-                message: "Некорректный формат email"
+                message: "Некорректный email"
+            });
+        }
+
+        // Валидация геолокации (должна быть во Франции)
+        if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+            return res.status(400).json({
+                result: false,
+                message: "Координаты должны быть числовыми значениями"
+            });
+        }
+
+        // Проверка координат Франции (приблизительно)
+        if (latitude < 41.0 || latitude > 51.5 || longitude < -5.5 || longitude > 9.6) {
+            return res.status(400).json({
+                result: false,
+                message: "Геолокация должна быть на территории Франции"
             });
         }
 
@@ -92,113 +109,89 @@ const registerPartner = async (req, res) => {
             });
         }
 
-        // ✅ ИСПРАВЛЕНО: Завершенная валидация координат и создание location
-        const lat = parseFloat(latitude);
-        const lng = parseFloat(longitude);
-        
-        if (isNaN(lat) || isNaN(lng)) {
-            return res.status(400).json({
-                result: false,
-                message: "Координаты должны быть числовыми значениями"
-            });
-        }
+        // ✅ ИСПРАВЛЕНО: Правильная подготовка данных для сервиса
+        const serviceData = {
+            // Личные данные
+            first_name,
+            last_name, 
+            email,
+            password,
+            phone: cleanPhone, // Очищенный телефон
 
-        // Проверка диапазона координат для Франции
-        if (lat < 41.0 || lat > 51.5 || lng < -5.5 || lng > 10.0) {
-            return res.status(400).json({
-                result: false,
-                message: "Координаты должны находиться в пределах Франции",
-                provided_coordinates: { latitude: lat, longitude: lng },
-                france_bounds: {
-                    latitude: "41.0 - 51.5",
-                    longitude: "-5.5 - 10.0"
-                }
-            });
-        }
+            // Бизнес данные
+            business_name,
+            brand_name,
+            category,
+            address,
+            floor_unit: floor_unit || null,
 
-        // Валидация WhatsApp согласия
-        if (typeof whatsapp_consent !== 'boolean') {
-            return res.status(400).json({
-                result: false,
-                message: "WhatsApp согласие должно быть true или false"
-            });
-        }
+            // ✅ ИСПРАВЛЕНО: Создаем правильный объект location
+            location: {
+                type: 'Point',
+                coordinates: [longitude, latitude] // [lng, lat] - правильный порядок для MongoDB
+            },
 
-        // Проверяем существование через сервис
-        const exists = await checkPartnerExists(email);
-        
-        if (exists) {
-            return res.status(400).json({
-                result: false,
-                message: "Партнер с таким email уже существует"
-            });
-        }
-
-        // ✅ ИСПРАВЛЕНО: Правильное формирование location объекта для сервиса
-        partnerData.location = {
-            latitude: lat,
-            longitude: lng,
-            coordinates: [lng, lat], // GeoJSON формат: [longitude, latitude]
-            type: 'Point'
+            // Согласие
+            whatsapp_consent
         };
 
-        // Добавляем метаданные
-        partnerData.registration_ip = req.ip;
-        partnerData.user_agent = req.get('User-Agent');
-
         console.log('✅ VALIDATION COMPLETED - Calling service:', {
-            email: email,
-            phone: cleanPhone,
-            location: partnerData.location,
-            whatsapp_consent: whatsapp_consent
+            email: serviceData.email,
+            phone: serviceData.phone,
+            location: serviceData.location,
+            whatsapp_consent: serviceData.whatsapp_consent
         });
 
-        // ✅ ВСЯ ЛОГИКА В СЕРВИСЕ
-        const result = await createPartnerAccount(partnerData);
+        // ✅ Вызов сервиса создания аккаунта
+        const result = await createPartnerAccount(serviceData);
 
-        if (!result.isNewPartner) {
-            return res.status(400).json({
-                result: false,
-                message: "Ошибка при создании партнера"
-            });
-        }
-
-        console.log('✅ REGISTER PARTNER - Success');
-
-        // ✅ ПОЛНЫЙ ОТВЕТ
         res.status(201).json({
             result: true,
-            message: "Регистрация успешна! Заявка отправлена на рассмотрение.",
-            partner: {
-                id: result.partner.id,
-                email: result.partner.email,
-                role: result.partner.role
-            },
-            request: {
-                id: result.partner.request._id,
-                status: result.partner.request.status,
-                workflow_stage: result.partner.request.workflow_stage,
-                business_name: result.partner.request.business_data?.business_name,
-                category: result.partner.request.business_data?.category
-            },
+            message: "✅ Заявка на партнерство подана успешно!",
             token: result.token,
-            next_step: {
-                action: "wait_for_approval", 
-                description: "Ожидайте одобрения заявки администратором",
-                estimated_time: "1-3 рабочих дня"
+            request: {
+                id: result.request._id,
+                user_id: result.request.user_id,
+                business_name: result.request.business_data.business_name,
+                brand_name: result.request.business_data.brand_name,
+                category: result.request.business_data.category,
+                status: result.request.status,
+                submitted_at: result.request.submitted_at
             },
             workflow_info: {
-                current_stage: 1,
-                total_stages: 6,
-                stage_description: "Заявка подана и ожидает рассмотрения"
+                current_stage: result.request.workflow_stage,
+                status: result.request.status,
+                stage_description: "Ожидание одобрения админом"
+            },
+            next_step: {
+                action: "wait_for_approval",
+                description: "Ваша заявка отправлена на рассмотрение администратору. Вы получите уведомление о результате."
             }
         });
 
     } catch (error) {
-        console.error('🚨 REGISTER PARTNER - Error:', error);
+        console.warn('🚨 REGISTER PARTNER - Error:', error);
+        
+        // Обработка специфических ошибок
+        if (error.message.includes('уже существует')) {
+            return res.status(409).json({
+                result: false,
+                message: error.message
+            });
+        }
+        
+        if (error.name === 'ValidationError') {
+            const validationErrors = Object.values(error.errors).map(err => err.message);
+            return res.status(400).json({
+                result: false,
+                message: "Ошибка валидации данных",
+                validation_errors: validationErrors
+            });
+        }
+
         res.status(500).json({
             result: false,
-            message: error.message || "Ошибка при регистрации партнера"
+            message: "Внутренняя ошибка сервера при регистрации партнера"
         });
     }
 };

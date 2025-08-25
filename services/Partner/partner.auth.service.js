@@ -11,30 +11,26 @@ import mongoose from 'mongoose';
  * ================== БИЗНЕС-ЛОГИКА АВТОРИЗАЦИИ ==================
  */
 
+
 /**
- * Создание аккаунта партнера - ИСПРАВЛЕННАЯ ВЕРСИЯ
- * ✅ ЗАВЕРШЕНА логика создания location объекта
+ * Создание аккаунта партнера с InitialPartnerRequest
  */
-const createPartnerAccount = async (partnerData) => {
+const createPartnerAccount = async (data) => {
+    const {
+        first_name, last_name, email, password, phone,
+        business_name, brand_name, category, address, floor_unit,
+        location, whatsapp_consent
+    } = data;
+
+    console.log('🔍 CREATE PARTNER ACCOUNT - Data check:', {
+        has_brand_name: !!brand_name,
+        has_floor_unit: !!floor_unit,
+        whatsapp_consent: whatsapp_consent,
+        location_received: !!location,
+        location_structure: location
+    });
+
     try {
-        let { 
-            first_name, last_name, email, password, phone,
-            business_name, brand_name, category, address, floor_unit,
-            location, whatsapp_consent, // ✅ ИСПРАВЛЕНО: получаем готовый location
-            registration_ip, user_agent
-        } = partnerData;
-
-        // Нормализация email
-        email = email.toLowerCase().trim();
-
-        console.log('🔍 CREATE PARTNER ACCOUNT - Data check:', {
-            has_brand_name: !!brand_name,
-            has_floor_unit: !!floor_unit,
-            whatsapp_consent: whatsapp_consent,
-            location_received: !!location,
-            location_structure: location
-        });
-
         // ✅ ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ТОЛЬКО ЧЕРЕЗ META
         const existingMeta = await Meta.findByEmailAndRole(hashMeta(email), 'partner');
         if (existingMeta) {
@@ -77,7 +73,7 @@ const createPartnerAccount = async (partnerData) => {
 
         await newMeta.save();
 
-        // ✅ ИСПРАВЛЕНО: Правильная валидация и создание location
+        // ✅ ИСПРАВЛЕНО: Валидация location
         if (!location || !location.coordinates || !Array.isArray(location.coordinates) || location.coordinates.length !== 2) {
             throw new Error('Некорректные данные геолокации');
         }
@@ -89,11 +85,11 @@ const createPartnerAccount = async (partnerData) => {
             throw new Error('Координаты должны быть числовыми значениями');
         }
 
-        // ✅ СОЗДАЕМ InitialPartnerRequest с правильным location
+        // ✅ ИСПРАВЛЕНО: Создаем InitialPartnerRequest с ПРАВИЛЬНОЙ структурой
         const partnerRequest = new InitialPartnerRequest({
             user_id: newUser._id,
             
-            // 👤 ЛИЧНЫЕ ДАННЫЕ (точно как в модели personal_data)
+            // 👤 ЛИЧНЫЕ ДАННЫЕ (зашифрованы в personal_data)
             personal_data: {
                 first_name: cryptoString(first_name), // 🔐 ЗАШИФРОВАНО
                 last_name: cryptoString(last_name),   // 🔐 ЗАШИФРОВАНО
@@ -101,39 +97,43 @@ const createPartnerAccount = async (partnerData) => {
                 phone: cryptoString(phone)            // 🔐 ЗАШИФРОВАНО
             },
             
-            // 🏪 БИЗНЕС ДАННЫЕ (точно как в модели business_data)
+            // 🏪 БИЗНЕС ДАННЫЕ
             business_data: {
-                // Адрес и этаж
+                // Адрес и этаж (зашифрованы)
                 address: cryptoString(address),                                    // 🔐 ЗАШИФРОВАНО
-                floor_unit: floor_unit ? cryptoString(floor_unit.trim()) : null,  // 🔐 ЗАШИФРОВАНО (опционально)
+                floor_unit: floor_unit ? cryptoString(floor_unit) : null,         // 🔐 ЗАШИФРОВАНО или null
                 
-                // Названия  
-                business_name: business_name.trim(),                               // ✅ ОТКРЫТО
-                brand_name: brand_name ? brand_name.trim() : business_name.trim(), // ✅ ОТКРЫТО
+                // Названия (открыто)
+                business_name: business_name,                                      // ✅ ОТКРЫТО
+                brand_name: brand_name || business_name,                          // ✅ ОТКРЫТО
                 
                 // Тип бизнеса
-                category: category,                                                // ✅ ОТКРЫТО
+                category: category,                                               // ✅ ОТКРЫТО
                 
-                // ✅ ИСПРАВЛЕНО: Правильная геолокация GeoJSON
+                // ✅ ИСПРАВЛЕНО: Добавляем owner_name и owner_surname как ТРЕБУЕТ МОДЕЛЬ
+                owner_name: first_name,                                           // ✅ ОТКРЫТО (для поиска)
+                owner_surname: last_name,                                         // ✅ ОТКРЫТО (для поиска)
+                
+                // Геолокация
                 location: {
                     type: 'Point',
-                    coordinates: [longitude, latitude] // [lng, lat] - правильный GeoJSON формат
+                    coordinates: [longitude, latitude] // [lng, lat] правильный порядок
                 }
             },
             
-            // 📱 WHATSAPP СОГЛАСИЕ (точно как в модели marketing_consent)
+            // 📱 WHATSAPP СОГЛАСИЕ
             marketing_consent: {
-                whatsapp_consent: whatsapp_consent // ✅ boolean
+                whatsapp_consent: whatsapp_consent === true
             },
             
-            // 🔄 WORKFLOW (начальные значения)
+            // 🎯 СТАТУС (по умолчанию)
             status: 'pending',
             workflow_stage: 1,
             
-            // 🛡️ БЕЗОПАСНОСТЬ (метаданные регистрации)
+            // 🛡️ БЕЗОПАСНОСТЬ
             security_info: {
-                registration_ip: registration_ip || '',
-                user_agent: user_agent || '',
+                registration_ip: '127.0.0.1', // В реальном проекте получить из req.ip
+                user_agent: 'API_REQUEST',     // В реальном проекте получить из req.headers['user-agent']
                 country_code: 'FR',
                 phone_country: 'FR'
             },
@@ -143,36 +143,36 @@ const createPartnerAccount = async (partnerData) => {
             updated_at: new Date()
         });
 
-        await partnerRequest.save();
+        // Сохраняем заявку
+        const savedRequest = await partnerRequest.save();
 
         console.log('✅ PARTNER REQUEST CREATED:', {
-            request_id: partnerRequest._id,
-            user_id: newUser._id,
-            status: partnerRequest.status,
-            workflow_stage: partnerRequest.workflow_stage,
-            business_name: partnerRequest.business_data.business_name,
-            brand_name: partnerRequest.business_data.brand_name,
-            category: partnerRequest.business_data.category,
-            location_coordinates: partnerRequest.business_data.location.coordinates,
-            whatsapp_consent: partnerRequest.marketing_consent.whatsapp_consent
+            id: savedRequest._id,
+            user_id: savedRequest.user_id,
+            business_name: savedRequest.business_data.business_name,
+            brand_name: savedRequest.business_data.brand_name,
+            category: savedRequest.business_data.category,
+            owner_name: savedRequest.business_data.owner_name,       // ✅ Теперь есть
+            owner_surname: savedRequest.business_data.owner_surname, // ✅ Теперь есть
+            status: savedRequest.status,
+            workflow_stage: savedRequest.workflow_stage
         });
 
-        // Генерируем токен
-        const token = generateCustomerToken({
-            _id: newUser._id,
+        // Генерируем JWT токен
+        const token = generateJWT({
             user_id: newUser._id,
+            email: email,
             role: 'partner'
-        }, '30d');
+        });
 
         return {
-            isNewPartner: true,
-            partner: {
+            token,
+            user: {
                 id: newUser._id,
-                role: newUser.role,
-                email: email, // ✅ Возвращаем оригинальный email
-                request: partnerRequest
+                email: email, // Возвращаем расшифрованный email
+                role: 'partner'
             },
-            token: token
+            request: savedRequest
         };
 
     } catch (error) {
