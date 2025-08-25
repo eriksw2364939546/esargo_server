@@ -198,9 +198,9 @@ const rejectPartnerRequest = async (req, res) => {
 // ============ ИСПРАВЛЕННЫЙ AdminPartnerController.js - approveLegalInfo ============
 
 /**
- * 3. Одобрение юридических документов и создание профиля  
+ * ЭТАП 4: Одобрение юридических документов и создание профиля
  * POST /api/admin/partners/legal/:id/approve
- * ✅ ИСПРАВЛЕНО: Правильная передача всех обязательных данных
+ * ✅ ПОЛНОСТЬЮ ИСПРАВЛЕНО: Расшифровка данных + создание профиля + проверка всех полей
  */
 const approveLegalInfo = async (req, res) => {
     try {
@@ -210,7 +210,8 @@ const approveLegalInfo = async (req, res) => {
 
         console.log('🔍 APPROVE LEGAL - Start:', {
             legal_id: id,
-            admin_id: admin._id
+            admin_id: admin._id,
+            admin_role: admin.role
         });
 
         // Проверка прав
@@ -228,7 +229,7 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        // Получаем юридические данные
+        // Получаем юридические данные с заполненными связями
         const legalInfo = await PartnerLegalInfo.findById(id)
             .populate('user_id')
             .populate('partner_request_id');
@@ -240,12 +241,14 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
-        console.log('🔍 CURRENT LEGAL STATUS:', {
+        console.log('🔍 LEGAL INFO LOADED:', {
             id: legalInfo._id,
-            verification_status: legalInfo.verification_status
+            verification_status: legalInfo.verification_status,
+            has_user: !!legalInfo.user_id,
+            has_request: !!legalInfo.partner_request_id
         });
 
-        // Проверяем статус
+        // Проверяем статус документов
         if (legalInfo.verification_status === 'verified') {
             const existingProfile = await PartnerProfile.findOne({ 
                 user_id: legalInfo.user_id._id 
@@ -279,6 +282,178 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
+        // ✅ ИСПРАВЛЕНО: Полная расшифровка всех данных
+        const request = legalInfo.partner_request_id;
+        
+        console.log('🔍 DECRYPTING DATA - Start');
+
+        // Расшифровываем персональные данные из заявки
+        const decryptedPersonalData = {
+            first_name: decryptString(request.personal_data.first_name),
+            last_name: decryptString(request.personal_data.last_name),
+            email: decryptString(request.personal_data.email),
+            phone: decryptString(request.personal_data.phone)
+        };
+
+        // Расшифровываем бизнес данные из заявки
+        const decryptedBusinessData = {
+            address: decryptString(request.business_data.address),
+            floor_unit: request.business_data.floor_unit ? 
+                decryptString(request.business_data.floor_unit) : null
+        };
+
+        // Расшифровываем юридические данные
+        const decryptedLegalData = {
+            legal_name: decryptString(legalInfo.legal_data.legal_name),
+            siret_number: decryptString(legalInfo.legal_data.siret_number),
+            legal_address: decryptString(legalInfo.legal_data.legal_address),
+            legal_representative: decryptString(legalInfo.legal_data.legal_representative),
+            tva_number: legalInfo.legal_data.tva_number ? 
+                decryptString(legalInfo.legal_data.tva_number) : null
+        };
+
+        console.log('✅ DATA DECRYPTED:', {
+            personal: {
+                has_first_name: !!decryptedPersonalData.first_name,
+                has_last_name: !!decryptedPersonalData.last_name,
+                has_email: !!decryptedPersonalData.email,
+                has_phone: !!decryptedPersonalData.phone
+            },
+            business: {
+                has_address: !!decryptedBusinessData.address,
+                has_floor_unit: !!decryptedBusinessData.floor_unit
+            },
+            legal: {
+                has_legal_name: !!decryptedLegalData.legal_name,
+                has_siret: !!decryptedLegalData.siret_number,
+                has_legal_address: !!decryptedLegalData.legal_address
+            }
+        });
+
+        // ✅ ПРОВЕРКА ВСЕХ ОБЯЗАТЕЛЬНЫХ ПОЛЕЙ PartnerProfile
+        const requiredProfileFields = {
+            user_id: legalInfo.user_id._id,
+            business_name: request.business_data.business_name,
+            brand_name: request.business_data.brand_name,
+            category: request.business_data.category,
+            address: decryptedBusinessData.address,
+            phone: decryptedPersonalData.phone,
+            email: decryptedPersonalData.email,
+            owner_name: decryptedPersonalData.first_name,
+            owner_surname: decryptedPersonalData.last_name,
+            location: request.business_data.location
+        };
+
+        // Проверяем что все обязательные поля заполнены
+        const missingProfileFields = Object.entries(requiredProfileFields)
+            .filter(([key, value]) => !value)
+            .map(([key]) => key);
+
+        if (missingProfileFields.length > 0) {
+            console.error('❌ MISSING PROFILE FIELDS:', missingProfileFields);
+            return res.status(400).json({
+                result: false,
+                message: `Отсутствуют данные для создания профиля: ${missingProfileFields.join(', ')}`,
+                required_fields: Object.keys(requiredProfileFields),
+                missing_fields: missingProfileFields
+            });
+        }
+
+        // ✅ ИСПРАВЛЕНО: Полное создание профиля со ВСЕМИ обязательными полями
+        const profileData = {
+            user_id: legalInfo.user_id._id,
+            
+            // ✅ ОСНОВНАЯ ИНФОРМАЦИЯ БИЗНЕСА (обязательные поля)
+            business_name: request.business_data.business_name, // НЕ зашифровано
+            brand_name: request.business_data.brand_name || request.business_data.business_name,
+            category: request.business_data.category, // 'restaurant' или 'store'
+            description: '', // Заполнит партнер позже
+            
+            // ✅ ЗАШИФРОВАННЫЕ ДАННЫЕ (обязательные) - ПЕРЕШИФРОВЫВАЕМ для профиля
+            address: cryptoString(decryptedBusinessData.address),
+            phone: cryptoString(decryptedPersonalData.phone),
+            email: cryptoString(decryptedPersonalData.email),
+            owner_name: cryptoString(decryptedPersonalData.first_name),
+            owner_surname: cryptoString(decryptedPersonalData.last_name),
+            
+            // ✅ ГЕОЛОКАЦИЯ (обязательная) - копируем из заявки
+            location: {
+                type: 'Point',
+                coordinates: request.business_data.location.coordinates // [longitude, latitude]
+            },
+            
+            // ✅ ОПЦИОНАЛЬНЫЕ ПОЛЯ
+            floor_unit: decryptedBusinessData.floor_unit ? 
+                cryptoString(decryptedBusinessData.floor_unit) : null,
+            cover_image_url: '', // Заполнит партнер позже
+            
+            // ✅ НАЧАЛЬНЫЕ МАССИВЫ
+            gallery: [],
+            menu_categories: [],
+            
+            // ✅ ГРАФИК РАБОТЫ (пустой - заполнит партнер)
+            working_hours: {
+                monday: { is_open: false, open_time: '', close_time: '' },
+                tuesday: { is_open: false, open_time: '', close_time: '' },
+                wednesday: { is_open: false, open_time: '', close_time: '' },
+                thursday: { is_open: false, open_time: '', close_time: '' },
+                friday: { is_open: false, open_time: '', close_time: '' },
+                saturday: { is_open: false, open_time: '', close_time: '' },
+                sunday: { is_open: false, open_time: '', close_time: '' }
+            },
+            
+            // ✅ СТАТУСЫ
+            is_approved: true,      // Одобрен админом
+            is_active: true,        // Активный
+            is_published: false,    // НЕ опубликован (нужен контент)
+            status: 'draft',        // Черновик
+            content_status: 'empty', // Нет контента
+            approval_status: 'approved',
+            
+            // ✅ НАЧАЛЬНАЯ СТАТИСТИКА
+            stats: {
+                total_products: 0,
+                active_products: 0,
+                total_categories: 0,
+                total_gallery_images: 0,
+                avg_rating: 0,
+                total_ratings: 0,
+                total_orders: 0,
+                last_stats_update: new Date()
+            },
+            
+            // ✅ РЕЙТИНГИ
+            ratings: {
+                avg_rating: 0,
+                total_ratings: 0,
+                ratings_breakdown: {
+                    1: 0, 2: 0, 3: 0, 4: 0, 5: 0
+                }
+            },
+            
+            // ✅ СВЯЗИ И МЕТАДАННЫЕ
+            legal_info_id: legalInfo._id,
+            created_by: admin._id,
+            updated_by: admin._id
+        };
+
+        console.log('✅ PROFILE DATA VALIDATION:', {
+            user_id: !!profileData.user_id,
+            business_name: !!profileData.business_name,
+            brand_name: !!profileData.brand_name,
+            category: profileData.category,
+            has_address: !!profileData.address,
+            has_phone: !!profileData.phone,
+            has_email: !!profileData.email,
+            has_owner_name: !!profileData.owner_name,
+            has_owner_surname: !!profileData.owner_surname,
+            location_valid: profileData.location && 
+                           profileData.location.type === 'Point' && 
+                           Array.isArray(profileData.location.coordinates) &&
+                           profileData.location.coordinates.length === 2,
+            all_required_fields_present: true
+        });
+
         // Обновляем статус документов ТОЛЬКО если статус pending
         if (legalInfo.verification_status === 'pending') {
             const legalUpdateData = {
@@ -292,97 +467,29 @@ const approveLegalInfo = async (req, res) => {
             console.log('✅ LEGAL STATUS UPDATED TO VERIFIED');
         }
 
-        // ✅ СОЗДАНИЕ ПРОФИЛЯ с полными данными
-        const request = legalInfo.partner_request_id;
-        
-        console.log('🔍 CREATING PROFILE - Request data check:', {
-            request_id: request._id,
-            has_business_data: !!request.business_data,
-            has_personal_data: !!request.personal_data,
-            business_name: request.business_data?.business_name,
-            brand_name: request.business_data?.brand_name,
-            category: request.business_data?.category,
-            has_location: !!request.business_data?.location,
-            location_type: request.business_data?.location?.type,
-            coordinates: request.business_data?.location?.coordinates
-        });
-
-        // ✅ ИСПРАВЛЕНО: Извлекаем и расшифровываем данные правильно
-        const profileData = {
-            user_id: legalInfo.user_id._id,
-            
-            // ✅ ОБЯЗАТЕЛЬНЫЕ ПОЛЯ PartnerProfile (все заполняем!)
-            business_name: request.business_data?.business_name || 'Не указано',
-            brand_name: request.business_data?.brand_name || 
-                       request.business_data?.business_name || 'Не указано',
-            category: request.business_data?.category || 'restaurant',
-            
-            // ✅ РАСШИФРОВЫВАЕМ ЗАШИФРОВАННЫЕ ПОЛЯ
-            email: decryptString(request.personal_data?.email) || 'temp@example.com',
-            phone: decryptString(request.personal_data?.phone) || 'Не указан',
-            address: decryptString(request.business_data?.address) || 'Не указан',
-            
-            // ✅ ВЛАДЕЛЕЦ - используем бизнес данные или личные данные
-            owner_name: request.business_data?.owner_name || 
-                       decryptString(request.personal_data?.first_name) || 'Не указано',
-            owner_surname: request.business_data?.owner_surname || 
-                          decryptString(request.personal_data?.last_name) || 'Не указано',
-            
-            // ✅ ГЕОЛОКАЦИЯ - обязательная для валидации
-            location: request.business_data?.location || {
-                type: 'Point',
-                coordinates: [2.3522, 48.8566] // Paris default
-            },
-            
-            // ✅ ДОПОЛНИТЕЛЬНЫЕ ПОЛЯ
-            floor_unit: request.business_data?.floor_unit ? 
-                       decryptString(request.business_data.floor_unit) : null,
-            description: `${request.business_data?.business_name || 'Партнер'} - качественная ${request.business_data?.category === 'restaurant' ? 'еда' : 'продукция'}`,
-            
-            // ✅ СТАТУСЫ - правильные для добавления контента
-            is_approved: true,                    // Разрешает работу с меню
-            is_active: false,                     // Пока не активен публично
-            is_published: false,                  // Пока не опубликован
-            content_status: 'awaiting_content',   // Ожидает контент от партнера
-            approval_status: 'awaiting_content',  // НЕ content_approved!
-            
-            // ✅ СВЯЗИ
-            legal_info_id: legalInfo._id,
-            
-            // ✅ АДМИНИСТРАТИВНЫЕ
-            created_by: admin._id,
-            updated_by: admin._id
-        };
-
-        console.log('✅ PROFILE DATA FULLY PREPARED:', {
-            user_id: profileData.user_id,
-            business_name: profileData.business_name,
-            category: profileData.category,
-            has_email: !!profileData.email,
-            has_phone: !!profileData.phone,
-            has_address: !!profileData.address,
-            owner_name: profileData.owner_name,
-            owner_surname: profileData.owner_surname,
-            location: profileData.location,
-            all_required_fields: true
-        });
-
-        // ✅ СОЗДАЕМ ПРОФИЛЬ с полными данными
+        // ✅ СОЗДАЕМ ПРОФИЛЬ с полными данными через сервис
         const newProfile = await createPartnerProfile(profileData);
 
         console.log('✅ PROFILE CREATED SUCCESSFULLY:', {
             profile_id: newProfile._id,
             business_name: newProfile.business_name,
+            brand_name: newProfile.brand_name,
             category: newProfile.category,
-            is_approved: newProfile.is_approved
+            is_approved: newProfile.is_approved,
+            status: newProfile.status,
+            content_status: newProfile.content_status
         });
 
+        // ✅ ПОЛНЫЙ УСПЕШНЫЙ ОТВЕТ
         res.status(200).json({
             result: true,
-            message: "Документы одобрены и профиль партнера создан",
+            message: "🎉 Документы одобрены и профиль партнера создан!",
             legal_info: {
                 id: legalInfo._id,
-                status: 'verified'
+                status: 'verified',
+                verified_by: admin._id,
+                verified_at: new Date(),
+                approval_notes: approval_notes
             },
             profile: {
                 id: newProfile._id,
@@ -390,14 +497,41 @@ const approveLegalInfo = async (req, res) => {
                 brand_name: newProfile.brand_name,
                 category: newProfile.category,
                 is_approved: newProfile.is_approved,
-                status: newProfile.content_status
+                is_active: newProfile.is_active,
+                is_published: newProfile.is_published,
+                status: newProfile.status,
+                content_status: newProfile.content_status,
+                location: newProfile.location
             },
             next_step: {
                 action: "add_menu_content",
-                description: "Партнер может теперь добавлять блюда и контент",
-                endpoints: {
-                    add_category: "POST /api/partners/menu/categories",
-                    add_product: "POST /api/partners/menu/products"
+                description: "Партнер может теперь добавлять категории меню и продукты",
+                available_endpoints: {
+                    menu_categories: "POST /api/partners/menu/categories",
+                    menu_products: "POST /api/partners/menu/products",
+                    profile_update: `PUT /api/partners/profile/${newProfile._id}`,
+                    menu_stats: "GET /api/partners/menu/stats"
+                }
+            },
+            workflow: {
+                current_stage: 4,
+                total_stages: 6,
+                stage_description: "Профиль создан, можно добавлять контент",
+                completion_percentage: 67, // 4/6 * 100
+                next_stage: "Заполнение контента и финальная публикация"
+            },
+            business_rules: {
+                partner_type: newProfile.category,
+                menu_management: {
+                    can_create_categories: true,
+                    can_add_products: true,
+                    supports_options: newProfile.category === 'restaurant',
+                    supports_packaging: newProfile.category === 'store'
+                },
+                publication_requirements: {
+                    min_categories: 1,
+                    min_products: 1,
+                    profile_completion: "required"
                 }
             }
         });

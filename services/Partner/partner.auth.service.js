@@ -12,15 +12,15 @@ import mongoose from 'mongoose';
  */
 
 /**
- * Создание аккаунта партнера
- * ✅ ПОЛНОСТЬЮ ИСПРАВЛЕНО: Создает данные точно по новым моделям
+ * Создание аккаунта партнера - ИСПРАВЛЕННАЯ ВЕРСИЯ
+ * ✅ ЗАВЕРШЕНА логика создания location объекта
  */
- const createPartnerAccount = async (partnerData) => {
+const createPartnerAccount = async (partnerData) => {
     try {
         let { 
             first_name, last_name, email, password, phone,
-            business_name, brand_name, category, address, floor_unit, // 🆕 НОВЫЕ ПОЛЯ
-            location, whatsapp_consent, // 🆕 НОВЫЕ ПОЛЯ
+            business_name, brand_name, category, address, floor_unit,
+            location, whatsapp_consent, // ✅ ИСПРАВЛЕНО: получаем готовый location
             registration_ip, user_agent
         } = partnerData;
 
@@ -31,7 +31,8 @@ import mongoose from 'mongoose';
             has_brand_name: !!brand_name,
             has_floor_unit: !!floor_unit,
             whatsapp_consent: whatsapp_consent,
-            coordinates: location
+            location_received: !!location,
+            location_structure: location
         });
 
         // ✅ ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ТОЛЬКО ЧЕРЕЗ META
@@ -76,7 +77,19 @@ import mongoose from 'mongoose';
 
         await newMeta.save();
 
-        // ✅ СОЗДАЕМ InitialPartnerRequest ТОЧНО ПО НОВОЙ МОДЕЛИ
+        // ✅ ИСПРАВЛЕНО: Правильная валидация и создание location
+        if (!location || !location.coordinates || !Array.isArray(location.coordinates) || location.coordinates.length !== 2) {
+            throw new Error('Некорректные данные геолокации');
+        }
+
+        const [longitude, latitude] = location.coordinates;
+        
+        // Дополнительная проверка координат
+        if (typeof longitude !== 'number' || typeof latitude !== 'number') {
+            throw new Error('Координаты должны быть числовыми значениями');
+        }
+
+        // ✅ СОЗДАЕМ InitialPartnerRequest с правильным location
         const partnerRequest = new InitialPartnerRequest({
             user_id: newUser._id,
             
@@ -96,48 +109,33 @@ import mongoose from 'mongoose';
                 
                 // Названия  
                 business_name: business_name.trim(),                               // ✅ ОТКРЫТО
-                brand_name: brand_name ? brand_name.trim() : business_name.trim(), // ✅ ОТКРЫТО (fallback к business_name)
+                brand_name: brand_name ? brand_name.trim() : business_name.trim(), // ✅ ОТКРЫТО
                 
                 // Тип бизнеса
                 category: category,                                                // ✅ ОТКРЫТО
                 
-                // Геолокация (точно по модели)
+                // ✅ ИСПРАВЛЕНО: Правильная геолокация GeoJSON
                 location: {
                     type: 'Point',
-                    coordinates: location?.longitude && location?.latitude ? 
-                        [parseFloat(location.longitude), parseFloat(location.latitude)] : 
-                        [2.3522, 48.8566] // Default: Paris coordinates
-                },
-                
-                // Владелец (для внутреннего использования)
-                owner_name: first_name.trim(),                                     // ✅ ОТКРЫТО
-                owner_surname: last_name.trim()                                    // ✅ ОТКРЫТО
+                    coordinates: [longitude, latitude] // [lng, lat] - правильный GeoJSON формат
+                }
             },
             
-            // 📱 WHATSAPP СОГЛАСИЕ (✅ ИСПРАВЛЕНО: правильное поле)
+            // 📱 WHATSAPP СОГЛАСИЕ (точно как в модели marketing_consent)
             marketing_consent: {
-                whatsapp_consent: Boolean(whatsapp_consent) // 🆕 ИСПРАВЛЕНО: whatsapp_consent вместо whatsapp
+                whatsapp_consent: whatsapp_consent // ✅ boolean
             },
             
-            // 🎯 СТАТУС ЗАЯВКИ
+            // 🔄 WORKFLOW (начальные значения)
             status: 'pending',
             workflow_stage: 1,
             
-            // ℹ️ ИНФОРМАЦИЯ О РАССМОТРЕНИИ (пустая при создании)
-            review_info: {
-                reviewed_by: null,
-                reviewed_at: null,
-                approved_at: null,
-                rejection_reason: null,
-                admin_notes: null
-            },
-            
-            // 🛡️ БЕЗОПАСНОСТЬ (точно по модели)
+            // 🛡️ БЕЗОПАСНОСТЬ (метаданные регистрации)
             security_info: {
-                registration_ip: registration_ip || null,
-                user_agent: user_agent || null,
-                country_code: 'FR',           // Точно по модели
-                phone_country: 'FR'           // Точно по модели
+                registration_ip: registration_ip || '',
+                user_agent: user_agent || '',
+                country_code: 'FR',
+                phone_country: 'FR'
             },
             
             // 📅 ВРЕМЕННЫЕ МЕТКИ
@@ -148,10 +146,15 @@ import mongoose from 'mongoose';
         await partnerRequest.save();
 
         console.log('✅ PARTNER REQUEST CREATED:', {
-            has_brand_name: !!partnerRequest.business_data.brand_name,
-            has_floor_unit: !!partnerRequest.business_data.floor_unit,
-            whatsapp_consent: partnerRequest.marketing_consent.whatsapp_consent,
-            coordinates: partnerRequest.business_data.location.coordinates
+            request_id: partnerRequest._id,
+            user_id: newUser._id,
+            status: partnerRequest.status,
+            workflow_stage: partnerRequest.workflow_stage,
+            business_name: partnerRequest.business_data.business_name,
+            brand_name: partnerRequest.business_data.brand_name,
+            category: partnerRequest.business_data.category,
+            location_coordinates: partnerRequest.business_data.location.coordinates,
+            whatsapp_consent: partnerRequest.marketing_consent.whatsapp_consent
         });
 
         // Генерируем токен
