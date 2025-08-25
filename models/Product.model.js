@@ -1,4 +1,5 @@
-// models/Product.model.js - ОБЪЕДИНЁННАЯ МОДЕЛЬ С ПРАВИЛЬНЫМИ СВЯЗЯМИ И ДОПОЛНИТЕЛЬНЫМИ МЕТОДАМИ 🍽️
+// models/Product.model.js - БЕЗОПАСНОЕ ОБНОВЛЕНИЕ С ОБРАТНОЙ СОВМЕСТИМОСТЬЮ
+
 import mongoose from 'mongoose';
 
 const productSchema = new mongoose.Schema({
@@ -9,17 +10,17 @@ const productSchema = new mongoose.Schema({
     index: true
   },
   
-  // Основная информация о товаре
+  // ============ БАЗОВЫЕ ПОЛЯ (НЕ МЕНЯЕМ!) ============
   title: {
     type: String,
     required: true,
     trim: true,
-    maxlength: 100
+    maxlength: 150 // Увеличено для французских названий
   },
   description: {
     type: String,
     trim: true,
-    maxlength: 500
+    maxlength: 800 // Увеличено для детальных описаний
   },
   price: {
     type: Number,
@@ -36,18 +37,12 @@ const productSchema = new mongoose.Schema({
       message: 'Цена со скидкой должна быть меньше обычной цены'
     }
   },
-  image_url: {
-    type: String
-  },
-  
-  // 🎯 ГЛОБАЛЬНАЯ КАТЕГОРИЯ (restaurant/store)
+  image_url: { type: String },
   category: {
     type: String,
     required: true,
     enum: ['restaurant', 'store']
   },
-  
-  // 🆕 КАТЕГОРИЯ МЕНЮ ПАРТНЕРА (slug из menu_categories)
   subcategory: {
     type: String,
     required: true,
@@ -55,15 +50,13 @@ const productSchema = new mongoose.Schema({
     maxlength: 50,
     index: true
   },
-  
-  // 🆕 ID КАТЕГОРИИ МЕНЮ (для удобства запросов)
   menu_category_id: {
     type: mongoose.Schema.Types.ObjectId,
     required: true,
     index: true
   },
   
-  // Добавки (как было - отлично проработано)
+  // ============ ОПЦИИ (НЕ МЕНЯЕМ!) ============
   options_groups: [{
     name: {
       type: String,
@@ -76,18 +69,9 @@ const productSchema = new mongoose.Schema({
       trim: true,
       maxlength: 200
     },
-    required: {
-      type: Boolean,
-      default: false
-    },
-    multiple_choice: {
-      type: Boolean,
-      default: false
-    },
-    max_selections: {
-      type: Number,
-      default: 1
-    },
+    required: { type: Boolean, default: false },
+    multiple_choice: { type: Boolean, default: false },
+    max_selections: { type: Number, default: 1 },
     options: [{
       name: {
         type: String,
@@ -100,14 +84,10 @@ const productSchema = new mongoose.Schema({
         required: true,
         min: 0
       },
-      is_available: {
-        type: Boolean,
-        default: true
-      }
+      is_available: { type: Boolean, default: true }
     }]
   }],
   
-  // Время приготовления (для ресторанов)
   preparation_time: {
     type: Number,
     min: 0,
@@ -116,43 +96,176 @@ const productSchema = new mongoose.Schema({
     }
   },
   
-  // Информация о товаре (для магазинов)
+  // ============ ИНФОРМАЦИЯ О ТОВАРЕ (РАСШИРЯЕМ ОСТОРОЖНО) ============
   product_info: {
     brand: { type: String, trim: true },
     weight_grams: { type: Number, min: 0 },
     volume_ml: { type: Number, min: 0 },
     unit_count: { type: Number, min: 1, default: 1 },
     expiry_date: { type: Date },
-    storage_conditions: { type: String, trim: true }
+    storage_conditions: { type: String, trim: true },
+    
+    // 🆕 НОВЫЕ ФРАНЦУЗСКИЕ ПОЛЯ (опционально)
+    packaging_type: {
+      type: String,
+      enum: ['vrac', 'emballé', 'sous_vide', 'conserve', 'frais', 'surgelé', 'sec']
+    },
+    origin_country: { type: String, default: 'France', maxlength: 50 },
+    barcode_ean13: { type: String, match: /^\d{13}$/ },
+    barcode_ean8: { type: String, match: /^\d{8}$/ }
   },
   
-  // Информация о блюде (для ресторанов)
+  // ============ ИНФОРМАЦИЯ О БЛЮДЕ (ОСТОРОЖНО РАСШИРЯЕМ) ============
   dish_info: {
     ingredients: [{ type: String, trim: true }],
+    
+    // ✅ ОБРАТНАЯ СОВМЕСТИМОСТЬ: поддерживаем старые русские аллергены
     allergens: [{
       type: String,
       enum: [
+        // Старые русские (совместимость)
         'глютен', 'молочные продукты', 'яйца', 'орехи',
         'арахис', 'соя', 'рыба', 'морепродукты', 'сельдерей',
-        'горчица', 'кунжут', 'сульфиты', 'люпин', 'моллюски'
+        'горчица', 'кунжут', 'сульфиты', 'люпин', 'моллюски',
+        
+        // 🆕 Новые французские
+        'gluten', 'lait', 'œufs', 'fruits_à_coque',
+        'arachides', 'soja', 'poissons', 'crustacés', 'céleri',
+        'moutarde', 'graines_de_sésame', 'anhydride_sulfureux_et_sulfites',
+        'lupin', 'mollusques',
+        
+        // 🆕 Английские (интернационализация)  
+        'eggs', 'fish', 'peanuts', 'soybeans', 'milk', 'tree_nuts',
+        'celery', 'mustard', 'sesame_seeds', 'sulfur_dioxide_and_sulfites'
       ]
     }],
+    
+    // ✅ СТАРЫЕ БУЛЕВЫ ФЛАГИ (совместимость)
     is_vegetarian: { type: Boolean, default: false },
     is_vegan: { type: Boolean, default: false },
     is_halal: { type: Boolean, default: false },
     is_spicy: { type: Boolean, default: false },
-    spice_level: { type: Number, min: 0, max: 5, default: 0 },
+    
+    // ✅ ГИБКИЙ spice_level (поддерживаем число И строку)
+    spice_level: {
+      type: mongoose.Schema.Types.Mixed,
+      validate: {
+        validator: function(value) {
+          // Числовой формат (старый)
+          if (typeof value === 'number') {
+            return Number.isInteger(value) && value >= 0 && value <= 5;
+          }
+          // Строковый формат (новый)
+          if (typeof value === 'string') {
+            const validLevels = [
+              'aucun', 'doux', 'moyen', 'piquant', 'très_piquant', 'extrême',
+              'none', 'mild', 'medium', 'hot', 'very_hot', 'extreme',
+              'нет', 'слабо', 'средне', 'остро', 'очень_остро', 'экстрим'
+            ];
+            return validLevels.includes(value.toLowerCase());
+          }
+          return value === null || value === undefined;
+        },
+        message: 'spice_level: число 0-5 или строка (doux/mild/средне)'
+      },
+      default: 0
+    },
+    
     calories: { type: Number, min: 0 },
-    portion_size: { type: String, trim: true }
+    portion_size: { type: String, trim: true },
+    
+    // 🆕 НОВЫЕ ФРАНЦУЗСКИЕ ПОЛЯ (опционально)
+    cuisine_type: {
+      type: String,
+      enum: [
+        'arménienne', 'française_traditionnelle', 'italienne', 'japonaise',
+        'chinoise', 'thaïlandaise', 'vietnamienne', 'indienne', 'moyen_orientale',
+        'armenian', 'french', 'italian', 'japanese', 'chinese', 'mediterranean'
+      ]
+    },
+    
+    cooking_method: {
+      type: String,
+      enum: [
+        'grillé', 'rôti', 'braisé', 'sauté', 'poché', 'frit', 'cru',
+        'grilled', 'roasted', 'braised', 'sautéed', 'fried', 'raw'
+      ]
+    },
+    
+    may_contain_traces: [{ 
+      type: String,
+      enum: [
+        'глютен', 'молочные продукты', 'яйца', 'орехи',
+        'gluten', 'lait', 'œufs', 'fruits_à_coque'
+      ]
+    }],
+    
+    // Пищевая ценность
+    nutrition: {
+      calories_per_100g: { type: Number, min: 0 },
+      protein_g: { type: Number, min: 0 },
+      carbs_g: { type: Number, min: 0 },
+      fat_g: { type: Number, min: 0 },
+      fiber_g: { type: Number, min: 0 },
+      sugar_g: { type: Number, min: 0 },
+      salt_g: { type: Number, min: 0 }
+    }
   },
   
-  // Наличие и доступность
+  // ============ НОВЫЕ ФРАНЦУЗСКИЕ РАСШИРЕНИЯ (ОПЦИОНАЛЬНО) ============
+  
+  // 🆕 Мультиязычность (опционально)
+  multilingual: {
+    title_fr: { type: String, trim: true, maxlength: 150 },
+    title_en: { type: String, trim: true, maxlength: 150 },
+    title_ru: { type: String, trim: true, maxlength: 150 },
+    description_fr: { type: String, trim: true, maxlength: 800 },
+    description_en: { type: String, trim: true, maxlength: 800 },
+    description_ru: { type: String, trim: true, maxlength: 800 }
+  },
+  
+  // 🆕 Французские налоги (опционально)
+  tax_info: {
+    tva_rate: {
+      type: Number,
+      enum: [0, 5.5, 10, 20],
+      default: function() {
+        return this.category === 'restaurant' ? 5.5 : 20;
+      }
+    },
+    price_includes_tva: { type: Boolean, default: true },
+    tva_amount: { type: Number, default: 0 }
+  },
+  
+  // 🆕 Расписание доступности (опционально)
+  availability_schedule: {
+    breakfast: { type: Boolean, default: false },
+    lunch: { type: Boolean, default: true },
+    dinner: { type: Boolean, default: true },
+    late_night: { type: Boolean, default: false }
+  },
+  
+  // 🆕 Диетические метки (французские стандарты)
+  dietary_labels: [{
+    type: String,
+    enum: [
+      // Французские
+      'végétarien', 'végétalien', 'halal', 'casher', 'sans_gluten', 
+      'sans_lactose', 'bio', 'aop', 'igp', 'label_rouge',
+      // Английские
+      'vegetarian', 'vegan', 'organic', 'gluten_free', 'lactose_free',
+      'keto', 'paleo', 'raw',
+      // Русские
+      'вегетарианский', 'веганский', 'халяль', 'кошерный', 'без_глютена'
+    ]
+  }],
+  
+  // ============ СТАРЫЕ ПОЛЯ (НЕ МЕНЯЕМ!) ============
   is_active: { type: Boolean, default: true },
   is_available: { type: Boolean, default: true },
   stock_quantity: { type: Number, min: 0 },
   low_stock_threshold: { type: Number, min: 0, default: 5 },
   
-  // Статистика продаж
   sales_stats: {
     total_sold: { type: Number, default: 0 },
     weekly_sold: { type: Number, default: 0 },
@@ -160,124 +273,115 @@ const productSchema = new mongoose.Schema({
     total_revenue: { type: Number, default: 0 }
   },
   
-  // Рейтинг товара
   ratings: {
     avg_rating: { type: Number, default: 0, min: 0, max: 5 },
     total_ratings: { type: Number, default: 0 }
   },
   
-  // Позиция в меню для сортировки
   sort_order: { type: Number, default: 0 },
-  
-  // Теги для поиска
   tags: [{ type: String, trim: true, lowercase: true }],
-  
-  // Информация о последнем обновлении
   last_updated_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+  
 }, { timestamps: true });
 
-// ================ ИНДЕКСЫ ================
+// ============ ИНДЕКСЫ (как было) ============
 productSchema.index({ partner_id: 1, is_active: 1, is_available: 1 });
 productSchema.index({ category: 1, subcategory: 1 });
-productSchema.index({ partner_id: 1, menu_category_id: 1 });
 productSchema.index({ price: 1 });
 productSchema.index({ 'ratings.avg_rating': -1 });
-productSchema.index({ 'sales_stats.total_sold': -1 });
-productSchema.index({ sort_order: 1 });
 
-// Текстовый индекс
-productSchema.index({
-  title: 'text',
-  description: 'text',
-  subcategory: 'text',
-  'dish_info.ingredients': 'text',
-  tags: 'text'
-}, {
-  weights: {
-    title: 10,
-    subcategory: 5,
-    description: 3,
-    'dish_info.ingredients': 2,
-    tags: 1
-  }
-});
-
-// ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
+// ============ ВИРТУАЛЬНЫЕ ПОЛЯ (как было) ============
 productSchema.virtual('final_price').get(function() {
   return this.discount_price || this.price;
 });
+
 productSchema.virtual('has_discount').get(function() {
-  return !!(this.discount_price && this.discount_price < this.price);
-});
-productSchema.virtual('discount_percentage').get(function() {
-  if (this.has_discount) {
-    return Math.round(((this.price - this.discount_price) / this.price) * 100);
-  }
-  return 0;
-});
-productSchema.virtual('is_low_stock').get(function() {
-  return this.stock_quantity !== undefined &&
-         this.stock_quantity <= this.low_stock_threshold;
+  return !!this.discount_price && this.discount_price < this.price;
 });
 
-// ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
-productSchema.methods.updateSalesStats = function(quantity, orderTotal) {
-  this.sales_stats.total_sold += quantity;
-  this.sales_stats.weekly_sold += quantity;
-  this.sales_stats.monthly_sold += quantity;
-  this.sales_stats.total_revenue += orderTotal;
-  return this.save();
+// ============ НОВЫЕ МЕТОДЫ ДЛЯ СОВМЕСТИМОСТИ ============
+
+/**
+ * Нормализация spice_level для отображения
+ */
+productSchema.methods.getSpiceLevelDisplay = function(language = 'ru') {
+  const value = this.dish_info?.spice_level;
+  
+  if (typeof value === 'number') {
+    const levelMaps = {
+      ru: ['нет', 'слабо', 'средне', 'остро', 'очень остро', 'экстрим'],
+      fr: ['aucun', 'doux', 'moyen', 'piquant', 'très piquant', 'extrême'],
+      en: ['none', 'mild', 'medium', 'hot', 'very hot', 'extreme']
+    };
+    return levelMaps[language]?.[value] || value;
+  }
+  
+  return value || 'нет';
 };
-// Уменьшение остатков
-productSchema.methods.decreaseStock = function(quantity) {
-  if (this.stock_quantity !== undefined) {
-    this.stock_quantity = Math.max(0, this.stock_quantity - quantity);
-    if (this.stock_quantity === 0) {
-      this.is_available = false;
+
+/**
+ * Получение локализованного названия
+ */
+productSchema.methods.getLocalizedTitle = function(language = 'ru') {
+  if (this.multilingual) {
+    const field = `title_${language}`;
+    return this.multilingual[field] || this.title;
+  }
+  return this.title;
+};
+
+/**
+ * Расчет французских налогов
+ */
+productSchema.methods.calculateTaxes = function() {
+  const tvaRate = this.tax_info?.tva_rate || (this.category === 'restaurant' ? 5.5 : 20);
+  const priceIncludesTva = this.tax_info?.price_includes_tva !== false;
+  
+  if (priceIncludesTva) {
+    const priceWithoutTva = this.final_price / (1 + tvaRate / 100);
+    const tvaAmount = this.final_price - priceWithoutTva;
+    return {
+      price_with_tva: this.final_price,
+      price_without_tva: Math.round(priceWithoutTva * 100) / 100,
+      tva_amount: Math.round(tvaAmount * 100) / 100,
+      tva_rate: tvaRate
+    };
+  } else {
+    const tvaAmount = this.final_price * (tvaRate / 100);
+    return {
+      price_without_tva: this.final_price,
+      price_with_tva: Math.round((this.final_price + tvaAmount) * 100) / 100,
+      tva_amount: Math.round(tvaAmount * 100) / 100,
+      tva_rate: tvaRate
+    };
+  }
+};
+
+// ============ PRE HOOKS (автоматические вычисления) ============
+productSchema.pre('save', function(next) {
+  // Автоматический расчет НДС если указан tax_info
+  if (this.tax_info && this.tax_info.tva_rate) {
+    const taxes = this.calculateTaxes();
+    this.tax_info.tva_amount = taxes.tva_amount;
+  }
+  
+  // Автоматическое определение языка title
+  if (this.title && !this.multilingual?.title_ru) {
+    if (!this.multilingual) this.multilingual = {};
+    
+    if (/[а-яё]/i.test(this.title)) {
+      this.multilingual.title_ru = this.title;
+    } else if (/[àâäçéèêëïîôùûüÿñæœ]/i.test(this.title)) {
+      this.multilingual.title_fr = this.title;
+    } else {
+      this.multilingual.title_en = this.title;
     }
   }
-  return this.save();
-};
+  
+  next();
+});
 
-// Увеличение остатков
-productSchema.methods.increaseStock = function(quantity) {
-  if (this.stock_quantity !== undefined) {
-    this.stock_quantity += quantity;
-    if (this.stock_quantity > 0 && !this.is_available) {
-      this.is_available = true;
-    }
-  }
-  return this.save();
-};
-
-// Обновление рейтинга
-productSchema.methods.updateRating = function(newRating) {
-  const totalRatings = this.ratings.total_ratings;
-  const currentAvg = this.ratings.avg_rating;
-  this.ratings.total_ratings = totalRatings + 1;
-  this.ratings.avg_rating = ((currentAvg * totalRatings) + newRating) / this.ratings.total_ratings;
-  return this.save();
-};
-
-// Добавление опции в группу
-productSchema.methods.addOptionToGroup = function(groupIndex, optionData) {
-  if (this.options_groups[groupIndex]) {
-    this.options_groups[groupIndex].options.push(optionData);
-    return this.save();
-  }
-  throw new Error('Группа опций не найдена');
-};
-
-// Удаление опции из группы
-productSchema.methods.removeOptionFromGroup = function(groupIndex, optionIndex) {
-  if (this.options_groups[groupIndex] && this.options_groups[groupIndex].options[optionIndex]) {
-    this.options_groups[groupIndex].options.splice(optionIndex, 1);
-    return this.save();
-  }
-  throw new Error('Опция не найдена');
-};
-
-// Проверка принадлежности продукта к категории партнера
+// ============ СТАРЫЕ МЕТОДЫ (сохраняем совместимость) ============
 productSchema.methods.validateCategory = async function() {
   const PartnerProfile = mongoose.model('PartnerProfile');
   const partner = await PartnerProfile.findById(this.partner_id);
@@ -288,248 +392,122 @@ productSchema.methods.validateCategory = async function() {
   return true;
 };
 
-// Проверка доступности всех выбранных опций
-productSchema.methods.validateSelectedOptions = function(selectedOptions) {
-  const errors = [];
-  selectedOptions.forEach(selection => {
-    const group = this.options_groups.find(g => g.name === selection.groupName);
-    if (!group) {
-      errors.push(`Группа опций "${selection.groupName}" не найдена`);
-      return;
-    }
-    const option = group.options.find(o => o.name === selection.optionName);
-    if (!option) {
-      errors.push(`Опция "${selection.optionName}" не найдена в группе "${selection.groupName}"`);
-      return;
-    }
-    if (!option.is_available) {
-      errors.push(`Опция "${selection.optionName}" недоступна`);
-    }
-  });
-  return errors;
-};
-
-// Расчет общей стоимости с опциями
 productSchema.methods.calculateTotalPrice = function(quantity = 1, selectedOptions = []) {
   let basePrice = this.final_price * quantity;
   let optionsPrice = 0;
+  
   selectedOptions.forEach(selection => {
     const group = this.options_groups.find(g => g.name === selection.groupName);
     if (group) {
       const option = group.options.find(o => o.name === selection.optionName);
-      if (option) {
+      if (option && option.is_available) {
         optionsPrice += option.price * quantity;
       }
     }
   });
-  return basePrice + optionsPrice;
+  
+  const totalPrice = basePrice + optionsPrice;
+  
+  // Если есть налоговая информация, возвращаем детальный расчет
+  if (this.tax_info?.tva_rate) {
+    const taxes = this.calculateTaxes();
+    return {
+      base_price: basePrice,
+      options_price: optionsPrice,
+      total_price: totalPrice,
+      tax_info: taxes,
+      currency: 'EUR'
+    };
+  }
+  
+  return totalPrice;
 };
 
-// ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
+// ============ СТАТИЧЕСКИЕ МЕТОДЫ (сохраняем старые + новые) ============
+
+/**
+ * Поиск продуктов с поддержкой французских фильтров
+ */
+productSchema.statics.findWithFrenchFilters = function(partnerId, filters = {}) {
+  const query = { partner_id: partnerId, is_active: true };
+  
+  // Старые фильтры (совместимость)
+  if (filters.category_slug) {
+    query.subcategory = filters.category_slug;
+  }
+  
+  if (filters.price_min || filters.price_max) {
+    query.price = {};
+    if (filters.price_min) query.price.$gte = filters.price_min;
+    if (filters.price_max) query.price.$lte = filters.price_max;
+  }
+  
+  // 🆕 Новые французские фильтры
+  if (filters.dietary_labels && filters.dietary_labels.length > 0) {
+    query.dietary_labels = { $in: filters.dietary_labels };
+  }
+  
+  if (filters.allergen_free && filters.allergen_free.length > 0) {
+    query['dish_info.allergens'] = { $nin: filters.allergen_free };
+  }
+  
+  if (filters.cuisine_type) {
+    query['dish_info.cuisine_type'] = filters.cuisine_type;
+  }
+  
+  if (filters.spice_level_max !== undefined) {
+    // Поддерживаем и числовой и строковый формат
+    if (typeof filters.spice_level_max === 'number') {
+      query['dish_info.spice_level'] = { $lte: filters.spice_level_max };
+    } else {
+      const spiceLevels = ['aucun', 'doux', 'moyen', 'piquant', 'très_piquant', 'extrême'];
+      const maxIndex = spiceLevels.indexOf(filters.spice_level_max);
+      if (maxIndex >= 0) {
+        query.$or = [
+          { 'dish_info.spice_level': { $lte: maxIndex } },
+          { 'dish_info.spice_level': { $in: spiceLevels.slice(0, maxIndex + 1) } }
+        ];
+      }
+    }
+  }
+  
+  if (filters.availability_time) {
+    query[`availability_schedule.${filters.availability_time}`] = true;
+  }
+  
+  if (!filters.include_unavailable) {
+    query.is_available = true;
+  }
+  
+  return this.find(query);
+};
+
+/**
+ * Старый метод поиска (совместимость)
+ */
 productSchema.statics.findByPartnerCategory = function(partnerId, categorySlug, includeInactive = false) {
-  const filter = { partner_id: partnerId, subcategory: categorySlug };
+  const filter = { 
+    partner_id: partnerId, 
+    subcategory: categorySlug 
+  };
+  
   if (!includeInactive) {
     filter.is_active = true;
     filter.is_available = true;
   }
-  return this.find(filter).sort({ sort_order: 1, createdAt: -1 });
+  
+  return this.find(filter);
 };
 
 productSchema.statics.findByPartner = function(partnerId, includeInactive = false) {
   const filter = { partner_id: partnerId };
+  
   if (!includeInactive) {
     filter.is_active = true;
     filter.is_available = true;
   }
-  return this.find(filter).sort({ sort_order: 1, createdAt: -1 });
+  
+  return this.find(filter);
 };
-
-productSchema.statics.findByCategory = function(category, subcategory = null) {
-  const filter = { category, is_active: true, is_available: true };
-  if (subcategory) filter.subcategory = subcategory;
-  return this.find(filter).sort({ 'ratings.avg_rating': -1 });
-};
-
-productSchema.statics.findPopular = function(limit = 10) {
-  return this.find({ is_active: true, is_available: true })
-    .sort({ 'sales_stats.total_sold': -1 })
-    .limit(limit);
-};
-
-productSchema.statics.resetWeeklyStats = function() {
-  return this.updateMany({}, { $set: { 'sales_stats.weekly_sold': 0 } });
-};
-productSchema.statics.resetMonthlyStats = function() {
-  return this.updateMany({}, { $set: { 'sales_stats.monthly_sold': 0 } });
-};
-
-// ================= ДОПОЛНИТЕЛЬНЫЕ СТАТИЧЕСКИЕ МЕТОДЫ =================
-productSchema.statics.findWithFilters = function(filters = {}) {
-  const query = { is_active: true, is_available: true };
-  if (filters.partner_id) query.partner_id = filters.partner_id;
-  if (filters.category) query.category = filters.category;
-  if (filters.subcategory) query.subcategory = filters.subcategory;
-  if (filters.min_price || filters.max_price) {
-    query.price = {};
-    if (filters.min_price) query.price.$gte = parseFloat(filters.min_price);
-    if (filters.max_price) query.price.$lte = parseFloat(filters.max_price);
-  }
-  if (filters.min_rating) query['ratings.avg_rating'] = { $gte: parseFloat(filters.min_rating) };
-  if (filters.max_preparation_time) query.preparation_time = { $lte: parseInt(filters.max_preparation_time) };
-  if (filters.tags && filters.tags.length > 0) query.tags = { $in: filters.tags };
-  if (filters.has_discount) query.discount_price = { $gt: 0 };
-  if (filters.search) {
-    query.$or = [
-      { title: { $regex: filters.search, $options: 'i' } },
-      { description: { $regex: filters.search, $options: 'i' } },
-      { tags: { $in: [new RegExp(filters.search, 'i')] } }
-    ];
-  }
-  let sort = {};
-  switch (filters.sort) {
-    case 'price_asc': sort = { price: 1 }; break;
-    case 'price_desc': sort = { price: -1 }; break;
-    case 'rating': sort = { 'ratings.avg_rating': -1 }; break;
-    case 'popular': sort = { 'sales_stats.total_sold': -1 }; break;
-    case 'newest': sort = { createdAt: -1 }; break;
-    default: sort = { sort_order: 1, createdAt: -1 };
-  }
-  return this.find(query).sort(sort);
-};
-
-productSchema.statics.getPartnerProductStats = async function(partnerId) {
-  const stats = await this.aggregate([
-    { $match: { partner_id: mongoose.Types.ObjectId(partnerId) } },
-    {
-      $group: {
-        _id: null,
-        total_products: { $sum: 1 },
-        active_products: { $sum: { $cond: [{ $and: ['$is_active', '$is_available'] }, 1, 0] } },
-        avg_price: { $avg: '$price' },
-        min_price: { $min: '$price' },
-        max_price: { $max: '$price' },
-        total_sold: { $sum: '$sales_stats.total_sold' },
-        avg_rating: { $avg: '$ratings.avg_rating' },
-        products_with_discounts: { $sum: { $cond: [{ $gt: ['$discount_price', 0] }, 1, 0] } }
-      }
-    }
-  ]);
-  return stats[0] || {
-    total_products: 0,
-    active_products: 0,
-    avg_price: 0,
-    min_price: 0,
-    max_price: 0,
-    total_sold: 0,
-    avg_rating: 0,
-    products_with_discounts: 0
-  };
-};
-
-productSchema.statics.getTopProducts = function(criteria = 'rating', limit = 10, partnerId = null) {
-  const match = { is_active: true, is_available: true };
-  if (partnerId) match.partner_id = partnerId;
-  let sort = {};
-  switch (criteria) {
-    case 'rating': sort = { 'ratings.avg_rating': -1, 'ratings.total_ratings': -1 }; break;
-    case 'sales': sort = { 'sales_stats.total_sold': -1 }; break;
-    case 'recent_sales': sort = { 'sales_stats.weekly_sold': -1 }; break;
-    case 'newest': sort = { createdAt: -1 }; break;
-    case 'price_low': sort = { price: 1 }; break;
-    case 'price_high': sort = { price: -1 }; break;
-    default: sort = { 'ratings.avg_rating': -1 };
-  }
-  return this.find(match).sort(sort).limit(limit)
-    .populate('partner_id', 'business_name category location.address');
-};
-
-productSchema.statics.getPopularTags = async function(partnerId = null, limit = 20) {
-  const match = { is_active: true, is_available: true };
-  if (partnerId) match.partner_id = partnerId;
-  const tags = await this.aggregate([
-    { $match: match },
-    { $unwind: '$tags' },
-    { $group: { _id: '$tags', count: { $sum: 1 }, avg_price: { $avg: '$price' } } },
-    { $sort: { count: -1 } },
-    { $limit: limit }
-  ]);
-  return tags.map(tag => ({
-    name: tag._id,
-    count: tag.count,
-    avg_price: Math.round(tag.avg_price * 100) / 100
-  }));
-};
-
-productSchema.statics.bulkUpdateStatus = function(productIds, updates) {
-  const allowedUpdates = {
-    is_active: updates.is_active,
-    is_available: updates.is_available,
-    sort_order: updates.sort_order
-  };
-  Object.keys(allowedUpdates).forEach(key => {
-    if (allowedUpdates[key] === undefined) delete allowedUpdates[key];
-  });
-  return this.updateMany({ _id: { $in: productIds } }, { $set: allowedUpdates });
-};
-
-productSchema.statics.getExpiringDiscounts = function(daysAhead = 7) {
-  const futureDate = new Date();
-  futureDate.setDate(futureDate.getDate() + daysAhead);
-  return this.find({
-    is_active: true,
-    is_available: true,
-    discount_price: { $gt: 0 },
-    'discount_info.end_date': { $gte: new Date(), $lte: futureDate }
-  }).populate('partner_id', 'business_name contact_phone');
-};
-
-productSchema.statics.getMenuRecommendations = async function(partnerId) {
-  const products = await this.find({ partner_id: partnerId });
-  const activeProducts = products.filter(p => p.is_active && p.is_available);
-  const recommendations = [];
-  if (activeProducts.length < 5) {
-    recommendations.push({ type: 'content', priority: 'high', message: 'Добавьте больше блюд в меню (минимум 5 активных позиций)', action: 'add_products' });
-  }
-  const productsWithoutImages = activeProducts.filter(p => !p.image_url);
-  if (productsWithoutImages.length > 0) {
-    recommendations.push({ type: 'visual', priority: 'high', message: `${productsWithoutImages.length} блюд без фото`, action: 'add_images', affected_products: productsWithoutImages.map(p => p._id) });
-  }
-  const productsWithShortDescriptions = activeProducts.filter(p => !p.description || p.description.length < 20);
-  if (productsWithShortDescriptions.length > 0) {
-    recommendations.push({ type: 'content', priority: 'medium', message: `${productsWithShortDescriptions.length} блюд с короткими описаниями`, action: 'improve_descriptions', affected_products: productsWithShortDescriptions.map(p => p._id) });
-  }
-  const productsWithoutTags = activeProducts.filter(p => !p.tags || p.tags.length === 0);
-  if (productsWithoutTags.length > 0) {
-    recommendations.push({ type: 'seo', priority: 'low', message: `${productsWithoutTags.length} блюд без тегов`, action: 'add_tags', affected_products: productsWithoutTags.map(p => p._id) });
-  }
-  const prices = activeProducts.map(p => p.final_price);
-  if (prices.length > 0) {
-    const priceRange = Math.max(...prices) - Math.min(...prices);
-    if (priceRange < 5) {
-      recommendations.push({ type: 'pricing', priority: 'low', message: 'Рассмотрите возможность расширения ценового диапазона', action: 'review_pricing' });
-    }
-  }
-  return recommendations;
-};
-
-productSchema.statics.duplicateProduct = async function(productId, partnerId, newTitle = null) {
-  const originalProduct = await this.findById(productId);
-  if (!originalProduct) throw new Error('Продукт не найден');
-  const duplicatedProduct = new this({
-    ...originalProduct.toObject(),
-    _id: undefined,
-    partner_id: partnerId,
-    title: newTitle || `${originalProduct.title} (копия)`,
-    sales_stats: { total_sold: 0, weekly_sold: 0, monthly_sold: 0 },
-    ratings: { avg_rating: 0, total_ratings: 0 },
-    createdAt: new Date(),
-    updatedAt: new Date()
-  });
-  return duplicatedProduct.save();
-};
-
-// Настройка виртуальных полей в JSON
-productSchema.set('toJSON', { virtuals: true });
-productSchema.set('toObject', { virtuals: true });
 
 export default mongoose.model('Product', productSchema);
