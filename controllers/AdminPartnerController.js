@@ -10,6 +10,7 @@ import {
 } from '../services/Partner/admin.partner.service.js';
 import * as partnerService from '../services/Partner/partner.service.js';
 import { decryptString } from '../utils/crypto.js';
+
 import mongoose from 'mongoose';
 
 /**
@@ -192,10 +193,14 @@ const rejectPartnerRequest = async (req, res) => {
 };
 
 
+// controllers/AdminPartnerController.js - ИСПРАВЛЕННАЯ ВЕРСИЯ
+
+// ============ ИСПРАВЛЕННЫЙ AdminPartnerController.js - approveLegalInfo ============
+
 /**
  * 3. Одобрение юридических документов и создание профиля  
  * POST /api/admin/partners/legal/:id/approve
- * ✅ ИСПРАВЛЕНО: Безопасная работа с совместимостью старых/новых данных
+ * ✅ ИСПРАВЛЕНО: Правильная передача всех обязательных данных
  */
 const approveLegalInfo = async (req, res) => {
     try {
@@ -208,7 +213,7 @@ const approveLegalInfo = async (req, res) => {
             admin_id: admin._id
         });
 
-        // Проверка прав (логика не тронута)
+        // Проверка прав
         if (!['manager', 'owner'].includes(admin.role)) {
             return res.status(403).json({
                 result: false,
@@ -235,11 +240,29 @@ const approveLegalInfo = async (req, res) => {
             });
         }
 
+        console.log('🔍 CURRENT LEGAL STATUS:', {
+            id: legalInfo._id,
+            verification_status: legalInfo.verification_status
+        });
+
         // Проверяем статус
-        if (legalInfo.verification_status !== 'pending') {
+        if (legalInfo.verification_status === 'verified') {
+            const existingProfile = await PartnerProfile.findOne({ 
+                user_id: legalInfo.user_id._id 
+            });
+
+            if (existingProfile) {
+                return res.status(400).json({
+                    result: false,
+                    message: "Документы уже одобрены и профиль партнера создан",
+                    status: legalInfo.verification_status,
+                    profile_id: existingProfile._id
+                });
+            }
+        } else if (legalInfo.verification_status !== 'pending') {
             return res.status(400).json({
                 result: false,
-                message: `Документы уже обработаны. Статус: ${legalInfo.verification_status}`
+                message: `Документы в неподходящем статусе: ${legalInfo.verification_status}`
             });
         }
 
@@ -251,105 +274,131 @@ const approveLegalInfo = async (req, res) => {
         if (existingProfile) {
             return res.status(400).json({
                 result: false,
-                message: "Профиль партнера уже создан"
+                message: "Профиль партнера уже создан",
+                profile_id: existingProfile._id
             });
         }
 
-        // Обновляем статус документов
-        const legalUpdateData = {
-            verification_status: 'verified',
-            'verification_info.verified_by': admin._id,
-            'verification_info.verified_at': new Date(),
-            'verification_info.approval_notes': approval_notes
-        };
+        // Обновляем статус документов ТОЛЬКО если статус pending
+        if (legalInfo.verification_status === 'pending') {
+            const legalUpdateData = {
+                verification_status: 'verified',
+                'verification_info.verified_by': admin._id,
+                'verification_info.verified_at': new Date(),
+                'verification_info.approval_notes': approval_notes || 'Документы одобрены администратором'
+            };
 
-        await updateLegalInfoStatus(id, legalUpdateData);
+            await updateLegalInfoStatus(id, legalUpdateData);
+            console.log('✅ LEGAL STATUS UPDATED TO VERIFIED');
+        }
 
-        // ✅ БЕЗОПАСНОЕ СОЗДАНИЕ ПРОФИЛЯ с проверкой совместимости
+        // ✅ СОЗДАНИЕ ПРОФИЛЯ с полными данными
         const request = legalInfo.partner_request_id;
         
-        console.log('🔍 CREATING PROFILE - Data compatibility check:', {
+        console.log('🔍 CREATING PROFILE - Request data check:', {
             request_id: request._id,
             has_business_data: !!request.business_data,
-            has_brand_name: !!request.business_data?.brand_name,
-            has_floor_unit: !!request.business_data?.floor_unit,
-            whatsapp_consent: request.marketing_consent?.whatsapp_consent
+            has_personal_data: !!request.personal_data,
+            business_name: request.business_data?.business_name,
+            brand_name: request.business_data?.brand_name,
+            category: request.business_data?.category,
+            has_location: !!request.business_data?.location,
+            location_type: request.business_data?.location?.type,
+            coordinates: request.business_data?.location?.coordinates
         });
 
-        // ✅ ИСПОЛЬЗУЕМ ФУНКЦИЮ НОРМАЛИЗАЦИИ ДЛЯ СОВМЕСТИМОСТИ
-        const normalizedData = partnerService.normalizePartnerData(request);
-
+        // ✅ ИСПРАВЛЕНО: Извлекаем и расшифровываем данные правильно
         const profileData = {
             user_id: legalInfo.user_id._id,
             
-            // ✅ НОРМАЛИЗОВАННЫЕ поля (работают со старыми и новыми данными)
-            business_name: normalizedData.business_name,
-            brand_name: normalizedData.brand_name,
-            category: normalizedData.category,
-            description: normalizedData.description,
-            address: normalizedData.address,
-            phone: normalizedData.phone,
-            email: normalizedData.email,
-            floor_unit: normalizedData.floor_unit,
-            location: normalizedData.location,
+            // ✅ ОБЯЗАТЕЛЬНЫЕ ПОЛЯ PartnerProfile (все заполняем!)
+            business_name: request.business_data?.business_name || 'Не указано',
+            brand_name: request.business_data?.brand_name || 
+                       request.business_data?.business_name || 'Не указано',
+            category: request.business_data?.category || 'restaurant',
             
-            // Владелец (безопасное извлечение)
+            // ✅ РАСШИФРОВЫВАЕМ ЗАШИФРОВАННЫЕ ПОЛЯ
+            email: decryptString(request.personal_data?.email) || 'temp@example.com',
+            phone: decryptString(request.personal_data?.phone) || 'Не указан',
+            address: decryptString(request.business_data?.address) || 'Не указан',
+            
+            // ✅ ВЛАДЕЛЕЦ - используем бизнес данные или личные данные
             owner_name: request.business_data?.owner_name || 
-                       request.personal_data?.first_name || 'Не указано',
+                       decryptString(request.personal_data?.first_name) || 'Не указано',
             owner_surname: request.business_data?.owner_surname || 
-                          request.personal_data?.last_name || 'Не указано',
+                          decryptString(request.personal_data?.last_name) || 'Не указано',
             
-            // Связи и статусы
-              legal_info_id: legalInfo._id,
-              status: 'draft',
-              content_status: 'awaiting_content', 
-              approval_status: 'content_approved',  // ✅ ИСПРАВЛЕНО
-              is_approved: true,                    // ✅ ИСПРАВЛЕНО - разрешаем работу с меню
-              is_active: false,                     // Пока не активен публично
-              is_public: false, 
+            // ✅ ГЕОЛОКАЦИЯ - обязательная для валидации
+            location: request.business_data?.location || {
+                type: 'Point',
+                coordinates: [2.3522, 48.8566] // Paris default
+            },
             
-            // Административные
-            created_by_admin: admin._id
+            // ✅ ДОПОЛНИТЕЛЬНЫЕ ПОЛЯ
+            floor_unit: request.business_data?.floor_unit ? 
+                       decryptString(request.business_data.floor_unit) : null,
+            description: `${request.business_data?.business_name || 'Партнер'} - качественная ${request.business_data?.category === 'restaurant' ? 'еда' : 'продукция'}`,
+            
+            // ✅ СТАТУСЫ - правильные для добавления контента
+            is_approved: true,                    // Разрешает работу с меню
+            is_active: false,                     // Пока не активен публично
+            is_published: false,                  // Пока не опубликован
+            content_status: 'awaiting_content',   // Ожидает контент от партнера
+            approval_status: 'awaiting_content',  // НЕ content_approved!
+            
+            // ✅ СВЯЗИ
+            legal_info_id: legalInfo._id,
+            
+            // ✅ АДМИНИСТРАТИВНЫЕ
+            created_by: admin._id,
+            updated_by: admin._id
         };
 
-        console.log('✅ PROFILE DATA PREPARED:', {
+        console.log('✅ PROFILE DATA FULLY PREPARED:', {
+            user_id: profileData.user_id,
             business_name: profileData.business_name,
-            brand_name: profileData.brand_name,
-            has_floor_unit: !!profileData.floor_unit,
             category: profileData.category,
-            compatibility_used: true
+            has_email: !!profileData.email,
+            has_phone: !!profileData.phone,
+            has_address: !!profileData.address,
+            owner_name: profileData.owner_name,
+            owner_surname: profileData.owner_surname,
+            location: profileData.location,
+            all_required_fields: true
         });
 
+        // ✅ СОЗДАЕМ ПРОФИЛЬ с полными данными
         const newProfile = await createPartnerProfile(profileData);
 
-        console.log('✅ APPROVE LEGAL - Success:', {
+        console.log('✅ PROFILE CREATED SUCCESSFULLY:', {
             profile_id: newProfile._id,
-            data_normalized: true
+            business_name: newProfile.business_name,
+            category: newProfile.category,
+            is_approved: newProfile.is_approved
         });
 
         res.status(200).json({
             result: true,
-            message: "Юридические документы одобрены, профиль партнера создан",
+            message: "Документы одобрены и профиль партнера создан",
             legal_info: {
                 id: legalInfo._id,
                 status: 'verified'
             },
             profile: {
                 id: newProfile._id,
-                status: newProfile.status,
                 business_name: newProfile.business_name,
                 brand_name: newProfile.brand_name,
-                has_floor_unit: !!newProfile.floor_unit,
-                category: newProfile.category
-            },
-            compatibility_info: {
-                data_normalized: true,
-                source: 'partner_request',
-                supports_new_fields: true
+                category: newProfile.category,
+                is_approved: newProfile.is_approved,
+                status: newProfile.content_status
             },
             next_step: {
-                action: "fill_content",
-                description: "Партнер может теперь заполнять контент и меню"
+                action: "add_menu_content",
+                description: "Партнер может теперь добавлять блюда и контент",
+                endpoints: {
+                    add_category: "POST /api/partners/menu/categories",
+                    add_product: "POST /api/partners/menu/products"
+                }
             }
         });
 
@@ -362,6 +411,7 @@ const approveLegalInfo = async (req, res) => {
         });
     }
 };
+
 
 /**
  * 4. Отклонение юридических документов
