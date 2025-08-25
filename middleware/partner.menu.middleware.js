@@ -1,11 +1,11 @@
-// ================ middleware/partner.menu.middleware.js (НОВЫЙ MIDDLEWARE) ================
+// ================ middleware/partner.menu.middleware.js (ИСПРАВЛЕННЫЙ) ================
 import { PartnerProfile, Product } from '../models/index.js';
 
 /**
  * Проверка прав на управление меню
  * Только партнеры с созданным профилем
  */
- const requireMenuAccess = async (req, res, next) => {
+const requireMenuAccess = async (req, res, next) => {
     try {
         const { user } = req;
 
@@ -43,7 +43,7 @@ import { PartnerProfile, Product } from '../models/index.js';
 
         console.log('✅ MENU ACCESS GRANTED');
         req.partner = user;
-        req.partnerProfile = partner;
+        req.partnerProfile = partner; // Передаем профиль для использования в других middleware
 
         next();
 
@@ -58,14 +58,17 @@ import { PartnerProfile, Product } from '../models/index.js';
 
 /**
  * Валидация данных категории меню
+ * ✅ ТОЛЬКО ВАЛИДАЦИЯ - НЕТ РАБОТЫ С МОДЕЛЯМИ
  */
- const validateMenuCategoryData = (req, res, next) => {
+const validateMenuCategoryData = (req, res, next) => {
     try {
         const { name, description, image_url, sort_order } = req.body;
 
         console.log('🔍 VALIDATE MENU CATEGORY DATA:', {
             has_name: !!name,
-            name_length: name ? name.length : 0
+            name_length: name ? name.length : 0,
+            has_description: !!description,
+            has_image: !!image_url
         });
 
         // Валидация названия
@@ -120,17 +123,19 @@ import { PartnerProfile, Product } from '../models/index.js';
 };
 
 /**
- * Валидация данных продукта с логикой ресторан/магазин
+ * Валидация данных продукта с учетом типа заведения
+ * ✅ ИСПОЛЬЗУЕТ req.partnerProfile из requireMenuAccess
  */
- const validateProductData = async (req, res, next) => {
+const validateProductData = (req, res, next) => {
     try {
-        const { user } = req;
+        const { partnerProfile } = req; // Получаем из предыдущего middleware
         const { 
             title, price, subcategory, options_groups, 
-            preparation_time, discount_price 
+            preparation_time, discount_price, product_info 
         } = req.body;
 
         console.log('🔍 VALIDATE PRODUCT DATA:', {
+            partner_category: partnerProfile.category,
             has_title: !!title,
             has_price: !!price,
             has_options: !!options_groups,
@@ -148,6 +153,14 @@ import { PartnerProfile, Product } from '../models/index.js';
                     message: `Обязательные поля: ${missingFields.join(', ')}`
                 });
             }
+        }
+
+        // Валидация названия
+        if (title && title.length > 150) {
+            return res.status(400).json({
+                result: false,
+                message: "Название продукта не должно превышать 150 символов"
+            });
         }
 
         // Валидация цены
@@ -187,59 +200,109 @@ import { PartnerProfile, Product } from '../models/index.js';
             }
         }
 
-        // ✅ ВАЛИДАЦИЯ ДОБАВОК В ЗАВИСИМОСТИ ОТ КАТЕГОРИИ ПАРТНЕРА
-        if (options_groups !== undefined) {
-            // Получаем профиль партнера для проверки категории
-            const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
-            
-            if (partnerProfile) {
-                if (partnerProfile.category === 'store' && options_groups && options_groups.length > 0) {
+        // ✅ БИЗНЕС-ЛОГИКА: РЕСТОРАН vs МАГАЗИН
+        if (partnerProfile.category === 'restaurant') {
+            // 🍽️ РЕСТОРАН: Валидация добавок
+            if (options_groups && Array.isArray(options_groups)) {
+                for (let i = 0; i < options_groups.length; i++) {
+                    const group = options_groups[i];
+                    
+                    if (!group.name || typeof group.name !== 'string') {
+                        return res.status(400).json({
+                            result: false,
+                            message: `Группа добавок ${i + 1}: отсутствует название`
+                        });
+                    }
+
+                    if (group.name.length > 50) {
+                        return res.status(400).json({
+                            result: false,
+                            message: `Группа "${group.name}": название не должно превышать 50 символов`
+                        });
+                    }
+
+                    if (!group.options || !Array.isArray(group.options) || group.options.length === 0) {
+                        return res.status(400).json({
+                            result: false,
+                            message: `Группа "${group.name}": должна содержать минимум одну опцию`
+                        });
+                    }
+
+                    // Валидация опций
+                    for (let j = 0; j < group.options.length; j++) {
+                        const option = group.options[j];
+                        
+                        if (!option.name || typeof option.name !== 'string') {
+                            return res.status(400).json({
+                                result: false,
+                                message: `Опция ${j + 1} в группе "${group.name}": отсутствует название`
+                            });
+                        }
+
+                        if (option.name.length > 50) {
+                            return res.status(400).json({
+                                result: false,
+                                message: `Опция "${option.name}": название не должно превышать 50 символов`
+                            });
+                        }
+
+                        if (typeof option.price !== 'number' || option.price < 0) {
+                            return res.status(400).json({
+                                result: false,
+                                message: `Опция "${option.name}": цена должна быть неотрицательным числом`
+                            });
+                        }
+                    }
+                }
+            }
+        } else if (partnerProfile.category === 'store') {
+            // 🏪 МАГАЗИН: Запрет добавок + валидация упаковки
+            if (options_groups && options_groups.length > 0) {
+                return res.status(400).json({
+                    result: false,
+                    message: "Магазины не могут добавлять опции к товарам",
+                    business_rule: "Только рестораны поддерживают добавки к блюдам",
+                    partner_category: partnerProfile.category
+                });
+            }
+
+            // Валидация информации об упаковке
+            if (product_info) {
+                if (product_info.weight_grams && (typeof product_info.weight_grams !== 'number' || product_info.weight_grams <= 0)) {
                     return res.status(400).json({
                         result: false,
-                        message: "Магазины не могут добавлять опции к товарам",
-                        business_rule: "Только рестораны поддерживают добавки к блюдам",
-                        partner_category: partnerProfile.category
+                        message: "Вес товара должен быть положительным числом"
                     });
                 }
 
-                if (partnerProfile.category === 'restaurant' && options_groups && Array.isArray(options_groups)) {
-                    // Валидация структуры добавок для ресторанов
-                    for (let i = 0; i < options_groups.length; i++) {
-                        const group = options_groups[i];
-                        
-                        if (!group.name || typeof group.name !== 'string') {
-                            return res.status(400).json({
-                                result: false,
-                                message: `Группа добавок ${i + 1}: отсутствует название`
-                            });
-                        }
+                if (product_info.volume_ml && (typeof product_info.volume_ml !== 'number' || product_info.volume_ml <= 0)) {
+                    return res.status(400).json({
+                        result: false,
+                        message: "Объём товара должен быть положительным числом"
+                    });
+                }
 
-                        if (!group.options || !Array.isArray(group.options) || group.options.length === 0) {
-                            return res.status(400).json({
-                                result: false,
-                                message: `Группа "${group.name}": должна содержать минимум одну опцию`
-                            });
-                        }
+                if (product_info.unit_count && (typeof product_info.unit_count !== 'number' || product_info.unit_count < 1)) {
+                    return res.status(400).json({
+                        result: false,
+                        message: "Количество единиц должно быть минимум 1"
+                    });
+                }
 
-                        // Валидация опций
-                        for (let j = 0; j < group.options.length; j++) {
-                            const option = group.options[j];
-                            
-                            if (!option.name || typeof option.name !== 'string') {
-                                return res.status(400).json({
-                                    result: false,
-                                    message: `Опция ${j + 1} в группе "${group.name}": отсутствует название`
-                                });
-                            }
+                // Валидация штрих-кода EAN13
+                if (product_info.barcode_ean13 && !/^\d{13}$/.test(product_info.barcode_ean13)) {
+                    return res.status(400).json({
+                        result: false,
+                        message: "Штрих-код EAN13 должен содержать ровно 13 цифр"
+                    });
+                }
 
-                            if (typeof option.price !== 'number' || option.price < 0) {
-                                return res.status(400).json({
-                                    result: false,
-                                    message: `Опция "${option.name}": цена должна быть неотрицательным числом`
-                                });
-                            }
-                        }
-                    }
+                // Валидация штрих-кода EAN8
+                if (product_info.barcode_ean8 && !/^\d{8}$/.test(product_info.barcode_ean8)) {
+                    return res.status(400).json({
+                        result: false,
+                        message: "Штрих-код EAN8 должен содержать ровно 8 цифр"
+                    });
                 }
             }
         }
@@ -259,7 +322,7 @@ import { PartnerProfile, Product } from '../models/index.js';
 /**
  * Проверка прав на управление конкретной категорией
  */
- const checkCategoryOwnership = async (req, res, next) => {
+const checkCategoryOwnership = async (req, res, next) => {
     try {
         const { user } = req;
         const { category_id } = req.params;
@@ -307,7 +370,7 @@ import { PartnerProfile, Product } from '../models/index.js';
 /**
  * Проверка прав на управление конкретным продуктом
  */
- const checkProductOwnership = async (req, res, next) => {
+const checkProductOwnership = async (req, res, next) => {
     try {
         const { user } = req;
         const { product_id } = req.params;
@@ -361,4 +424,4 @@ export {
     validateProductData,
     checkCategoryOwnership,
     checkProductOwnership
-}
+};
