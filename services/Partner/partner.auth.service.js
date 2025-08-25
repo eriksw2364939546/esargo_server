@@ -158,12 +158,11 @@ const createPartnerAccount = async (data) => {
             workflow_stage: savedRequest.workflow_stage
         });
 
-        // Генерируем JWT токен
-        const token = generateJWT({
-            user_id: newUser._id,
-            email: email,
-            role: 'partner'
-        });
+const token = generateCustomerToken({
+    _id: newUser._id,
+    email: email,
+    role: 'partner'
+}, '30d');
 
         return {
             token,

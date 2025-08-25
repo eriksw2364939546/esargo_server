@@ -761,7 +761,7 @@ const getPartnerMenuStats = async (partnerId) => {
 
         console.log('🔍 GET PARTNER MENU STATS:', { partnerId });
 
-        // ✅ ИСПРАВЛЕНО: Правильный поиск по user_id
+        // Находим профиль партнера
         const partner = await PartnerProfile.findOne({ 
             user_id: new mongoose.Types.ObjectId(partnerId) 
         });
@@ -770,29 +770,104 @@ const getPartnerMenuStats = async (partnerId) => {
             throw new Error('Профиль партнера не найден');
         }
 
-        // Обновляем статистику
-        await partner.updateProductStats();
-
-        // Получаем полную статистику через метод модели
-        const fullStats = await partner.getMenuStatistics();
-
-        console.log('✅ STATS GENERATED:', {
-            total_categories: fullStats.overview.total_categories,
-            total_products: fullStats.overview.total_products,
-            completion_percentage: fullStats.overview.completion_percentage
+        // Получаем все продукты партнера
+        const allProducts = await Product.find({ 
+            partner_id: partner._id 
         });
 
-        return {
-            ...fullStats,
-            business_features: {
-                type: partner.category,
-                supports_options: partner.category === 'restaurant',
-                supports_packaging: partner.category === 'store',
-                preparation_time_enabled: partner.category === 'restaurant',
-                multilingual_support: true,
-                french_compliance: partner.category === 'store' // Штрих-коды и происхождение для магазинов
-            }
+        const activeProducts = allProducts.filter(p => p.is_active && p.is_available);
+        const inactiveProducts = allProducts.filter(p => !p.is_active || !p.is_available);
+
+        // Статистика по категориям
+        const categoryStats = partner.menu_categories.map(category => {
+            const categoryProducts = allProducts.filter(p => p.subcategory === category.slug);
+            const activeCategoryProducts = activeProducts.filter(p => p.subcategory === category.slug);
+
+            return {
+                category: {
+                    id: category._id,
+                    name: category.name,
+                    slug: category.slug,
+                    description: category.description
+                },
+                products: {
+                    total: categoryProducts.length,
+                    active: activeCategoryProducts.length,
+                    inactive: categoryProducts.length - activeCategoryProducts.length
+                },
+                pricing: {
+                    avg_price: activeCategoryProducts.length > 0 
+                        ? (activeCategoryProducts.reduce((sum, p) => sum + p.final_price, 0) / activeCategoryProducts.length).toFixed(2) 
+                        : 0,
+                    min_price: activeCategoryProducts.length > 0 
+                        ? Math.min(...activeCategoryProducts.map(p => p.final_price)).toFixed(2) 
+                        : 0,
+                    max_price: activeCategoryProducts.length > 0 
+                        ? Math.max(...activeCategoryProducts.map(p => p.final_price)).toFixed(2) 
+                        : 0
+                },
+                features: {
+                    has_discounts: categoryProducts.some(p => p.discount_price && p.discount_price > 0),
+                    has_options: categoryProducts.some(p => p.options_groups && p.options_groups.length > 0),
+                    avg_preparation_time: partner.category === 'restaurant' && categoryProducts.length > 0 
+                        ? Math.round(categoryProducts.reduce((sum, p) => sum + (p.preparation_time || 0), 0) / categoryProducts.length) 
+                        : 0
+                }
+            };
+        });
+
+        // Общая статистика
+        const avgPrice = activeProducts.length > 0 
+            ? activeProducts.reduce((sum, p) => sum + p.final_price, 0) / activeProducts.length 
+            : 0;
+
+        const minPrice = activeProducts.length > 0 
+            ? Math.min(...activeProducts.map(p => p.final_price)) 
+            : 0;
+
+        const maxPrice = activeProducts.length > 0 
+            ? Math.max(...activeProducts.map(p => p.final_price)) 
+            : 0;
+
+        const statsResult = {
+            overview: {
+                total_categories: partner.menu_categories.length,
+                total_products: allProducts.length,
+                active_products: activeProducts.length,
+                inactive_products: inactiveProducts.length,
+                completion_percentage: partner.menu_categories.length > 0 
+                    ? Math.round((partner.menu_categories.filter(cat => 
+                        allProducts.some(p => p.subcategory === cat.slug)
+                      ).length / partner.menu_categories.length) * 100)
+                    : 0
+            },
+            pricing: {
+                avg_price: avgPrice.toFixed(2),
+                min_price: minPrice.toFixed(2),
+                max_price: maxPrice.toFixed(2),
+                products_with_discounts: allProducts.filter(p => p.discount_price && p.discount_price > 0).length,
+                discount_percentage: allProducts.length > 0 
+                    ? Math.round((allProducts.filter(p => p.discount_price && p.discount_price > 0).length / allProducts.length) * 100)
+                    : 0
+            },
+            categories: categoryStats,
+            business_info: {
+                business_name: partner.business_name,
+                category: partner.category,
+                is_approved: partner.is_approved,
+                is_active: partner.is_active,
+                content_status: partner.content_status
+            },
+            last_updated: new Date()
         };
+
+        console.log('✅ STATS GENERATED:', {
+            total_categories: statsResult.overview.total_categories,
+            total_products: statsResult.overview.total_products,
+            completion_percentage: statsResult.overview.completion_percentage
+        });
+
+        return statsResult;
 
     } catch (error) {
         console.error('🚨 GET PARTNER MENU STATS ERROR:', error);

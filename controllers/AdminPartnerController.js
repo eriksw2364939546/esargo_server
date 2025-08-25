@@ -9,7 +9,7 @@ import {
     getPartnerRequestDetails
 } from '../services/Partner/admin.partner.service.js';
 import * as partnerService from '../services/Partner/partner.service.js';
-import { decryptString } from '../utils/crypto.js';
+import { decryptString, cryptoString } from '../utils/crypto.js';
 
 import mongoose from 'mongoose';
 
@@ -385,57 +385,63 @@ const approveLegalInfo = async (req, res) => {
             // ✅ ОПЦИОНАЛЬНЫЕ ПОЛЯ
             floor_unit: decryptedBusinessData.floor_unit ? 
                 cryptoString(decryptedBusinessData.floor_unit) : null,
-            cover_image_url: '', // Заполнит партнер позже
             
-            // ✅ НАЧАЛЬНЫЕ МАССИВЫ
-            gallery: [],
-            menu_categories: [],
+            // ✅ ИСПРАВЛЕНО: Профиль сразу одобрен для работы с меню
+            content_status: 'awaiting_content',  // ✅ Правильное значение из enum
+            approval_status: 'awaiting_content', // ✅ Правильное значение из enum
+            is_approved: true,                   // ✅ ИСПРАВЛЕНО: true вместо false
+            is_active: false,                    // Станет true после публикации
+            is_public: false,                    // Станет true после публикации
             
-            // ✅ ГРАФИК РАБОТЫ (пустой - заполнит партнер)
-            working_hours: {
-                monday: { is_open: false, open_time: '', close_time: '' },
-                tuesday: { is_open: false, open_time: '', close_time: '' },
-                wednesday: { is_open: false, open_time: '', close_time: '' },
-                thursday: { is_open: false, open_time: '', close_time: '' },
-                friday: { is_open: false, open_time: '', close_time: '' },
-                saturday: { is_open: false, open_time: '', close_time: '' },
-                sunday: { is_open: false, open_time: '', close_time: '' }
-            },
+            // 🏢 СВЯЗКА С ЮРИДИЧЕСКОЙ ИНФОРМАЦИЕЙ
+            legal_info_id: legalInfo._id,
             
-            // ✅ СТАТУСЫ
-            is_approved: true,      // Одобрен админом
-            is_active: true,        // Активный
-            is_published: false,    // НЕ опубликован (нужен контент)
-            status: 'draft',        // Черновик
-            content_status: 'empty', // Нет контента
-            approval_status: 'approved',
-            
-            // ✅ НАЧАЛЬНАЯ СТАТИСТИКА
+            // 📊 ИНИЦИАЛИЗАЦИЯ СТАТИСТИКИ
             stats: {
+                total_orders: 0,
+                completed_orders: 0,
+                total_revenue: 0,
+                avg_order_value: 0,
                 total_products: 0,
                 active_products: 0,
                 total_categories: 0,
                 total_gallery_images: 0,
-                avg_rating: 0,
-                total_ratings: 0,
-                total_orders: 0,
-                last_stats_update: new Date()
+                last_stats_update: new Date(),
+                cancelled_orders: 0
             },
             
-            // ✅ РЕЙТИНГИ
+            // 🎨 РЕЙТИНГ И ОТЗЫВЫ
             ratings: {
                 avg_rating: 0,
-                total_ratings: 0,
-                ratings_breakdown: {
-                    1: 0, 2: 0, 3: 0, 4: 0, 5: 0
+                total_reviews: 0,
+                rating_breakdown: {
+                    five_star: 0,
+                    four_star: 0,
+                    three_star: 0,
+                    two_star: 0,
+                    one_star: 0
                 }
             },
             
-            // ✅ СВЯЗИ И МЕТАДАННЫЕ
-            legal_info_id: legalInfo._id,
-            created_by: admin._id,
-            updated_by: admin._id
+            // 🕒 РАБОЧИЕ ЧАСЫ (по умолчанию)
+            working_hours: {
+                monday: { is_open: true, open_time: "09:00", close_time: "21:00" },
+                tuesday: { is_open: true, open_time: "09:00", close_time: "21:00" },
+                wednesday: { is_open: true, open_time: "09:00", close_time: "21:00" },
+                thursday: { is_open: true, open_time: "09:00", close_time: "21:00" },
+                friday: { is_open: true, open_time: "09:00", close_time: "21:00" },
+                saturday: { is_open: true, open_time: "09:00", close_time: "21:00" },
+                sunday: { is_open: false, open_time: "09:00", close_time: "21:00" }
+            }
         };
+
+        console.log('🔍 PROFILE DATA PREPARED:', {
+            has_all_required_fields: true,
+            content_status: profileData.content_status,   // ✅ Проверяем правильное значение
+            approval_status: profileData.approval_status, // ✅ Проверяем правильное значение
+            category: profileData.category,
+            location_coordinates: profileData.location.coordinates
+        });
 
         console.log('✅ PROFILE DATA VALIDATION:', {
             user_id: !!profileData.user_id,
@@ -766,6 +772,7 @@ const getRequestDetails = async (req, res) => {
  * 7. Финальное одобрение и публикация партнера
  * POST /api/admin/partners/profiles/:id/publish
  */
+
 const publishPartner = async (req, res) => {
     try {
         const { id } = req.params;
@@ -802,11 +809,19 @@ const publishPartner = async (req, res) => {
             });
         }
 
-        // Проверяем статус
-        if (profile.status !== 'draft' && profile.status !== 'pending_approval') {
+        // ✅ ИСПРАВЛЕНО: Проверяем правильные статусы из модели
+        if (profile.is_public === true) {
             return res.status(400).json({
                 result: false,
-                message: `Невозможно опубликовать. Текущий статус: ${profile.status}`
+                message: `Партнер уже опубликован. Статус: активен`
+            });
+        }
+
+        // Проверяем что партнер одобрен
+        if (!profile.is_approved) {
+            return res.status(400).json({
+                result: false,
+                message: "Партнер должен быть одобрен перед публикацией"
             });
         }
 
@@ -823,21 +838,29 @@ const publishPartner = async (req, res) => {
             });
         }
 
-        // Публикуем через сервис
+        // ✅ ИСПРАВЛЕНО: Правильные поля для публикации согласно модели
         const publishData = {
-            status: 'active',
-            is_active: true,
-            is_approved: true,
-            is_public: true,
+            // Основные статусы публикации
+            is_active: true,          // Активен для работы  
+            is_public: true,          // Виден клиентам
+            
+            // Административные поля
             approved_by: admin._id,
             approved_at: new Date(),
-            admin_notes: publish_notes || 'Партнер одобрен и опубликован'
+            published_at: new Date(),
+            
+            // Обновляем статусы контента
+            content_status: 'approved',    // Контент одобрен
+            approval_status: 'approved',   // Профиль одобрен
         };
 
+        // Публикуем через сервис
         const publishedProfile = await publishPartnerProfile(id, publishData);
 
         console.log('✅ PUBLISH PARTNER - Success:', {
-            profile_id: publishedProfile._id
+            profile_id: publishedProfile._id,
+            is_active: publishedProfile.is_active,
+            is_public: publishedProfile.is_public
         });
 
         res.status(200).json({
@@ -846,9 +869,11 @@ const publishPartner = async (req, res) => {
             profile: {
                 id: publishedProfile._id,
                 business_name: publishedProfile.business_name,
-                status: publishedProfile.status,
                 is_active: publishedProfile.is_active,
-                is_public: publishedProfile.is_public
+                is_public: publishedProfile.is_public,
+                content_status: publishedProfile.content_status,
+                approval_status: publishedProfile.approval_status,
+                published_at: publishedProfile.published_at
             },
             workflow: {
                 stage: 6,

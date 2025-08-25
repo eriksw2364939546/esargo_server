@@ -588,7 +588,7 @@ const updateProfile = async (req, res) => {
         });
 
         // ✅ ВСЯ ЛОГИКА В СЕРВИСЕ
-        const updatedProfile = await partnerService.updatePartnerProfile(id, updateData, partner._id);
+        const updatedProfile = await partnerService.updatePartnerProfile(partner._id, updateData);
 
         res.status(200).json({
             result: true,
