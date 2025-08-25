@@ -7,13 +7,20 @@ import {
     rejectLegalInfo,
     getAllRequests,
     getRequestDetails,
-    publishPartner
+    publishPartner,
+    getAllProfiles,   
+    getProfileDetails
 } from '../controllers/AdminPartnerController.js';
 import { checkAdminToken, checkAccessByGroup } from '../middleware/adminAuth.middleware.js';
 
 const router = express.Router();
 
 // ================ ПРОСМОТР (любой админ) ================
+// GET /api/admin/partners/profiles - Получение всех профилей
+router.get('/profiles', checkAdminToken, getAllProfiles);
+
+// GET /api/admin/partners/profiles/:id - Получение профиля по ID  
+router.get('/profiles/:id', checkAdminToken, getProfileDetails);
 
 // GET /api/admin/partners/requests - Получение всех заявок
 router.get('/requests', checkAdminToken, getAllRequests);

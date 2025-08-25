@@ -767,6 +767,93 @@ const getRequestDetails = async (req, res) => {
         });
     }
 };
+const getAllProfiles = async (req, res) => {
+    try {
+        const { admin } = req;
+        const { 
+            category, 
+            is_active,
+            is_public,
+            page = 1, 
+            limit = 10,
+            sortBy = 'createdAt',
+            sortOrder = 'desc'
+        } = req.query;
+
+        // Строим фильтры
+        const filters = {};
+        if (category) filters.category = category;
+        if (is_active !== undefined) filters.is_active = is_active === 'true';
+        if (is_public !== undefined) filters.is_public = is_public === 'true';
+
+        const skip = (page - 1) * limit;
+        const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+
+        const profiles = await PartnerProfile
+            .find(filters)
+            .select('business_name brand_name category is_active is_public content_status approval_status createdAt updatedAt stats')
+            .sort(sort)
+            .skip(skip)
+            .limit(parseInt(limit));
+
+        const total = await PartnerProfile.countDocuments(filters);
+
+        res.status(200).json({
+            result: true,
+            message: "Список профилей получен",
+            profiles: profiles,
+            pagination: {
+                current_page: parseInt(page),
+                total_pages: Math.ceil(total / limit),
+                total_items: total,
+                items_per_page: parseInt(limit)
+            }
+        });
+
+    } catch (error) {
+        console.error('GET ALL PROFILES - Error:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка при получении профилей",
+            error: error.message
+        });
+    }
+};
+
+const getProfileDetails = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                result: false,
+                message: "Неверный ID профиля"
+            });
+        }
+
+        const profile = await PartnerProfile.findById(id);
+        if (!profile) {
+            return res.status(404).json({
+                result: false,
+                message: "Профиль не найден"
+            });
+        }
+
+        res.status(200).json({
+            result: true,
+            message: "Детали профиля получены",
+            profile: profile
+        });
+
+    } catch (error) {
+        console.error('GET PROFILE DETAILS - Error:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка при получении деталей профиля",
+            error: error.message
+        });
+    }
+};
 
 /**
  * 7. Финальное одобрение и публикация партнера
@@ -901,5 +988,7 @@ export {
     rejectLegalInfo,
     getAllRequests,
     getRequestDetails,
+    getAllProfiles,
+    getProfileDetails,
     publishPartner
 };
