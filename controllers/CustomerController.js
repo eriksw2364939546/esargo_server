@@ -1,4 +1,4 @@
-// controllers/CustomerController.js (обновленный с сервисным слоем)
+// controllers/CustomerController.js (обновленный)
 import { 
   createCustomerAccount, 
   loginCustomer, 
@@ -7,100 +7,41 @@ import {
 import { 
   getCustomerProfile, 
   updateCustomerProfile, 
-  deleteCustomer,
-  addDeliveryAddress,
-  updateDeliveryAddress,
-  removeDeliveryAddress
+  deleteCustomerProfile,
+  addDeliveryAddress
 } from '../services/customer.service.js';
 import { generateCustomerToken } from '../services/token.service.js';
-import mongoose from 'mongoose';
 
-// ===== РЕГИСТРАЦИЯ КЛИЕНТА =====
-export const register = async (req, res) => {
+// ===== РЕГИСТРАЦИЯ =====
+const register = async (req, res) => {
   try {
-    const {
-      first_name,
-      last_name,
-      email,
-      phone,
-      password,
-      confirm_password,
-      gdpr_consent = true
-    } = req.body;
+    const { first_name, last_name, email, phone, password } = req.body;
 
-    // Валидация обязательных полей
-    if (!first_name || !last_name || !email || !phone || !password || !confirm_password) {
-      return res.status(400).json({
-        result: false,
-        message: "Все поля обязательны для заполнения"
-      });
-    }
-
-    // Проверка подтверждения пароля
-    if (password !== confirm_password) {
-      return res.status(400).json({
-        result: false,
-        message: "Пароли не совпадают"
-      });
-    }
-
-    // Проверка формата email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({
-        result: false,
-        message: "Некорректный формат email"
-      });
-    }
-
-    // Проверка длины пароля
-    if (password.length < 6) {
-      return res.status(400).json({
-        result: false,
-        message: "Пароль должен содержать минимум 6 символов"
-      });
-    }
-
-    // Проверка формата телефона (французский формат)
-    const phoneRegex = /^(\+33|0)[1-9](\d{8})$/;
-    if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
-      return res.status(400).json({
-        result: false,
-        message: "Некорректный формат телефона. Используйте французский формат."
-      });
-    }
-
-    // Проверка согласия с условиями
-    if (!gdpr_consent) {
-      return res.status(400).json({
-        result: false,
-        message: "Необходимо согласие с условиями использования и политикой конфиденциальности"
-      });
-    }
-
-    // Создаем аккаунт через сервис
-    const newCustomerData = await createCustomerAccount({
-      first_name,
-      last_name,
-      email,
-      phone,
-      password
-    });
-
-    // Проверяем, новый ли это клиент
+    // Данные уже прошли валидацию в middleware
+    const customerData = { first_name, last_name, email, phone, password };
+    
+    // Создание аккаунта через сервис
+    const newCustomerData = await createCustomerAccount(customerData);
+    
+    // Если клиент уже существует
     if (!newCustomerData.isNewCustomer) {
-      return res.status(400).json({
+      return res.status(409).json({
         result: false,
         message: "Пользователь с таким email уже существует"
       });
     }
 
-    // Генерируем токен
-    const token = generateCustomerToken(newCustomerData.customer, '30d');
+    // Генерируем токен для нового клиента
+    const token = generateCustomerToken({
+      user_id: newCustomerData.customer._id,
+      _id: newCustomerData.customer._id,
+      email: newCustomerData.customer.email,
+      role: newCustomerData.customer.role
+    }, '30d');
 
     res.status(201).json({
       result: true,
-      message: "Регистрация прошла успешно!",
+      message: "Регистрация выполнена успешно",
       user: {
         id: newCustomerData.customer._id,
         email: newCustomerData.customer.email,
@@ -116,6 +57,16 @@ export const register = async (req, res) => {
 
   } catch (error) {
     console.error('Registration error:', error);
+    
+    // Обработка ошибок валидации
+    if (error.validationErrors) {
+      return res.status(400).json({
+        result: false,
+        message: "Ошибки валидации",
+        errors: error.validationErrors
+      });
+    }
+    
     res.status(500).json({
       result: false,
       message: "Ошибка при регистрации",
@@ -125,7 +76,7 @@ export const register = async (req, res) => {
 };
 
 // ===== АВТОРИЗАЦИЯ =====
-export const login = async (req, res) => {
+const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -155,14 +106,13 @@ export const login = async (req, res) => {
     
     res.status(statusCode).json({
       result: false,
-      message: error.message || "Ошибка при входе",
-      error: error.message
+      message: error.message || "Ошибка при входе"
     });
   }
 };
 
 // ===== ВЕРИФИКАЦИЯ ТОКЕНА =====
-export const verify = async (req, res) => {
+const verify = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
 
@@ -199,14 +149,13 @@ export const verify = async (req, res) => {
     console.error('Verify error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка при верификации",
-      error: error.message
+      message: "Ошибка при верификации"
     });
   }
 };
 
 // ===== ПОЛУЧЕНИЕ ПРОФИЛЯ =====
-export const getProfile = async (req, res) => {
+const getProfile = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
 
@@ -222,7 +171,7 @@ export const getProfile = async (req, res) => {
 
     res.status(200).json({
       result: true,
-      message: "Профиль получен",
+      message: "Профиль получен успешно",
       user: profileData.user,
       profile: profileData.profile
     });
@@ -236,117 +185,125 @@ export const getProfile = async (req, res) => {
   }
 };
 
-// ===== РЕДАКТИРОВАНИЕ ПРОФИЛЯ =====
-export const edit = async (req, res) => {
+// ===== ОБНОВЛЕНИЕ ПРОФИЛЯ =====
+const edit = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { user } = req; // Из middleware аутентификации
     const updateData = req.body;
-    const requester = req.user; // Из middleware
 
-    // Валидация ID
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
+    if (!user) {
+      return res.status(404).json({
         result: false,
-        message: "Некорректный ID пользователя"
+        message: "Пользователь не определен!"
       });
     }
 
-    // Проверка прав доступа - пользователь может редактировать только свой профиль
-    if (requester._id.toString() !== id) {
-      return res.status(403).json({
-        result: false,
-        message: "Доступ запрещен: Вы можете редактировать только свой профиль"
-      });
-    }
-
-    // Запрещаем изменение роли
-    if (updateData.role) {
-      return res.status(403).json({
-        result: false,
-        message: "Доступ запрещен: Роль нельзя изменить"
-      });
-    }
-
-    // Обновляем профиль через сервис
-    const updatedData = await updateCustomerProfile(id, updateData);
+    // Обновляем профиль через сервис (валидация внутри сервиса)
+    const updatedProfile = await updateCustomerProfile(user._id, updateData);
 
     res.status(200).json({
       result: true,
-      message: "Профиль обновлен!",
-      user: updatedData.user,
-      profile: updatedData.profile
+      message: "Профиль обновлен успешно",
+      user: updatedProfile.user,
+      profile: updatedProfile.profile
     });
 
   } catch (error) {
-    console.error('Edit profile error:', error);
+    console.error('Update profile error:', error);
+    
+    // Обработка ошибок валидации
+    if (error.validationErrors) {
+      return res.status(400).json({
+        result: false,
+        message: "Ошибки валидации",
+        errors: error.validationErrors
+      });
+    }
+    
     res.status(500).json({
       result: false,
-      message: error.message || "Ошибка при обновлении профиля",
-      error: error.message
+      message: error.message || "Ошибка при обновлении профиля"
     });
   }
 };
 
-// ===== УДАЛЕНИЕ КЛИЕНТА =====
-export const delClient = async (req, res) => {
+// ===== УДАЛЕНИЕ ПРОФИЛЯ =====
+const delClient = async (req, res) => {
   try {
-    const { id } = req.params;
-    const requester = req.user; // Из middleware
+    const { user } = req; // Из middleware аутентификации
 
-    // Валидация ID
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
+    if (!user) {
+      return res.status(404).json({
         result: false,
-        message: "Некорректный ID пользователя"
+        message: "Пользователь не определен!"
       });
     }
 
-    // Проверка прав доступа - пользователь может удалить только свой аккаунт
-    // или это должен быть админ
-    if (requester._id.toString() !== id && !requester.role.includes('admin')) {
-      return res.status(403).json({
-        result: false,
-        message: "Доступ запрещен: Вы можете удалить только свой аккаунт"
-      });
-    }
-
-    // Удаляем через сервис
-    const deleteResult = await deleteCustomer(id);
+    // Удаляем профиль через сервис
+    await deleteCustomerProfile(user._id);
 
     res.status(200).json({
       result: true,
-      message: deleteResult.message,
-      deletedUserId: deleteResult.deletedUserId
+      message: "Профиль успешно удален"
     });
 
   } catch (error) {
-    console.error('Delete client error:', error);
+    console.error('Delete profile error:', error);
     res.status(500).json({
       result: false,
-      message: error.message || "Ошибка при удалении клиента",
-      error: error.message
+      message: error.message || "Ошибка при удалении профиля"
     });
   }
 };
 
 // ===== УПРАВЛЕНИЕ АДРЕСАМИ ДОСТАВКИ =====
 
-// Добавление адреса доставки
-export const addAddress = async (req, res) => {
+/**
+ * Добавление нового адреса доставки
+ */
+const addAddress = async (req, res) => {
   try {
-    const { user } = req;
-    const addressData = req.body;
+    const { user } = req; // Из middleware аутентификации
+    const { label, address, lat, lng, is_default } = req.body;
 
+    if (!user) {
+      return res.status(404).json({
+        result: false,
+        message: "Пользователь не определен!"
+      });
+    }
+
+    // Базовая валидация
+    if (!label || !address || typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({
+        result: false,
+        message: "Обязательные поля: label, address, lat, lng"
+      });
+    }
+
+    const addressData = { label, address, lat, lng, is_default };
+    
+    // Добавляем адрес через сервис (валидация внутри сервиса)
     const updatedProfile = await addDeliveryAddress(user._id, addressData);
 
     res.status(201).json({
       result: true,
-      message: "Адрес доставки добавлен",
-      addresses: updatedProfile.delivery_addresses
+      message: "Адрес добавлен успешно",
+      profile: updatedProfile.profile
     });
 
   } catch (error) {
     console.error('Add address error:', error);
+    
+    // Обработка ошибок валидации
+    if (error.validationErrors) {
+      return res.status(400).json({
+        result: false,
+        message: "Ошибки валидации адреса",
+        errors: error.validationErrors
+      });
+    }
+    
     res.status(500).json({
       result: false,
       message: error.message || "Ошибка при добавлении адреса"
@@ -354,61 +311,55 @@ export const addAddress = async (req, res) => {
   }
 };
 
-// Обновление адреса доставки
-export const updateAddress = async (req, res) => {
+/**
+ * Обновление адреса доставки
+ */
+const updateAddress = async (req, res) => {
   try {
     const { user } = req;
     const { addressId } = req.params;
     const updateData = req.body;
 
-    const updatedProfile = await updateDeliveryAddress(user._id, addressId, updateData);
-
+    // TODO: Реализовать обновление адреса в сервисе
     res.status(200).json({
       result: true,
-      message: "Адрес доставки обновлен",
-      addresses: updatedProfile.delivery_addresses
+      message: "Обновление адреса в разработке",
+      addressId,
+      updateData
     });
 
   } catch (error) {
     console.error('Update address error:', error);
     res.status(500).json({
       result: false,
-      message: error.message || "Ошибка при обновлении адреса"
+      message: "Ошибка при обновлении адреса"
     });
   }
 };
 
-// Удаление адреса доставки
-export const removeAddress = async (req, res) => {
+/**
+ * Удаление адреса доставки
+ */
+const removeAddress = async (req, res) => {
   try {
     const { user } = req;
     const { addressId } = req.params;
 
-    const updatedProfile = await removeDeliveryAddress(user._id, addressId);
-
+    // TODO: Реализовать удаление адреса в сервисе
     res.status(200).json({
       result: true,
-      message: "Адрес доставки удален",
-      addresses: updatedProfile.delivery_addresses
+      message: "Удаление адреса в разработке",
+      addressId
     });
 
   } catch (error) {
     console.error('Remove address error:', error);
     res.status(500).json({
       result: false,
-      message: error.message || "Ошибка при удалении адреса"
+      message: "Ошибка при удалении адреса"
     });
   }
 };
 
-export default {
-  register,
-  login,
-  verify,
-  getProfile,
-  edit,
-  delClient,
-  addAddress,
-  updateAddress,
-  removeAddress
-};
+
+export { register, login, verify, getProfile, edit, delClient, addAddress, updateAddress, removeAddress}

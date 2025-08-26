@@ -10,7 +10,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
  * @param {string} expiresIn - Время жизни токена
  * @returns {string} - JWT токен
  */
-export const generateAdminToken = (admin, expiresIn = '8h') => {
+const generateAdminToken = (admin, expiresIn = '8h') => {
   console.log('🔍 GENERATING ADMIN TOKEN:', {
     admin_provided: !!admin,
     admin_id: admin ? admin._id : null,
@@ -51,7 +51,7 @@ export const generateAdminToken = (admin, expiresIn = '8h') => {
  * @param {string} expiresIn - Время жизни токена (по умолчанию 3d)
  * @returns {string} - JWT токен
  */
-export const generateJWTToken = (payload, expiresIn = '3d') => {
+const generateJWTToken = (payload, expiresIn = '3d') => {
   try {
     console.log('🔍 GENERATING JWT TOKEN:', {
       payload_keys: Object.keys(payload),
@@ -87,7 +87,7 @@ export const generateJWTToken = (payload, expiresIn = '3d') => {
  * @param {string} token - JWT токен
  * @returns {object} - Декодированные данные токена
  */
-export const verifyJWTToken = (token) => {
+const verifyJWTToken = (token) => {
   try {
     if (!token) {
       throw new Error('Токен не предоставлен');
@@ -112,7 +112,7 @@ export const verifyJWTToken = (token) => {
 /**
  * ✅ ОБНОВЛЕННАЯ универсальная функция (сохраняем для совместимости)
  */
-export const generateCustomerToken = (user, expiresIn = '30d') => {
+const generateCustomerToken = (user, expiresIn = '30d') => {
   console.log('🔍 GENERATING UNIVERSAL TOKEN:', {
     user_provided: !!user,
     user_id: user ? (user._id || user.user_id) : null,
@@ -164,7 +164,7 @@ export const generateCustomerToken = (user, expiresIn = '30d') => {
  * @param {object} user - Объект пользователя
  * @returns {string} - Refresh токен
  */
-export const generateRefreshToken = (user) => {
+const generateRefreshToken = (user) => {
   const payload = {
     user_id: user._id,
     type: 'refresh_token'
@@ -178,7 +178,7 @@ export const generateRefreshToken = (user) => {
  * @param {string} authHeader - Заголовок авторизации
  * @returns {string|null} - Токен или null
  */
-export const extractTokenFromHeader = (authHeader) => {
+const extractTokenFromHeader = (authHeader) => {
   if (!authHeader) return null;
   
   // Формат: "Bearer <token>"
@@ -195,7 +195,7 @@ export const extractTokenFromHeader = (authHeader) => {
  * @param {string} token - JWT токен
  * @returns {object|null} - Декодированные данные или null
  */
-export const decodeToken = (token) => {
+const decodeToken = (token) => {
   try {
     return jwt.decode(token);
   } catch (error) {
@@ -203,4 +203,12 @@ export const decodeToken = (token) => {
     return null;
   }
 };
+
+export {generateAdminToken,
+        generateJWTToken,
+        verifyJWTToken,
+        generateCustomerToken,
+        generateRefreshToken,
+        extractTokenFromHeader
+      }
 
