@@ -1,13 +1,13 @@
-// services/auth.service.js (исправленный)
+// services/auth.service.js (ИСПРАВЛЕНО - НЕ трогаем модель User)
 import { User, CustomerProfile } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import generatePassword from '../utils/generatePassword.js';
-import { cryptoString } from '../utils/crypto.js';
+import { cryptoString, decryptString } from '../utils/crypto.js';
 import { hashString, hashMeta, comparePassword } from '../utils/hash.js';
 import { generateCustomerToken } from './token.service.js';
 
 /**
- * Создание аккаунта клиента
+ * Создание аккаунта клиента (ИСПРАВЛЕНО - оставляем User модель как есть)
  * @param {object} customerData - Данные клиента
  * @returns {object} - Результат создания аккаунта
  */
@@ -21,15 +21,16 @@ export const createCustomerAccount = async (customerData) => {
     }
 
     // Нормализация email
-    email = email.toLowerCase().trim();
+    const normalizedEmail = email.toLowerCase().trim();
+    
+    // 🔐 ПРОВЕРЯЕМ существование через Meta (по хешу)
+    const hashedEmail = hashMeta(normalizedEmail);
+    const existingMeta = await Meta.findByEmailAndRole(hashedEmail, 'customer');
 
-    // 🆕 ИСПРАВЛЕНО: Используем новый метод поиска
-    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(email), 'customer');
-
-    if (metaInfo) {
+    if (existingMeta) {
       return { 
         isNewCustomer: false, 
-        customer: metaInfo.customer 
+        customer: existingMeta.customer 
       };
     }
 
@@ -41,9 +42,9 @@ export const createCustomerAccount = async (customerData) => {
     // Хешируем пароль
     const hashedPassword = await hashString(password);
 
-    // Создаем пользователя
+    // ✅ СОЗДАЕМ пользователя с ЗАШИФРОВАННЫМ email (как в партнерской системе)
     const newUser = new User({
-      email: email,
+      email: cryptoString(normalizedEmail), // 🔐 ЗАШИФРОВАННЫЙ EMAIL как у партнеров!
       password_hash: hashedPassword,
       role: 'customer',
       is_active: true,
@@ -62,31 +63,42 @@ export const createCustomerAccount = async (customerData) => {
     // Создаем профиль клиента
     const customerProfile = new CustomerProfile({
       user_id: newUser._id,
-      first_name,
-      last_name,
-      phone: cryptoString(phone), // Шифруем телефон
-      settings: {
-        notifications_enabled: true,
-        preferred_language: 'fr',
-        marketing_emails: false
-      }
+      first_name: first_name.trim(),
+      last_name: last_name.trim(),
+      phone: phone ? cryptoString(phone.replace(/\s/g, '')) : null, // Шифруем телефон
+      is_active: true
     });
 
     await customerProfile.save();
 
-    // 🆕 ИСПРАВЛЕНО: Используем новый метод создания Meta
-    const newMetaInfo = await Meta.createForCustomer(newUser._id, hashMeta(email));
+    // 🔐 Создаем Meta запись с ХЕШИРОВАННЫМ email для поиска
+    const metaInfo = new Meta({
+      em: hashedEmail, // 🔐 ХЕШИРОВАННЫЙ EMAIL для безопасного поиска!
+      role: 'customer',
+      customer: newUser._id,
+      is_active: true
+    });
 
-    // Возвращаем пользователя с профилем
-    const userWithProfile = {
-      ...newUser.toObject(),
-      profile: customerProfile
-    };
+    await metaInfo.save();
 
-    return { 
-      isNewCustomer: true, 
-      customer: userWithProfile,
-      generatedPassword: password // Только если пароль был сгенерирован
+    console.log('✅ Customer account created with Meta security');
+
+    // Возвращаем данные для ответа
+    return {
+      isNewCustomer: true,
+      customer: {
+        _id: newUser._id,
+        email: normalizedEmail, // Обычный email для ответа
+        role: newUser.role,
+        is_email_verified: newUser.is_email_verified,
+        is_active: newUser.is_active,
+        profile: {
+          first_name: customerProfile.first_name,
+          last_name: customerProfile.last_name,
+          full_name: `${customerProfile.first_name} ${customerProfile.last_name}`,
+          phone: phone ? phone : null // Обычный телефон для ответа
+        }
+      }
     };
 
   } catch (error) {
@@ -96,24 +108,23 @@ export const createCustomerAccount = async (customerData) => {
 };
 
 /**
- * Авторизация клиента
+ * Авторизация клиента (ИСПРАВЛЕНО - поиск через Meta)
  * @param {object} loginData - Данные для входа
  * @returns {object} - Результат авторизации
  */
-export const loginCustomer = async ({ email, password }) => {
+export const loginCustomer = async (loginData) => {
   try {
-    // Валидация входных данных
+    const { email, password } = loginData;
+
     if (!email || !password) {
-      const error = new Error('Email и пароль обязательны');
-      error.statusCode = 400;
-      throw error;
+      throw new Error('Email и пароль обязательны');
     }
 
-    // Нормализация email
-    email = email.toLowerCase().trim();
-
-    // 🆕 ИСПРАВЛЕНО: Используем новый метод поиска
-    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashMeta(email), 'customer');
+    const normalizedEmail = email.toLowerCase().trim();
+    
+    // 🔐 ИЩЕМ через Meta по хешу email
+    const hashedEmail = hashMeta(normalizedEmail);
+    const metaInfo = await Meta.findByEmailAndRoleWithUser(hashedEmail, 'customer');
 
     if (!metaInfo || !metaInfo.customer) {
       const error = new Error('Пользователь не найден');
@@ -121,8 +132,8 @@ export const loginCustomer = async ({ email, password }) => {
       throw error;
     }
 
-    // Проверяем, заблокирован ли аккаунт
-    if (metaInfo.isAccountLocked()) {
+    // Проверяем блокировку аккаунта
+    if (metaInfo.isAccountLocked && metaInfo.isAccountLocked()) {
       const error = new Error('Аккаунт временно заблокирован из-за множественных неудачных попыток входа');
       error.statusCode = 423;
       throw error;
@@ -155,12 +166,12 @@ export const loginCustomer = async ({ email, password }) => {
       user_id: metaInfo.customer._id 
     });
 
-    // 🆕 ИСПРАВЛЕНО: Генерируем токен с правильными данными
+    // Генерируем токен БЕЗ EMAIL (как в партнерской системе)
     const token = generateCustomerToken({
       user_id: metaInfo.customer._id,
       _id: metaInfo.customer._id,
-      email: metaInfo.customer.email,
       role: metaInfo.customer.role,
+      // 🔐 НЕ включаем email в токен для безопасности (как у партнеров)
       is_admin: false
     }, '30d');
 
@@ -168,7 +179,7 @@ export const loginCustomer = async ({ email, password }) => {
       token,
       user: {
         id: metaInfo.customer._id,
-        email: metaInfo.customer.email,
+        email: normalizedEmail, // ✅ Возвращаем обычный email для пользователя
         role: metaInfo.customer.role,
         is_email_verified: metaInfo.customer.is_email_verified,
         profile: customerProfile
@@ -182,14 +193,15 @@ export const loginCustomer = async ({ email, password }) => {
 };
 
 /**
- * Проверка существования пользователя по email
+ * Проверка существования пользователя по email (ИСПРАВЛЕНО)
  * @param {string} email - Email для проверки
  * @returns {boolean} - Существует ли пользователь
  */
 export const checkUserExists = async (email) => {
   try {
     const normalizedEmail = email.toLowerCase().trim();
-    const metaInfo = await Meta.findByEmailAndRole(hashMeta(normalizedEmail), 'customer');
+    const hashedEmail = hashMeta(normalizedEmail);
+    const metaInfo = await Meta.findByEmailAndRole(hashedEmail, 'customer');
     
     return !!metaInfo;
   } catch (error) {
@@ -199,7 +211,7 @@ export const checkUserExists = async (email) => {
 };
 
 /**
- * Получение пользователя по ID (для middleware)
+ * Получение пользователя по ID (для middleware) - БЕЗ ИЗМЕНЕНИЙ
  * @param {string} userId - ID пользователя
  * @returns {object} - Пользователь с профилем
  */
@@ -212,14 +224,9 @@ export const getUserById = async (userId) => {
     if (user.role === 'customer') {
       profile = await CustomerProfile.findOne({ user_id: userId });
     } else if (user.role === 'partner') {
-      // 🆕 ДОБАВЛЕНО: Поддержка партнеров
       const { PartnerProfile } = await import('../models/index.js');
       profile = await PartnerProfile.findOne({ user_id: userId });
     }
-    // 🆕 ДОБАВЛЕНО: Поддержка других ролей можно добавить позже
-    // else if (user.role === 'courier') {
-    //   profile = await CourierProfile.findOne({ user_id: userId });
-    // }
 
     return {
       ...user.toObject(),

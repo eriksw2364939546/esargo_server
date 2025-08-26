@@ -15,7 +15,8 @@ import {
   authenticateCustomer, 
   requireRole,
   checkProfileOwnership,
-  validateCustomerData
+  validateCustomerRegistration,  // Новый middleware для регистрации
+  validateCustomerUpdate        // Новый middleware для обновления
 } from '../middleware/customerAuth.middleware.js';
 
 const router = express.Router();
@@ -24,10 +25,10 @@ const router = express.Router();
 
 /**
  * POST /api/customers/register - Регистрация клиента
- * Middleware: validateCustomerData (валидация данных)
+ * Middleware: validateCustomerRegistration (валидация данных + подтверждение пароля)
  */
 router.post('/register', 
-  validateCustomerData,
+  validateCustomerRegistration,
   register
 );
 
@@ -98,13 +99,13 @@ router.get('/profile',
  * - authenticateCustomer (проверка токена)
  * - requireRole('customer') (проверка роли)
  * - checkProfileOwnership (проверка права редактировать профиль)
- * - validateCustomerData (валидация данных)
+ * - validateCustomerUpdate (валидация данных + подтверждение пароля при смене)
  */
 router.put('/profile/:id', 
   authenticateCustomer, 
   requireRole('customer'), 
   checkProfileOwnership,
-  validateCustomerData,
+  validateCustomerUpdate,
   edit
 );
 

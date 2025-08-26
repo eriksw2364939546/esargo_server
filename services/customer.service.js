@@ -107,7 +107,7 @@ const validateDeliveryAddress = (addressData) => {
  */
 
 /**
- * Получение профиля клиента
+ * Получение профиля клиента (ИСПРАВЛЕНО - скрываем email в сервисе)
  * @param {string} userId - ID пользователя
  * @returns {object} - Профиль клиента
  */
@@ -131,6 +131,15 @@ export const getCustomerProfile = async (userId) => {
       throw new Error('Профиль клиента не найден');
     }
 
+    // 🔐 РАСШИФРОВЫВАЕМ email для отображения (как в партнерской системе)
+    let displayEmail = '[EMAIL_PROTECTED]';
+    try {
+      displayEmail = decryptString(user.email);
+    } catch (error) {
+      console.warn('Could not decrypt email for profile display');
+      displayEmail = '[EMAIL_DECRYPT_ERROR]';
+    }
+    
     // Расшифровываем чувствительные данные для отображения
     const decryptedProfile = {
       ...profile.toObject(),
@@ -140,7 +149,7 @@ export const getCustomerProfile = async (userId) => {
     return {
       user: {
         id: user._id,
-        email: user.email,
+        email: displayEmail, // ✅ Email остается как есть в User модели
         role: user.role,
         is_email_verified: user.is_email_verified,
         is_active: user.is_active
@@ -191,15 +200,16 @@ export const updateCustomerProfile = async (userId, updateData) => {
     if (updateData.email && updateData.email !== user.email) {
       const normalizedEmail = updateData.email.toLowerCase().trim();
       
-      // ВАЛИДАЦИЯ email
+      // 🔐 ВАЛИДАЦИЯ email
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(normalizedEmail)) {
         throw new Error('Неверный формат email');
       }
       
-      // Проверяем, не занят ли новый email
+      // Проверяем, не занят ли новый email через Meta
+      const hashedNewEmail = hashMeta(normalizedEmail);
       const existingMeta = await Meta.findOne({
-        em: hashMeta(normalizedEmail),
+        em: hashedNewEmail,
         role: 'customer',
         customer: { $ne: userId }
       });
@@ -208,8 +218,15 @@ export const updateCustomerProfile = async (userId, updateData) => {
         throw new Error('Пользователь с таким email уже существует');
       }
 
-      userUpdateData.email = normalizedEmail;
+      // 🔐 ЗАШИФРОВЫВАЕМ новый email (как в партнерской системе)
+      userUpdateData.email = cryptoString(normalizedEmail);
       userUpdateData.is_email_verified = false;
+      
+      // Обновляем Meta запись с новым хешированным email
+      await Meta.findOneAndUpdate(
+        { customer: userId, role: 'customer' },
+        { em: hashedNewEmail }
+      );
     }
 
     // Обработка пароля
@@ -345,12 +362,16 @@ export const addDeliveryAddress = async (userId, addressData) => {
 };
 
 /**
- * Удаление профиля клиента
+ * Удаление профиля клиента (ИСПРАВЛЕНО - полная очистка как у партнеров)
  * @param {string} userId - ID пользователя
- * @returns {boolean} - Результат удаления
+ * @returns {object} - Результат удаления
  */
 export const deleteCustomerProfile = async (userId) => {
+  const session = await mongoose.startSession();
+  
   try {
+    console.log('🔍 DELETE CUSTOMER ACCOUNT:', { userId });
+    
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       throw new Error('Некорректный ID пользователя');
     }
@@ -364,24 +385,82 @@ export const deleteCustomerProfile = async (userId) => {
       throw new Error('Доступ разрешен только для клиентов');
     }
 
-    // БИЗНЕС-ЛОГИКА: Мягкое удаление - деактивация
-    await User.findByIdAndUpdate(userId, { 
-      is_active: false,
-      deleted_at: new Date()
+    let cleanupInfo = {
+      user_deleted: false,
+      meta_deleted: false,
+      profile_deleted: false,
+      orders_deleted: 0,
+      reviews_deleted: 0,
+      messages_deleted: 0
+    };
+
+    // 🔐 ИСПОЛЬЗУЕМ ТРАНЗАКЦИЮ для атомарного удаления (как у партнеров)
+    await session.withTransaction(async () => {
+      // 1. Удаляем заказы клиента (если есть модель Order)
+      try {
+        const { Order } = await import('../models/index.js');
+        const deleteOrdersResult = await Order.deleteMany({ 
+          customer_id: userId 
+        }, { session });
+        cleanupInfo.orders_deleted = deleteOrdersResult.deletedCount;
+      } catch (error) {
+        console.log('Order model not found or no orders to delete');
+      }
+
+      // 2. Удаляем отзывы клиента (если есть модель Review)
+      try {
+        const { Review } = await import('../models/index.js');
+        const deleteReviewsResult = await Review.deleteMany({ 
+          customer_id: userId 
+        }, { session });
+        cleanupInfo.reviews_deleted = deleteReviewsResult.deletedCount;
+      } catch (error) {
+        console.log('Review model not found or no reviews to delete');
+      }
+
+      // 3. Удаляем сообщения клиента (если есть модель Message)
+      try {
+        const { Message } = await import('../models/index.js');
+        const deleteMessagesResult = await Message.deleteMany({ 
+          customer_id: userId 
+        }, { session });
+        cleanupInfo.messages_deleted = deleteMessagesResult.deletedCount;
+      } catch (error) {
+        console.log('Message model not found or no messages to delete');
+      }
+
+      // 4. Удаляем профиль клиента
+      const profileResult = await CustomerProfile.findOneAndDelete({ 
+        user_id: userId 
+      }, { session });
+      cleanupInfo.profile_deleted = !!profileResult;
+
+      // 5. Удаляем Meta запись (ВАЖНО!)
+      const metaResult = await Meta.findOneAndDelete({ 
+        customer: userId,
+        role: 'customer'
+      }, { session });
+      cleanupInfo.meta_deleted = !!metaResult;
+
+      // 6. Удаляем пользователя
+      const userResult = await User.findByIdAndDelete(userId, { session });
+      cleanupInfo.user_deleted = !!userResult;
     });
 
-    await CustomerProfile.findOneAndUpdate(
-      { user_id: userId },
-      { 
-        is_active: false,
-        deleted_at: new Date()
-      }
-    );
+    console.log('✅ CUSTOMER ACCOUNT DELETED:', cleanupInfo);
 
-    return true;
+    return {
+      deleted_customer: {
+        id: userId,
+        deleted_at: new Date()
+      },
+      cleanup_info: cleanupInfo
+    };
 
   } catch (error) {
-    console.error('Delete customer profile error:', error);
+    console.error('🚨 DELETE CUSTOMER ACCOUNT ERROR:', error);
     throw error;
+  } finally {
+    await session.endSession();
   }
 };

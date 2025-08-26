@@ -156,14 +156,14 @@ export const checkProfileOwnership = (req, res, next) => {
 };
 
 /**
- * Middleware для валидации данных клиента
+ * Middleware для валидации данных клиента при регистрации
  * @param {object} req - Объект запроса
  * @param {object} res - Объект ответа
  * @param {function} next - Следующий middleware
  */
-export const validateCustomerData = (req, res, next) => {
+export const validateCustomerRegistration = (req, res, next) => {
   try {
-    const { first_name, last_name, email, phone } = req.body;
+    const { first_name, last_name, email, phone, password, confirm_password } = req.body;
 
     const errors = [];
 
@@ -172,6 +172,8 @@ export const validateCustomerData = (req, res, next) => {
       errors.push('Имя обязательно');
     } else if (first_name.trim().length < 2) {
       errors.push('Имя должно содержать минимум 2 символа');
+    } else if (first_name.trim().length > 50) {
+      errors.push('Имя не может быть длиннее 50 символов');
     }
 
     // Проверка фамилии
@@ -179,23 +181,45 @@ export const validateCustomerData = (req, res, next) => {
       errors.push('Фамилия обязательна');
     } else if (last_name.trim().length < 2) {
       errors.push('Фамилия должна содержать минимум 2 символа');
+    } else if (last_name.trim().length > 50) {
+      errors.push('Фамилия не может быть длиннее 50 символов');
     }
 
-    // Проверка email (если предоставлен)
-    if (email) {
+    // Проверка email
+    if (!email || email.trim().length === 0) {
+      errors.push('Email обязателен');
+    } else {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
         errors.push('Неверный формат email');
       }
     }
 
-    // Проверка телефона (если предоставлен)
-    if (phone) {
+    // Проверка телефона
+    if (!phone || phone.trim().length === 0) {
+      errors.push('Номер телефона обязателен');
+    } else {
       // Французский формат телефона
       const phoneRegex = /^(?:(?:\+33|0)[1-9](?:[0-9]{8}))$/;
       if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
-        errors.push('Неверный формат телефона (ожидается французский формат)');
+        errors.push('Неверный формат телефона (ожидается французский формат: +33XXXXXXXXX или 0XXXXXXXXX)');
       }
+    }
+
+    // Проверка пароля
+    if (!password || password.trim().length === 0) {
+      errors.push('Пароль обязателен');
+    } else if (password.length < 6) {
+      errors.push('Пароль должен содержать минимум 6 символов');
+    } else if (password.length > 128) {
+      errors.push('Пароль не может быть длиннее 128 символов');
+    }
+
+    // Проверка подтверждения пароля
+    if (!confirm_password || confirm_password.trim().length === 0) {
+      errors.push('Подтверждение пароля обязательно');
+    } else if (password !== confirm_password) {
+      errors.push('Пароли не совпадают');
     }
 
     if (errors.length > 0) {
@@ -209,12 +233,112 @@ export const validateCustomerData = (req, res, next) => {
     // Нормализуем данные
     req.body.first_name = first_name.trim();
     req.body.last_name = last_name.trim();
-    if (email) req.body.email = email.toLowerCase().trim();
-    if (phone) req.body.phone = phone.replace(/\s/g, '');
+    req.body.email = email.toLowerCase().trim();
+    req.body.phone = phone.replace(/\s/g, '');
+    // Убираем confirm_password из req.body перед передачей в контроллер
+    delete req.body.confirm_password;
 
     next();
   } catch (error) {
-    console.error('Customer data validation error:', error);
+    console.error('Customer registration validation error:', error);
+    return res.status(500).json({
+      result: false,
+      message: "Ошибка валидации данных"
+    });
+  }
+};
+
+/**
+ * Middleware для валидации данных клиента при обновлении профиля
+ * @param {object} req - Объект запроса
+ * @param {object} res - Объект ответа
+ * @param {function} next - Следующий middleware
+ */
+export const validateCustomerUpdate = (req, res, next) => {
+  try {
+    const { first_name, last_name, email, phone, password, confirm_password } = req.body;
+
+    const errors = [];
+
+    // Проверка имени (если предоставлено)
+    if (first_name !== undefined) {
+      if (typeof first_name !== 'string' || first_name.trim().length === 0) {
+        errors.push('Имя не может быть пустым');
+      } else if (first_name.trim().length < 2) {
+        errors.push('Имя должно содержать минимум 2 символа');
+      } else if (first_name.trim().length > 50) {
+        errors.push('Имя не может быть длиннее 50 символов');
+      }
+    }
+
+    // Проверка фамилии (если предоставлена)
+    if (last_name !== undefined) {
+      if (typeof last_name !== 'string' || last_name.trim().length === 0) {
+        errors.push('Фамилия не может быть пустой');
+      } else if (last_name.trim().length < 2) {
+        errors.push('Фамилия должна содержать минимум 2 символа');
+      } else if (last_name.trim().length > 50) {
+        errors.push('Фамилия не может быть длиннее 50 символов');
+      }
+    }
+
+    // Проверка email (если предоставлен)
+    if (email !== undefined) {
+      if (email.trim().length === 0) {
+        errors.push('Email не может быть пустым');
+      } else {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          errors.push('Неверный формат email');
+        }
+      }
+    }
+
+    // Проверка телефона (если предоставлен)
+    if (phone !== undefined && phone !== null && phone !== '') {
+      const phoneRegex = /^(?:(?:\+33|0)[1-9](?:[0-9]{8}))$/;
+      if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
+        errors.push('Неверный формат телефона (ожидается французский формат: +33XXXXXXXXX или 0XXXXXXXXX)');
+      }
+    }
+
+    // Проверка пароля (если изменяется)
+    if (password !== undefined) {
+      if (password.length < 6) {
+        errors.push('Пароль должен содержать минимум 6 символов');
+      } else if (password.length > 128) {
+        errors.push('Пароль не может быть длиннее 128 символов');
+      }
+
+      // Если есть пароль, должно быть и подтверждение
+      if (!confirm_password) {
+        errors.push('Подтверждение пароля обязательно при смене пароля');
+      } else if (password !== confirm_password) {
+        errors.push('Пароли не совпадают');
+      }
+    }
+
+    if (errors.length > 0) {
+      return res.status(400).json({
+        result: false,
+        message: "Ошибки валидации",
+        errors
+      });
+    }
+
+    // Нормализуем данные
+    if (first_name !== undefined) req.body.first_name = first_name.trim();
+    if (last_name !== undefined) req.body.last_name = last_name.trim();
+    if (email !== undefined) req.body.email = email.toLowerCase().trim();
+    if (phone !== undefined && phone !== null && phone !== '') {
+      req.body.phone = phone.replace(/\s/g, '');
+    }
+    // Убираем confirm_password из req.body
+    delete req.body.confirm_password;
+
+    next();
+  } catch (error) {
+    console.error('Customer update validation error:', error);
     return res.status(500).json({
       result: false,
       message: "Ошибка валидации данных"

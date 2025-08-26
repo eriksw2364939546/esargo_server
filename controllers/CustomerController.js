@@ -13,7 +13,7 @@ import {
 import { generateCustomerToken } from '../services/token.service.js';
 
 // ===== РЕГИСТРАЦИЯ =====
-const register = async (req, res) => {
+export const register = async (req, res) => {
   try {
     const { first_name, last_name, email, phone, password } = req.body;
 
@@ -76,7 +76,7 @@ const register = async (req, res) => {
 };
 
 // ===== АВТОРИЗАЦИЯ =====
-const login = async (req, res) => {
+export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -112,7 +112,7 @@ const login = async (req, res) => {
 };
 
 // ===== ВЕРИФИКАЦИЯ ТОКЕНА =====
-const verify = async (req, res) => {
+export const verify = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
 
@@ -155,7 +155,7 @@ const verify = async (req, res) => {
 };
 
 // ===== ПОЛУЧЕНИЕ ПРОФИЛЯ =====
-const getProfile = async (req, res) => {
+export const getProfile = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
 
@@ -186,7 +186,7 @@ const getProfile = async (req, res) => {
 };
 
 // ===== ОБНОВЛЕНИЕ ПРОФИЛЯ =====
-const edit = async (req, res) => {
+export const edit = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
     const updateData = req.body;
@@ -228,7 +228,7 @@ const edit = async (req, res) => {
 };
 
 // ===== УДАЛЕНИЕ ПРОФИЛЯ =====
-const delClient = async (req, res) => {
+export const delClient = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
 
@@ -261,7 +261,7 @@ const delClient = async (req, res) => {
 /**
  * Добавление нового адреса доставки
  */
-const addAddress = async (req, res) => {
+export const addAddress = async (req, res) => {
   try {
     const { user } = req; // Из middleware аутентификации
     const { label, address, lat, lng, is_default } = req.body;
@@ -314,7 +314,7 @@ const addAddress = async (req, res) => {
 /**
  * Обновление адреса доставки
  */
-const updateAddress = async (req, res) => {
+export const updateAddress = async (req, res) => {
   try {
     const { user } = req;
     const { addressId } = req.params;
@@ -340,7 +340,7 @@ const updateAddress = async (req, res) => {
 /**
  * Удаление адреса доставки
  */
-const removeAddress = async (req, res) => {
+export const removeAddress = async (req, res) => {
   try {
     const { user } = req;
     const { addressId } = req.params;
@@ -360,6 +360,3 @@ const removeAddress = async (req, res) => {
     });
   }
 };
-
-
-export { register, login, verify, getProfile, edit, delClient, addAddress, updateAddress, removeAddress}
