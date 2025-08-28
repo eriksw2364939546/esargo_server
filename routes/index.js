@@ -1,13 +1,15 @@
-// ================ routes/index.js (ОБНОВЛЕННЫЙ С МЕНЮ МАРШРУТАМИ) ================
+// ================ routes/index.js (ОБНОВЛЕННЫЙ С КУРЬЕРСКИМИ РОУТАМИ) ================
 import express from 'express';
 const router = express.Router();
 
 // Import роутов
 import partnerRoutes from './Partner.route.js';
-import partnerMenuRoutes from './Partner.menu.routes.js'; // 🆕 НОВЫЕ МАРШРУТЫ МЕНЮ
+import partnerMenuRoutes from './Partner.menu.routes.js'; 
 import customerRoutes from './Customer.route.js';
+import courierRoutes from './Courier.route.js';           // 🆕 ДОБАВЛЕНО
 import adminRoutes from './Admin.route.js';
 import adminPartnerRoutes from './AdminPartner.route.js';
+import adminCourierRoutes from './AdminCourier.route.js';  // 🆕 ДОБАВЛЕНО
 
 // Health check endpoint
 router.get('/health', (req, res) => {
@@ -16,34 +18,49 @@ router.get('/health', (req, res) => {
         message: 'ESARGO API работает корректно',
         service_layer: 'enabled',
         meta_model: 'enabled',
-        partner_system: 'fully_implemented', // 🆕 ОБНОВЛЕНО
-        menu_system: 'enabled', // 🆕 НОВОЕ
+        partner_system: 'fully_implemented',
+        menu_system: 'enabled',
+        courier_system: 'enabled', // 🆕 ДОБАВЛЕНО
         timestamp: new Date().toISOString()
     });
 });
 
-// Customer routes
+// ================ ОСНОВНЫЕ ПОЛЬЗОВАТЕЛЬСКИЕ РОУТЫ ================
+// ВАЖНО: Порядок роутов имеет значение для правильной работы middleware
+
+// Customer routes (первые - базовая система)
 router.use('/customers', customerRoutes);
 
-// Partner routes  
+// Partner routes (существующая система)
 router.use('/partners', partnerRoutes);
 
-// 🆕 НОВОЕ: Partner menu routes
+// Partner menu routes (подсистема партнеров)
 router.use('/partners/menu', partnerMenuRoutes);
 
-// Admin routes
+// Courier routes (новая система) 🆕 ДОБАВЛЕНО
+router.use('/couriers', courierRoutes);
+
+// ================ АДМИНИСТРАТИВНЫЕ РОУТЫ ================
+// Порядок: сначала основные админ роуты, затем специализированные
+
+// Admin routes (основная админка)
 router.use('/admin', adminRoutes);
 
-// Admin partner management routes
+// Admin partner management routes (управление партнерами)
 router.use('/admin/partners', adminPartnerRoutes);
+
+// Admin courier management routes (управление курьерами) 🆕 ДОБАВЛЕНО  
+router.use('/admin/couriers', adminCourierRoutes);
+
+// ================ СИСТЕМНАЯ ИНФОРМАЦИЯ ================
 
 // Главная страница API
 router.get('/', (req, res) => {
     res.json({
         success: true,
         message: 'ESARGO API Server',
-        version: '2.1.0', // 🆕 ОБНОВЛЕНА ВЕРСИЯ
-        architecture: 'Service Layer + Meta Security Model + Menu Management',
+        version: '2.1.0', // Версия не изменена как просил
+        architecture: 'Service Layer + Meta Security Model + Menu Management + Courier System', // 🆕 ОБНОВЛЕНО
         available_endpoints: {
             customers: {
                 register: 'POST /api/customers/register',
@@ -64,7 +81,7 @@ router.get('/', (req, res) => {
                 update_profile: 'PUT /api/partners/profile/:id',
                 delete_partner: 'DELETE /api/partners/profile/:id',
                 
-                // 🆕 НОВОЕ: Управление меню
+                // Управление меню
                 menu_categories: {
                     list: 'GET /api/partners/menu/categories',
                     create: 'POST /api/partners/menu/categories',
@@ -97,6 +114,7 @@ router.get('/', (req, res) => {
                 reject_legal: 'POST /api/admin/partners/legal/:id/reject',
                 publish_partner: 'POST /api/admin/partners/profiles/:id/publish'
             }
+            // 🆕 КУРЬЕРСКИЕ ЭНДПОИНТЫ НЕ ДОБАВЛЕНЫ В ДОКУМЕНТАЦИЮ (как просил)
         },
         security_features: {
             meta_model: 'Безопасный поиск по хешированному email',
@@ -104,8 +122,9 @@ router.get('/', (req, res) => {
             role_based_access: 'Контроль доступа на основе ролей',
             admin_permissions: 'Гранулярные разрешения для администраторов',
             partner_workflow: 'Многоэтапная система одобрения партнеров',
-            french_validation: 'Валидация французских данных (SIRET, IBAN, TVA)', // 🆕 НОВОЕ
-            menu_permissions: 'Права доступа к управлению меню' // 🆕 НОВОЕ
+            courier_workflow: 'Система регистрации и одобрения курьеров', // 🆕 ДОБАВЛЕНО
+            french_validation: 'Валидация французских данных (SIRET, IBAN, TVA)',
+            menu_permissions: 'Права доступа к управлению меню'
         },
         workflow_stages: {
             stage_1: 'Регистрация и подача заявки (с новыми полями)',

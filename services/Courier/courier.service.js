@@ -1,8 +1,8 @@
 // services/courier.service.js
-import { User, CourierApplication, CourierProfile, Meta } from '../models/index.js';
-import { cryptoString, decryptString } from '../utils/crypto.js';
-import { hashString, hashMeta, comparePassword } from '../utils/hash.js';
-import generatePassword from '../utils/generatePassword.js';
+import { User, CourierApplication, CourierProfile, Meta } from '../../models/index.js';
+import { cryptoString, decryptString } from '../../utils/crypto.js'; 
+import { hashString, hashMeta, comparePassword } from '../../utils/hash.js'; 
+import generatePassword from '../../utils/generatePassword.js'; 
 import mongoose from 'mongoose';
 
 /**

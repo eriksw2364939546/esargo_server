@@ -1,8 +1,7 @@
-// middleware/courierAuth.middleware.js
-import { verifyToken } from '../services/token.service.js';
+// middleware/courierAuth.middleware.js - ИСПРАВЛЕНО
+import { verifyJWTToken } from '../services/token.service.js'; 
 import { User, CourierProfile, CourierApplication } from '../models/index.js';
 import { decryptString } from '../utils/crypto.js';
-import { verifyJWTToken as verifyToken } from '../services/token.service.js';
 
 /**
  * БАЗОВАЯ ПРОВЕРКА ТОКЕНА КУРЬЕРА
@@ -20,7 +19,7 @@ const checkCourierToken = async (req, res, next) => {
     }
 
     // Верификация токена
-    const decoded = verifyToken(token);
+    const decoded = verifyJWTToken(token); // 🔧 ИСПОЛЬЗУЕМ verifyJWTToken
 
     if (!decoded || decoded.role !== 'courier') {
       return res.status(401).json({
@@ -317,9 +316,10 @@ const checkCourierProfileAccess = async (req, res, next) => {
   }
 };
 
-export { checkCourierToken,
-         checkCourierApplicationStatus,
-         requireApprovedCourier,
-         validateCourierRegistration,
-         checkCourierProfileAccess 
-       }
+export { 
+  checkCourierToken,
+  checkCourierApplicationStatus,
+  requireApprovedCourier,
+  validateCourierRegistration,
+  checkCourierProfileAccess 
+};
