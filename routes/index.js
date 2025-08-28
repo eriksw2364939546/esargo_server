@@ -1,139 +1,175 @@
-// ================ routes/index.js (ОБНОВЛЕННЫЙ С МЕНЮ МАРШРУТАМИ) ================
-import express from 'express';
-const router = express.Router();
+// routes/index.js - ОБНОВЛЕННЫЙ с курьерскими роутами
 
-// Import роутов
-import partnerRoutes from './Partner.route.js';
-import partnerMenuRoutes from './Partner.menu.routes.js'; // 🆕 НОВЫЕ МАРШРУТЫ МЕНЮ
+import express from 'express';
+
+// ================ ИМПОРТ ВСЕХ РОУТОВ ================
+
+// Основные пользовательские роуты
 import customerRoutes from './Customer.route.js';
+import partnerRoutes from './Partner.route.js'; 
+import courierRoutes from './Courier.route.js';  // НОВЫЕ РОУТЫ
+
+// Административные роуты
 import adminRoutes from './Admin.route.js';
 import adminPartnerRoutes from './AdminPartner.route.js';
+import adminCourierRoutes from './AdminCourier.route.js';  // НОВЫЕ АДМИН РОУТЫ
 
-// Health check endpoint
-router.get('/health', (req, res) => {
-    res.json({
-        success: true,
-        message: 'ESARGO API работает корректно',
-        service_layer: 'enabled',
-        meta_model: 'enabled',
-        partner_system: 'fully_implemented', // 🆕 ОБНОВЛЕНО
-        menu_system: 'enabled', // 🆕 НОВОЕ
-        timestamp: new Date().toISOString()
-    });
-});
+// Специализированные роуты
+import partnerMenuRoutes from './Partner.menu.routes.js';
+import orderRoutes from './Order.route.js';
+import messageRoutes from './Message.route.js';
+import reviewRoutes from './Review.route.js';
+import categoryRoutes from './Category.route.js';
 
-// Customer routes
+const router = express.Router();
+
+// ================ ОСНОВНЫЕ API РОУТЫ ================
+
+// Клиенты
 router.use('/customers', customerRoutes);
 
-// Partner routes  
+// Партнеры
 router.use('/partners', partnerRoutes);
-
-// 🆕 НОВОЕ: Partner menu routes
 router.use('/partners/menu', partnerMenuRoutes);
 
-// Admin routes
+// Курьеры (НОВЫЕ РОУТЫ)
+router.use('/couriers', courierRoutes);
+
+// Заказы и сообщения
+router.use('/orders', orderRoutes);
+router.use('/messages', messageRoutes);
+router.use('/reviews', reviewRoutes);
+
+// Категории
+router.use('/categories', categoryRoutes);
+
+// ================ АДМИНИСТРАТИВНЫЕ РОУТЫ ================
+
+// Основная админская панель
 router.use('/admin', adminRoutes);
 
-// Admin partner management routes
+// Управление партнерами
 router.use('/admin/partners', adminPartnerRoutes);
 
-// Главная страница API
-router.get('/', (req, res) => {
-    res.json({
-        success: true,
-        message: 'ESARGO API Server',
-        version: '2.1.0', // 🆕 ОБНОВЛЕНА ВЕРСИЯ
-        architecture: 'Service Layer + Meta Security Model + Menu Management',
-        available_endpoints: {
-            customers: {
-                register: 'POST /api/customers/register',
-                login: 'POST /api/customers/login',
-                verify: 'GET /api/customers/verify',
-                profile: 'GET /api/customers/profile',
-                update_profile: 'PUT /api/customers/profile/:id',
-                delete_profile: 'DELETE /api/customers/profile/:id'
-            },
-            partners: {
-                // Основные функции
-                register: 'POST /api/partners/register',
-                login: 'POST /api/partners/login',
-                verify: 'GET /api/partners/verify',
-                dashboard: 'GET /api/partners/dashboard',
-                legal_info: 'POST /api/partners/legal-info/:request_id',
-                profile: 'GET /api/partners/profile',
-                update_profile: 'PUT /api/partners/profile/:id',
-                delete_partner: 'DELETE /api/partners/profile/:id',
-                
-                // 🆕 НОВОЕ: Управление меню
-                menu_categories: {
-                    list: 'GET /api/partners/menu/categories',
-                    create: 'POST /api/partners/menu/categories',
-                    update: 'PUT /api/partners/menu/categories/:category_id',
-                    delete: 'DELETE /api/partners/menu/categories/:category_id'
-                },
-                menu_products: {
-                    list: 'GET /api/partners/menu/products',
-                    create: 'POST /api/partners/menu/products',
-                    update: 'PUT /api/partners/menu/products/:product_id',
-                    delete: 'DELETE /api/partners/menu/products/:product_id'
-                },
-                menu_stats: 'GET /api/partners/menu/stats'
-            },
-            admin: {
-                login: 'POST /api/admin/login',
-                verify: 'GET /api/admin/verify',
-                profile: 'GET /api/admin/profile',
-                create_admin: 'POST /api/admin/create',
-                list_admins: 'GET /api/admin/list',
-                edit_admin: 'PUT /api/admin/edit/:id',
-                delete_admin: 'DELETE /api/admin/delete/:id'
-            },
-            admin_partners: {
-                view_requests: 'GET /api/admin/partners/requests',
-                view_request: 'GET /api/admin/partners/requests/:id',
-                approve_request: 'POST /api/admin/partners/requests/:id/approve',
-                reject_request: 'POST /api/admin/partners/requests/:id/reject',
-                approve_legal: 'POST /api/admin/partners/legal/:id/approve',
-                reject_legal: 'POST /api/admin/partners/legal/:id/reject',
-                publish_partner: 'POST /api/admin/partners/profiles/:id/publish'
-            }
+// Управление курьерами (НОВЫЕ АДМИН РОУТЫ)
+router.use('/admin/couriers', adminCourierRoutes);
+
+// ================ СИСТЕМНАЯ ИНФОРМАЦИЯ ================
+
+// Статус API и системная информация
+router.get('/status', (req, res) => {
+  res.json({
+    result: true,
+    message: "ESARGO API работает",
+    version: "2.0.0",
+    timestamp: new Date().toISOString(),
+    
+    available_endpoints: {
+      // Пользовательские API
+      customers: {
+        base_url: "/api/customers",
+        description: "Регистрация и управление клиентами",
+        main_endpoints: [
+          "POST /register", "POST /login", "GET /profile", "PUT /profile"
+        ]
+      },
+      
+      partners: {
+        base_url: "/api/partners", 
+        description: "Регистрация и управление партнерами (рестораны/магазины)",
+        main_endpoints: [
+          "POST /register", "POST /login", "GET /profile", "POST /legal-info/:request_id"
+        ]
+      },
+      
+      // НОВАЯ ИНФОРМАЦИЯ О КУРЬЕРАХ
+      couriers: {
+        base_url: "/api/couriers",
+        description: "Регистрация и управление курьерами",
+        main_endpoints: [
+          "POST /register", "POST /login", "GET /profile", 
+          "PATCH /availability", "PATCH /location", "GET /earnings"
+        ],
+        workflow: "pending → approved → working"
+      },
+      
+      orders: {
+        base_url: "/api/orders",
+        description: "Система заказов"
+      },
+      
+      // Административные API  
+      admin: {
+        partners: {
+          base_url: "/api/admin/partners",
+          description: "Управление заявками и профилями партнеров"
         },
-        security_features: {
-            meta_model: 'Безопасный поиск по хешированному email',
-            encryption: 'Шифрование чувствительных данных',
-            role_based_access: 'Контроль доступа на основе ролей',
-            admin_permissions: 'Гранулярные разрешения для администраторов',
-            partner_workflow: 'Многоэтапная система одобрения партнеров',
-            french_validation: 'Валидация французских данных (SIRET, IBAN, TVA)', // 🆕 НОВОЕ
-            menu_permissions: 'Права доступа к управлению меню' // 🆕 НОВОЕ
-        },
-        workflow_stages: {
-            stage_1: 'Регистрация и подача заявки (с новыми полями)',
-            stage_2: 'Одобрение заявки админом',
-            stage_3: 'Подача юридических документов (полная реализация)',
-            stage_4: 'Создание профиля после одобрения документов',
-            stage_5: 'Заполнение контента партнером (через сервисы)',
-            stage_6: 'Финальная публикация админом'
-        },
-        business_rules: {
-            restaurants: {
-                supports_options: true,
-                supports_preparation_time: true,
-                default_preparation_time: '15 minutes'
-            },
-            stores: {
-                supports_options: false,
-                supports_preparation_time: false,
-                preparation_time: '0 minutes (ready)'
-            }
-        },
-        data_compatibility: {
-            old_new_models: 'Поддержка совместимости старых и новых данных',
-            normalization: 'Автоматическая нормализация полей',
-            fallback_values: 'Безопасные fallback значения'
-        },
-        timestamp: new Date().toISOString()
-    });
+        
+        // НОВАЯ СЕКЦИЯ АДМИНА ДЛЯ КУРЬЕРОВ
+        couriers: {
+          base_url: "/api/admin/couriers", 
+          description: "Управление заявками и профилями курьеров",
+          main_endpoints: [
+            "GET /applications", "POST /applications/:id/approve",
+            "POST /applications/:id/reject", "GET /profiles",
+            "POST /profiles/:id/block", "GET /statistics"
+          ]
+        }
+      }
+    },
+    
+    // ОБНОВЛЕННАЯ СИСТЕМА РОЛЕЙ
+    user_roles: {
+      customer: "Клиенты (заказчики)",
+      partner: "Партнеры (рестораны и магазины)", 
+      courier: "Курьеры (доставка)",  // НОВАЯ РОЛЬ
+      admin: "Администраторы системы"
+    },
+    
+    // WORKFLOW ИНФОРМАЦИЯ
+    registration_workflows: {
+      partners: {
+        steps: ["register", "admin_approval", "legal_documents", "profile_creation"],
+        estimated_time: "2-3 дня"
+      },
+      
+      // НОВЫЙ WORKFLOW ДЛЯ КУРЬЕРОВ  
+      couriers: {
+        steps: ["register_with_documents", "admin_approval", "profile_creation"],
+        estimated_time: "24 часа",
+        required_documents: ["id_card", "bank_rib", "driver_license*", "insurance*", "vehicle_registration*"],
+        note: "* требуется для мотоцикла/авто"
+      }
+    }
+  });
+});
+
+// Информация о здоровье системы
+router.get('/health', (req, res) => {
+  res.json({
+    result: true,
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    services: {
+      api: "online",
+      database: "connected", 
+      courier_system: "active",  // НОВЫЙ СЕРВИС
+      partner_system: "active",
+      customer_system: "active"
+    }
+  });
+});
+
+// Fallback для неизвестных роутов
+router.use('*', (req, res) => {
+  res.status(404).json({
+    result: false,
+    message: "API endpoint не найден",
+    requested_path: req.originalUrl,
+    method: req.method,
+    suggestion: "Проверьте правильность URL и метод запроса",
+    available_endpoints: "/api/status"
+  });
 });
 
 export default router;

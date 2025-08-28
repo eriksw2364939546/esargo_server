@@ -5,12 +5,55 @@ import jwt from 'jsonwebtoken';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 /**
+ * Генерация токена для курьера
+ * @param {object} courier - Объект курьера
+ * @param {string} expiresIn - Время жизни токена
+ * @returns {string} - JWT токен
+ */
+
+const generateCourierToken = (courier, expiresIn = '3d') => {
+  console.log('🚚 GENERATING COURIER TOKEN:', {
+    courier_provided: !!courier,
+    user_id: courier ? (courier._id || courier.user_id) : null,
+    email: courier ? courier.email : null,
+    role: courier ? courier.role : null,
+    expires_in: expiresIn
+  });
+
+  const payload = {
+    user_id: courier._id || courier.user_id,
+    _id: courier._id || courier.user_id,
+    email: courier.email,
+    role: 'courier',
+    type: 'courier_access_token'
+  };
+
+  console.log('🚚 COURIER TOKEN PAYLOAD PREPARED:', payload);
+
+  const token = generateJWTToken(payload, expiresIn);
+  
+  console.log('✅ COURIER TOKEN GENERATED:', {
+    success: !!token,
+    token_length: token ? token.length : 0,
+    token_preview: token ? token.substring(0, 20) + '...' : null
+  });
+
+  return token;
+};
+/**
+ * Универсальная функция верификации токена (для всех ролей)
+ * @param {string} token - JWT токен
+ * @returns {object} - Декодированные данные токена
+ */
+const verifyToken = verifyJWTToken; 
+
+/**
  * ✅ НОВАЯ функция генерации админского токена
  * @param {object} admin - Объект администратора
  * @param {string} expiresIn - Время жизни токена
  * @returns {string} - JWT токен
  */
-const generateAdminToken = (admin, expiresIn = '8h') => {
+const generateAdminToken = (admin, expiresIn = '3h') => {
   console.log('🔍 GENERATING ADMIN TOKEN:', {
     admin_provided: !!admin,
     admin_id: admin ? admin._id : null,
@@ -112,7 +155,7 @@ const verifyJWTToken = (token) => {
 /**
  * ✅ ОБНОВЛЕННАЯ универсальная функция (сохраняем для совместимости)
  */
-const generateCustomerToken = (user, expiresIn = '30d') => {
+const generateCustomerToken = (user, expiresIn = '3d') => {
   console.log('🔍 GENERATING UNIVERSAL TOKEN:', {
     user_provided: !!user,
     user_id: user ? (user._id || user.user_id) : null,
@@ -207,7 +250,9 @@ const decodeToken = (token) => {
 export {generateAdminToken,
         generateJWTToken,
         verifyJWTToken,
+        verifyToken,
         generateCustomerToken,
+        generateCourierToken,
         generateRefreshToken,
         extractTokenFromHeader
       }
