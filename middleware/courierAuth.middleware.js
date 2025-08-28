@@ -2,6 +2,7 @@
 import { verifyToken } from '../services/token.service.js';
 import { User, CourierProfile, CourierApplication } from '../models/index.js';
 import { decryptString } from '../utils/crypto.js';
+import { verifyJWTToken as verifyToken } from '../services/token.service.js';
 
 /**
  * БАЗОВАЯ ПРОВЕРКА ТОКЕНА КУРЬЕРА
