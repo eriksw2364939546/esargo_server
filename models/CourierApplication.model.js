@@ -1,4 +1,4 @@
-// models/CourierApplication.model.js (исправленный - ES6 modules)
+// models/CourierApplication.model.js - ПОЛНЫЙ ФАЙЛ с шифрованием как у партнеров
 import mongoose from 'mongoose';
 
 const courierApplicationSchema = new mongoose.Schema({
@@ -26,113 +26,84 @@ const courierApplicationSchema = new mongoose.Schema({
     index: true
   },
   
-  // Информация о рассмотрении заявки
-  review_info: {
-    reviewed_by: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'AdminUser'
-    },
-    reviewed_at: {
-      type: Date
-    },
-    rejection_reason: {
-      type: String,
-      trim: true,
-      maxlength: 500
-    },
-    admin_notes: {
-      type: String,
-      trim: true,
-      maxlength: 1000 // Внутренние заметки для админов
-    }
-  },
-  
-  // Личные данные курьера
+  // 🔐 ЛИЧНЫЕ ДАННЫЕ - ЗАШИФРОВАНЫ (как у партнеров)
   personal_data: {
     first_name: {
       type: String,
-      required: true,
-      trim: true,
-      maxlength: 50
+      required: true
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     },
     last_name: {
       type: String,
-      required: true,
-      trim: true,
-      maxlength: 50
-    },
-    phone: {
-      type: String,
-      required: true,
-      trim: true,
-      validate: {
-        validator: function(v) {
-          return /^(\+33|0)[1-9](\d{8})$/.test(v.replace(/\s/g, '')); // Французский номер
-        },
-        message: 'Некорректный формат французского номера телефона'
-      }
+      required: true
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     },
     email: {
       type: String,
-      required: true,
-      trim: true,
-      lowercase: true,
-      validate: {
-        validator: function(email) {
-          return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-        },
-        message: 'Некорректный формат email'
-      }
+      required: true
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
+    },
+    phone: {
+      type: String,
+      required: true
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     },
     date_of_birth: {
       type: Date,
-      required: true,
-      validate: {
-        validator: function(date) {
-          const age = (Date.now() - date) / (1000 * 60 * 60 * 24 * 365);
-          return age >= 18 && age <= 70; // Возраст от 18 до 70 лет
-        },
-        message: 'Возраст должен быть от 18 до 70 лет'
-      }
+      required: true
     },
     address: {
       street: {
         type: String,
-        required: true,
-        trim: true
+        required: true
+        // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
       },
       city: {
         type: String,
-        required: true,
-        trim: true
+        required: true
+        // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
       },
       postal_code: {
         type: String,
-        required: true,
-        trim: true,
-        validate: {
-          validator: function(v) {
-            return /^\d{5}$/.test(v); // Французский почтовый индекс
-          },
-          message: 'Почтовый индекс должен содержать 5 цифр'
-        }
+        required: true
+        // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
       },
       country: {
         type: String,
         default: 'France'
       }
+    }
+  },
+
+  // ✅ ПОИСКОВЫЕ ПОЛЯ - ОТКРЫТО (только для поиска админом)
+  search_data: {
+    first_name: {
+      type: String,
+      required: true,
+      trim: true
+      // ✅ ОТКРЫТО для поиска админом
     },
-    avatar_url: {
-      type: String
+    last_name: {
+      type: String,
+      required: true,
+      trim: true
+      // ✅ ОТКРЫТО для поиска админом  
+    },
+    city: {
+      type: String,
+      required: true,
+      trim: true
+      // ✅ ОТКРЫТО для поиска админом
     }
   },
   
-  // Информация о транспорте (из макета регистрации)
+  // Информация о транспорте
   vehicle_info: {
     vehicle_type: {
       type: String,
       required: true,
-      enum: ['bike', 'motorbike', 'car'] // Как в макете
+      enum: ['bike', 'motorbike', 'car'],
+      index: true
     },
     vehicle_brand: {
       type: String,
@@ -143,86 +114,62 @@ const courierApplicationSchema = new mongoose.Schema({
       trim: true
     },
     license_plate: {
-      type: String,
-      trim: true,
-      uppercase: true
+      type: String
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     },
     insurance_company: {
       type: String,
       trim: true
     },
     insurance_policy_number: {
-      type: String,
-      trim: true
+      type: String
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     }
   },
   
-  // Документы для верификации (как в макете)
+  // 🔐 ДОКУМЕНТЫ - ЗАШИФРОВАНЫ (URLs могут содержать персональную информацию)
   documents: {
     id_card_url: {
       type: String,
-      required: true // Паспорт обязателен
+      required: true
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     },
     driver_license_url: {
-      type: String,
-      required: function() {
-        return this.vehicle_info.vehicle_type === 'motorbike' || 
-               this.vehicle_info.vehicle_type === 'car';
-      }
+      type: String
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     },
     insurance_url: {
-      type: String,
-      required: function() {
-        return this.vehicle_info.vehicle_type === 'motorbike' || 
-               this.vehicle_info.vehicle_type === 'car';
-      }
+      type: String
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     },
     vehicle_registration_url: {
-      type: String,
-      required: function() {
-        return this.vehicle_info.vehicle_type === 'motorbike' || 
-               this.vehicle_info.vehicle_type === 'car';
-      }
+      type: String
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     },
     bank_rib_url: {
       type: String,
-      required: true // RIB обязателен для выплат
+      required: true
+      // 🔐 ЗАШИФРОВАНО в сервисе через cryptoString()
     }
   },
   
-  // Проверка документов
+  // Верификация документов
   verification: {
     identity_verified: {
       type: Boolean,
       default: false
     },
-    identity_verification_notes: {
-      type: String,
-      trim: true
-    },
     license_verified: {
       type: Boolean,
       default: false
-    },
-    license_verification_notes: {
-      type: String,
-      trim: true
     },
     insurance_verified: {
       type: Boolean,
       default: false
     },
-    insurance_verification_notes: {
-      type: String,
-      trim: true
-    },
     vehicle_verified: {
       type: Boolean,
       default: false
-    },
-    vehicle_verification_notes: {
-      type: String,
-      trim: true
     },
     overall_verification_status: {
       type: String,
@@ -235,7 +182,7 @@ const courierApplicationSchema = new mongoose.Schema({
     }
   },
   
-  // Согласия (как в макете)
+  // Согласия (могут быть открыты)
   consents: {
     terms_accepted: {
       type: Boolean,
@@ -279,27 +226,41 @@ const courierApplicationSchema = new mongoose.Schema({
     }
   },
   
-  // Тестирование (если требуется)
-  test_results: {
-    theory_test_passed: {
-      type: Boolean,
-      default: false
+  // Информация о рассмотрении заявки
+  review_info: {
+    review_stage: {
+      type: String,
+      enum: ['documents', 'verification', 'interview', 'final'],
+      default: 'documents'
     },
-    theory_test_score: {
-      type: Number,
-      min: 0,
-      max: 100
+    priority_level: {
+      type: String,
+      enum: ['low', 'normal', 'high', 'urgent'],
+      default: 'normal'
     },
-    practical_test_passed: {
-      type: Boolean,
-      default: false
+    reviewed_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AdminUser'
     },
-    test_taken_at: {
+    reviewed_at: {
       type: Date
+    },
+    approved_at: {
+      type: Date
+    },
+    rejection_reason: {
+      type: String,
+      trim: true,
+      maxlength: 500
+    },
+    admin_notes: {
+      type: String,
+      trim: true,
+      maxlength: 1000
     }
   },
   
-  // Дублирование данных (предотвращение повторных заявок)
+  // Дубликаты (для предотвращения повторных заявок)
   duplicate_check: {
     phone_exists: {
       type: Boolean,
@@ -310,6 +271,18 @@ const courierApplicationSchema = new mongoose.Schema({
       default: false
     },
     license_exists: {
+      type: Boolean,
+      default: false
+    }
+  },
+  
+  // Тестирование (если требуется)
+  test_results: {
+    theory_test_passed: {
+      type: Boolean,
+      default: false
+    },
+    practical_test_passed: {
       type: Boolean,
       default: false
     }
@@ -335,14 +308,14 @@ const courierApplicationSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Индексы для оптимизации
+// ================ ИНДЕКСЫ ================
 courierApplicationSchema.index({ user_id: 1 });
 courierApplicationSchema.index({ status: 1, submitted_at: -1 });
-courierApplicationSchema.index({ 'personal_data.phone': 1 });
-courierApplicationSchema.index({ 'personal_data.email': 1 });
+courierApplicationSchema.index({ 'search_data.first_name': 1 }); // ✅ Индекс для поиска
+courierApplicationSchema.index({ 'search_data.last_name': 1 });  // ✅ Индекс для поиска
+courierApplicationSchema.index({ 'search_data.city': 1 });       // ✅ Индекс для поиска
 courierApplicationSchema.index({ 'vehicle_info.vehicle_type': 1 });
 courierApplicationSchema.index({ 'review_info.reviewed_by': 1 });
-courierApplicationSchema.index({ submitted_at: -1 });
 
 // Составной индекс для админской панели
 courierApplicationSchema.index({ 
@@ -351,13 +324,48 @@ courierApplicationSchema.index({
   submitted_at: -1 
 });
 
-// Методы экземпляра
+// ================ НАСТРОЙКИ JSON (как у партнеров) ================
+courierApplicationSchema.set('toJSON', { 
+  virtuals: true,
+  transform: function(doc, ret) {
+    // 🔐 НЕ ВОЗВРАЩАЕМ ЗАШИФРОВАННЫЕ ДАННЫЕ В JSON
+    if (ret.personal_data) {
+      delete ret.personal_data.first_name;    // 🔐 Скрываем
+      delete ret.personal_data.last_name;     // 🔐 Скрываем
+      delete ret.personal_data.email;         // 🔐 Скрываем
+      delete ret.personal_data.phone;         // 🔐 Скрываем
+      if (ret.personal_data.address) {
+        delete ret.personal_data.address.street;      // 🔐 Скрываем
+        delete ret.personal_data.address.city;        // 🔐 Скрываем
+        delete ret.personal_data.address.postal_code; // 🔐 Скрываем
+      }
+    }
+    
+    if (ret.documents) {
+      delete ret.documents.id_card_url;         // 🔐 Скрываем
+      delete ret.documents.driver_license_url;  // 🔐 Скрываем
+      delete ret.documents.insurance_url;       // 🔐 Скрываем
+      delete ret.documents.vehicle_registration_url; // 🔐 Скрываем
+      delete ret.documents.bank_rib_url;        // 🔐 Скрываем
+    }
+    
+    if (ret.vehicle_info) {
+      delete ret.vehicle_info.license_plate;          // 🔐 Скрываем
+      delete ret.vehicle_info.insurance_policy_number; // 🔐 Скрываем
+    }
+    
+    return ret;
+  }
+});
+
+// ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
 // Одобрение заявки
 courierApplicationSchema.methods.approve = function(adminId, adminNotes = '') {
   this.status = 'approved';
   this.review_info.reviewed_by = adminId;
   this.review_info.reviewed_at = new Date();
+  this.review_info.approved_at = new Date();
   this.review_info.admin_notes = adminNotes;
   this.verification.overall_verification_status = 'completed';
   
@@ -376,69 +384,22 @@ courierApplicationSchema.methods.reject = function(adminId, reason, adminNotes =
   return this.save();
 };
 
-// Обновление статуса проверки
-courierApplicationSchema.methods.updateVerificationStatus = function(section, verified, notes = '') {
-  switch(section) {
-    case 'identity':
-      this.verification.identity_verified = verified;
-      this.verification.identity_verification_notes = notes;
-      break;
-    case 'license':
-      this.verification.license_verified = verified;
-      this.verification.license_verification_notes = notes;
-      break;
-    case 'insurance':
-      this.verification.insurance_verified = verified;
-      this.verification.insurance_verification_notes = notes;
-      break;
-    case 'vehicle':
-      this.verification.vehicle_verified = verified;
-      this.verification.vehicle_verification_notes = notes;
-      break;
-  }
-  
-  // Проверяем общий статус
-  const requiredChecks = ['identity'];
-  if (this.vehicle_info.vehicle_type !== 'bike') {
-    requiredChecks.push('license', 'insurance', 'vehicle');
-  }
-  
-  const allVerified = requiredChecks.every(check => {
-    switch(check) {
-      case 'identity': return this.verification.identity_verified;
-      case 'license': return this.verification.license_verified;
-      case 'insurance': return this.verification.insurance_verified;
-      case 'vehicle': return this.verification.vehicle_verified;
-      default: return false;
-    }
-  });
-  
-  if (allVerified) {
-    this.verification.overall_verification_status = 'completed';
-  } else {
-    this.verification.overall_verification_status = 'in_progress';
-  }
-  
-  return this.save();
-};
-
-// Проверка на дублирование
+// Проверка на дубликаты (обновленная логика)
 courierApplicationSchema.methods.checkForDuplicates = async function() {
+  // Проверяем через search_data (открытые поля) вместо зашифрованных
   const existingApplications = await this.constructor.find({
     _id: { $ne: this._id },
     status: { $in: ['pending', 'approved'] },
     $or: [
-      { 'personal_data.phone': this.personal_data.phone },
-      { 'personal_data.email': this.personal_data.email }
+      { 
+        'search_data.first_name': this.search_data.first_name,
+        'search_data.last_name': this.search_data.last_name,
+        'search_data.city': this.search_data.city
+      }
     ]
   });
   
-  this.duplicate_check.phone_exists = existingApplications.some(app => 
-    app.personal_data.phone === this.personal_data.phone
-  );
-  this.duplicate_check.email_exists = existingApplications.some(app => 
-    app.personal_data.email === this.personal_data.email
-  );
+  this.duplicate_check.email_exists = existingApplications.length > 0;
   
   return this.save();
 };
@@ -469,12 +430,11 @@ courierApplicationSchema.methods.createCourierProfile = async function() {
   
   const courierProfile = new CourierProfile({
     user_id: this.user_id,
-    first_name: this.personal_data.first_name,
-    last_name: this.personal_data.last_name,
-    phone: this.personal_data.phone,
-    avatar_url: this.personal_data.avatar_url,
+    first_name: this.search_data.first_name,  // Используем открытые данные
+    last_name: this.search_data.last_name,    // Используем открытые данные
+    phone: this.personal_data.phone,          // Зашифрованный телефон
     vehicle_type: this.vehicle_info.vehicle_type,
-    documents: this.documents,
+    documents: this.documents,                // Зашифрованные документы
     is_approved: true,
     application_status: 'approved',
     approved_by: this.review_info.reviewed_by,
@@ -484,7 +444,7 @@ courierApplicationSchema.methods.createCourierProfile = async function() {
   return courierProfile.save();
 };
 
-// Статические методы
+// ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
 // Поиск заявок по статусу
 courierApplicationSchema.statics.findByStatus = function(status) {
@@ -516,6 +476,21 @@ courierApplicationSchema.statics.findByAdmin = function(adminId) {
   return this.find({ 
     'review_info.reviewed_by': adminId 
   }).sort({ 'review_info.reviewed_at': -1 });
+};
+
+// Поиск заявок для админской панели (только открытые поля)
+courierApplicationSchema.statics.findForAdmin = function(filters = {}) {
+  return this.find(filters)
+    .select('search_data vehicle_info.vehicle_type status submitted_at review_info verification user_id')
+    .sort({ submitted_at: -1 });
+};
+
+// Поиск по открытым полям
+courierApplicationSchema.statics.searchByName = function(firstName, lastName) {
+  return this.find({
+    'search_data.first_name': firstName,
+    'search_data.last_name': lastName
+  });
 };
 
 // Статистика заявок
@@ -560,6 +535,4 @@ courierApplicationSchema.statics.findOverdue = function(daysOld = 2) {
   }).sort({ submitted_at: 1 });
 };
 
-// 🆕 ИСПРАВЛЕНО: ES6 export
-const CourierApplication = mongoose.model('CourierApplication', courierApplicationSchema);
-export default CourierApplication;
+export default mongoose.model('CourierApplication', courierApplicationSchema);

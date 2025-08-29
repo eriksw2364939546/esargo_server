@@ -1,5 +1,5 @@
-// middleware/courierAuth.middleware.js - ИСПРАВЛЕНО
-import { verifyJWTToken } from '../services/token.service.js'; 
+// middleware/courierAuth.middleware.js - ПОЛНЫЙ ФАЙЛ исправленный
+import { verifyJWTToken } from '../services/token.service.js';
 import { User, CourierProfile, CourierApplication } from '../models/index.js';
 import { decryptString } from '../utils/crypto.js';
 
@@ -19,7 +19,7 @@ const checkCourierToken = async (req, res, next) => {
     }
 
     // Верификация токена
-    const decoded = verifyJWTToken(token); // 🔧 ИСПОЛЬЗУЕМ verifyJWTToken
+    const decoded = verifyJWTToken(token);
 
     if (!decoded || decoded.role !== 'courier') {
       return res.status(401).json({
@@ -145,14 +145,14 @@ const requireApprovedCourier = async (req, res, next) => {
 };
 
 /**
- * ВАЛИДАЦИЯ ДАННЫХ РЕГИСТРАЦИИ КУРЬЕРА
+ * ВАЛИДАЦИЯ ДАННЫХ РЕГИСТРАЦИИ КУРЬЕРА - С ПРОВЕРКОЙ ПАРОЛЯ
  * Проверяет корректность данных при регистрации
  */
 const validateCourierRegistration = (req, res, next) => {
   try {
     const {
-      first_name, last_name, email, phone, date_of_birth,
-      street, city, postal_code, vehicle_type,
+      first_name, last_name, email, phone, password, confirm_password,
+      date_of_birth, street, city, postal_code, vehicle_type,
       id_card_url, bank_rib_url,
       terms_accepted, privacy_policy_accepted,
       data_processing_accepted, background_check_accepted
@@ -161,8 +161,8 @@ const validateCourierRegistration = (req, res, next) => {
     // Валидация обязательных полей
     const missingFields = [];
     const required = {
-      first_name, last_name, email, phone, date_of_birth,
-      street, city, postal_code, vehicle_type,
+      first_name, last_name, email, phone, password, confirm_password,
+      date_of_birth, street, city, postal_code, vehicle_type,
       id_card_url, bank_rib_url
     };
 
@@ -177,6 +177,29 @@ const validateCourierRegistration = (req, res, next) => {
         result: false,
         message: "Отсутствуют обязательные поля",
         missing_fields: missingFields
+      });
+    }
+
+    // ВАЛИДАЦИЯ ПАРОЛЯ
+    if (password.length < 6) {
+      return res.status(400).json({
+        result: false,
+        message: "Пароль должен содержать минимум 6 символов"
+      });
+    }
+
+    if (password.length > 128) {
+      return res.status(400).json({
+        result: false,
+        message: "Пароль не может быть длиннее 128 символов"
+      });
+    }
+
+    // ПРОВЕРКА СОВПАДЕНИЯ ПАРОЛЕЙ
+    if (password !== confirm_password) {
+      return res.status(400).json({
+        result: false,
+        message: "Пароли не совпадают"
       });
     }
 
@@ -263,6 +286,13 @@ const validateCourierRegistration = (req, res, next) => {
         not_accepted: notAccepted
       });
     }
+
+    // НОРМАЛИЗУЕМ ДАННЫЕ И УБИРАЕМ confirm_password
+    req.body.first_name = first_name.trim();
+    req.body.last_name = last_name.trim();
+    req.body.email = email.toLowerCase().trim();
+    req.body.phone = cleanPhone;
+    delete req.body.confirm_password; // УДАЛЯЕМ confirm_password перед передачей в сервис
 
     next();
 

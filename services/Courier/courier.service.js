@@ -1,13 +1,13 @@
-// services/courier.service.js
+// services/Courier/courier.service.js - ПОЛНЫЙ ФАЙЛ с шифрованием данных
 import { User, CourierApplication, CourierProfile, Meta } from '../../models/index.js';
-import { cryptoString, decryptString } from '../../utils/crypto.js'; 
-import { hashString, hashMeta, comparePassword } from '../../utils/hash.js'; 
-import generatePassword from '../../utils/generatePassword.js'; 
-import mongoose from 'mongoose';
+import { cryptoString, decryptString } from '../../utils/crypto.js';
+import { hashString, hashMeta, comparePassword } from '../../utils/hash.js';
+import generatePassword from '../../utils/generatePassword.js';
+
 
 /**
- * ЭТАП 1: СОЗДАНИЕ ЗАЯВКИ КУРЬЕРА
- * Регистрация курьера с подачей документов
+ * ЭТАП 1: СОЗДАНИЕ ЗАЯВКИ КУРЬЕРА С ШИФРОВАНИЕМ
+ * Регистрация курьера с подачей документов (как у партнеров)
  */
 const createCourierApplication = async (applicationData) => {
   try {
@@ -67,25 +67,31 @@ const createCourierApplication = async (applicationData) => {
     const normalizedEmail = email.toLowerCase().trim();
     const cleanPhone = phone.replace(/\s/g, '');
 
-    // Проверяем существующих пользователей через Meta
+    // 🔐 ПРОВЕРЯЕМ СУЩЕСТВУЮЩИХ ПОЛЬЗОВАТЕЛЕЙ ЧЕРЕЗ META (как у партнеров)
     const hashedEmail = hashMeta(normalizedEmail);
-    const existingMeta = await Meta.findOne({ em: hashedEmail });
+    const existingMeta = await Meta.findOne({ 
+      em: hashedEmail,
+      role: 'courier' 
+    });
 
     if (existingMeta) {
       throw new Error('Пользователь с таким email уже зарегистрирован');
     }
 
-    // Проверяем существующие заявки курьеров
+    // Проверяем существующие заявки курьеров через search_data (открытые поля)
     const existingApplication = await CourierApplication.findOne({
       $or: [
-        { 'personal_data.phone': cleanPhone },
-        { 'personal_data.email': normalizedEmail }
+        { 
+          'search_data.first_name': first_name.trim(),
+          'search_data.last_name': last_name.trim(),
+          'search_data.city': city.trim()
+        }
       ],
       status: { $in: ['pending', 'approved'] }
     });
 
     if (existingApplication) {
-      throw new Error('Заявка курьера с такими данными уже подана');
+      throw new Error('Заявка курьера с похожими данными уже подана');
     }
 
     // ================ СОЗДАНИЕ ПОЛЬЗОВАТЕЛЯ ================
@@ -94,7 +100,7 @@ const createCourierApplication = async (applicationData) => {
     const finalPassword = password || generatePassword();
     const hashedPassword = await hashString(finalPassword);
 
-    // Создаем User (с зашифрованным email как у партнеров)
+    // 🔐 СОЗДАЕМ USER С ЗАШИФРОВАННЫМ EMAIL (как у партнеров)
     const newUser = new User({
       email: cryptoString(normalizedEmail), // 🔐 Зашифрованный email
       password_hash: hashedPassword,
@@ -112,33 +118,41 @@ const createCourierApplication = async (applicationData) => {
 
     await newUser.save();
 
-    // Создаем Meta для поиска
+    // 🔧 ИСПРАВЛЕНО: Создаем Meta для поиска (правильная структура)
     const metaInfo = new Meta({
-      em: hashedEmail, // 🔐 Хешированный email для поиска
-      ui: newUser._id,
-      ro: 'courier'
+      em: hashedEmail,           // 🔐 Хешированный email для поиска
+      role: 'courier',          // ✅ ИСПРАВЛЕНО: правильное поле role
+      courier: newUser._id,     // ✅ ИСПРАВЛЕНО: специфичное поле для курьера
+      is_active: true          // ✅ ДОБАВЛЕНО: активность записи
     });
 
     await metaInfo.save();
 
-    // ================ СОЗДАНИЕ ЗАЯВКИ КУРЬЕРА ================
+    // ================ СОЗДАНИЕ ЗАЯВКИ КУРЬЕРА С ШИФРОВАНИЕМ ================
 
     const courierApplication = new CourierApplication({
       user_id: newUser._id,
       
-      // Личные данные
+      // 🔐 ЛИЧНЫЕ ДАННЫЕ - ЗАШИФРОВАНЫ (как у партнеров)
       personal_data: {
-        first_name: first_name.trim(),
-        last_name: last_name.trim(),
-        email: normalizedEmail, // В заявке храним открыто для админа
-        phone: cleanPhone,
-        date_of_birth: new Date(date_of_birth),
+        first_name: cryptoString(first_name.trim()),      // 🔐 ЗАШИФРОВАНО
+        last_name: cryptoString(last_name.trim()),        // 🔐 ЗАШИФРОВАНО
+        email: cryptoString(normalizedEmail),             // 🔐 ЗАШИФРОВАНО
+        phone: cryptoString(cleanPhone),                  // 🔐 ЗАШИФРОВАНО
+        date_of_birth: new Date(date_of_birth),           // ✅ Дата может быть открыта
         address: {
-          street: street.trim(),
-          city: city.trim(),
-          postal_code: postal_code.trim(),
-          country: 'France'
+          street: cryptoString(street.trim()),            // 🔐 ЗАШИФРОВАНО
+          city: cryptoString(city.trim()),                // 🔐 ЗАШИФРОВАНО
+          postal_code: cryptoString(postal_code.trim()),  // 🔐 ЗАШИФРОВАНО
+          country: 'France'                               // ✅ Открыто
         }
+      },
+
+      // ✅ ПОИСКОВЫЕ ПОЛЯ - ОТКРЫТО (только имя и фамилия для админа)
+      search_data: {
+        first_name: first_name.trim(),                    // ✅ ОТКРЫТО для поиска
+        last_name: last_name.trim(),                      // ✅ ОТКРЫТО для поиска
+        city: city.trim()                                 // ✅ ОТКРЫТО для поиска
       },
 
       // Информация о транспорте
@@ -146,21 +160,26 @@ const createCourierApplication = async (applicationData) => {
         vehicle_type,
         vehicle_brand: vehicle_brand?.trim(),
         vehicle_model: vehicle_model?.trim(),
-        license_plate: license_plate?.trim()?.toUpperCase(),
+        license_plate: license_plate ? 
+          cryptoString(license_plate.trim().toUpperCase()) : undefined,  // 🔐 ЗАШИФРОВАНО
         insurance_company: insurance_company?.trim(),
-        insurance_policy_number: insurance_policy_number?.trim()
+        insurance_policy_number: insurance_policy_number ? 
+          cryptoString(insurance_policy_number.trim()) : undefined       // 🔐 ЗАШИФРОВАНО
       },
 
-      // Документы
+      // 🔐 ДОКУМЕНТЫ - URLs зашифрованы (могут содержать персональную информацию)
       documents: {
-        id_card_url, // Всегда обязательно
-        driver_license_url: ['motorbike', 'car'].includes(vehicle_type) ? driver_license_url : undefined,
-        insurance_url: ['motorbike', 'car'].includes(vehicle_type) ? insurance_url : undefined,
-        vehicle_registration_url: vehicle_type === 'car' ? vehicle_registration_url : undefined,
-        bank_rib_url // Обязательно для выплат
+        id_card_url: cryptoString(id_card_url),           // 🔐 ЗАШИФРОВАНО
+        driver_license_url: ['motorbike', 'car'].includes(vehicle_type) ? 
+          cryptoString(driver_license_url) : undefined,   // 🔐 ЗАШИФРОВАНО
+        insurance_url: ['motorbike', 'car'].includes(vehicle_type) ? 
+          cryptoString(insurance_url) : undefined,        // 🔐 ЗАШИФРОВАНО
+        vehicle_registration_url: vehicle_type === 'car' ? 
+          cryptoString(vehicle_registration_url) : undefined,  // 🔐 ЗАШИФРОВАНО
+        bank_rib_url: cryptoString(bank_rib_url)          // 🔐 ЗАШИФРОВАНО
       },
 
-      // Согласия
+      // Согласия (могут быть открыты)
       consents: {
         terms_accepted,
         privacy_policy_accepted,
@@ -185,14 +204,15 @@ const createCourierApplication = async (applicationData) => {
 
     await courierApplication.save();
 
-    // Проверяем дубликаты
+    // Проверяем дубликаты (обновленная логика)
     await courierApplication.checkForDuplicates();
 
-    console.log('✅ COURIER APPLICATION CREATED:', {
+    console.log('✅ COURIER APPLICATION CREATED WITH ENCRYPTION:', {
       application_id: courierApplication._id,
       user_id: newUser._id,
       email: normalizedEmail,
-      status: 'pending'
+      status: 'pending',
+      encrypted: true
     });
 
     return {
@@ -222,7 +242,7 @@ const createCourierApplication = async (applicationData) => {
 };
 
 /**
- * АВТОРИЗАЦИЯ КУРЬЕРА
+ * АВТОРИЗАЦИЯ КУРЬЕРА (обновленная с правильными полями Meta)
  */
 const loginCourier = async ({ email, password }) => {
   try {
@@ -233,32 +253,40 @@ const loginCourier = async ({ email, password }) => {
     const normalizedEmail = email.toLowerCase().trim();
     const hashedEmail = hashMeta(normalizedEmail);
 
-    // Поиск через Meta
-    const metaRecord = await Meta.findByEmailAndRole(hashedEmail, 'courier');
-    if (!metaRecord) {
+    // 🔧 ИСПРАВЛЕНО: Поиск через Meta с правильными полями
+    const metaRecord = await Meta.findOne({ 
+      em: hashedEmail, 
+      role: 'courier' 
+    }).populate('courier'); // Получаем связанного пользователя
+
+    if (!metaRecord || !metaRecord.courier) {
       throw new Error('Курьер с таким email не найден');
     }
 
-    // Получаем пользователя
-    const user = await User.findById(metaRecord.ui);
+    // 🔧 ИСПРАВЛЕНО: Используем правильное поле courier вместо ui
+    const user = metaRecord.courier;
     if (!user || !user.is_active) {
       throw new Error('Аккаунт курьера неактивен');
     }
 
     // Проверяем блокировку аккаунта
-    if (user.isAccountLocked()) {
+    if (user.isAccountLocked && user.isAccountLocked()) {
       throw new Error('Аккаунт временно заблокирован из-за превышения попыток входа');
     }
 
     // Проверяем пароль
     const isPasswordValid = await comparePassword(password, user.password_hash);
     if (!isPasswordValid) {
-      await user.incrementLoginAttempts();
+      if (user.incrementLoginAttempts) {
+        await user.incrementLoginAttempts();
+      }
       throw new Error('Неверный пароль');
     }
 
     // Успешный вход
-    await user.resetLoginAttempts();
+    if (user.resetLoginAttempts) {
+      await user.resetLoginAttempts();
+    }
 
     // Получаем профиль курьера (если есть)
     const courierProfile = await CourierProfile.findOne({ user_id: user._id });
@@ -289,7 +317,7 @@ const loginCourier = async ({ email, password }) => {
 };
 
 /**
- * ПОЛУЧЕНИЕ СТАТУСА ЗАЯВКИ КУРЬЕРА
+ * ПОЛУЧЕНИЕ СТАТУСА ЗАЯВКИ КУРЬЕРА (обновленная)
  */
 const getCourierApplicationStatus = async (userId) => {
   try {
@@ -321,7 +349,7 @@ const getCourierApplicationStatus = async (userId) => {
 };
 
 /**
- * ПОЛУЧЕНИЕ ПРОФИЛЯ КУРЬЕРА
+ * ПОЛУЧЕНИЕ ПРОФИЛЯ КУРЬЕРА (без изменений)
  */
 const getCourierProfile = async (userId) => {
   try {
@@ -396,10 +424,10 @@ const updateCourierLocation = async (userId, { latitude, longitude }) => {
 };
 
 export {
-       createCourierApplication,
-       loginCourier,
-       getCourierApplicationStatus,
-       getCourierProfile,
-       toggleCourierAvailability,
-       updateCourierLocation
-      }
+  createCourierApplication,
+  loginCourier,
+  getCourierApplicationStatus,
+  getCourierProfile,
+  toggleCourierAvailability,
+  updateCourierLocation
+};

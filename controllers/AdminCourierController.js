@@ -1,9 +1,10 @@
-// controllers/AdminCourierController.js
+// controllers/AdminCourierController.js - ПОЛНЫЙ ФАЙЛ с расшифровкой данных
 import { CourierApplication, CourierProfile, User } from '../models/index.js';
+import { decryptString } from '../utils/crypto.js';
 import mongoose from 'mongoose';
 
 /**
- * 1. Получение всех заявок курьеров
+ * 1. Получение всех заявок курьеров - С РАСШИФРОВКОЙ
  * GET /api/admin/couriers/applications
  */
 const getAllCourierApplications = async (req, res) => {
@@ -18,7 +19,7 @@ const getAllCourierApplications = async (req, res) => {
       vehicle_type = 'all'
     } = req.query;
 
-    console.log('📋 GET ALL COURIER APPLICATIONS:', {
+    console.log('📋 GET ALL COURIER APPLICATIONS WITH DECRYPTION:', {
       admin_id: admin._id,
       filters: { status, vehicle_type },
       pagination: { page, limit }
@@ -35,14 +36,12 @@ const getAllCourierApplications = async (req, res) => {
       filters['vehicle_info.vehicle_type'] = vehicle_type;
     }
 
-    // Сортировка
+    // Сортировка и пагинация
     const sortOptions = {};
     sortOptions[sort_by] = sort_order === 'desc' ? -1 : 1;
-
-    // Пагинация
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Получение заявок с подсчетом
+    // 🔐 ПОЛУЧЕНИЕ ЗАЯВОК (зашифрованные данные)
     const [applications, totalCount] = await Promise.all([
       CourierApplication.find(filters)
         .sort(sortOptions)
@@ -52,6 +51,49 @@ const getAllCourierApplications = async (req, res) => {
         .lean(),
       CourierApplication.countDocuments(filters)
     ]);
+
+    // 🔐 РАСШИФРОВКА ДАННЫХ для админа
+    const decryptedApplications = applications.map(app => {
+      try {
+        return {
+          id: app._id,
+          // ✅ ПОКАЗЫВАЕМ ОТКРЫТЫЕ ПОИСКОВЫЕ ПОЛЯ  
+          search_data: app.search_data, // Имя и фамилия открыто
+          
+          // 🔐 РАСШИФРОВЫВАЕМ ЧУВСТВИТЕЛЬНЫЕ ДАННЫЕ
+          personal_data: {
+            first_name: app.search_data?.first_name || 'Н/Д', // Берем из открытых данных
+            last_name: app.search_data?.last_name || 'Н/Д',   // Берем из открытых данных
+            email: app.personal_data?.email ? decryptString(app.personal_data.email) : 'Ошибка расшифровки',
+            phone: app.personal_data?.phone ? decryptString(app.personal_data.phone) : 'Ошибка расшифровки',
+            city: app.search_data?.city || 'Н/Д' // Берем из открытых данных
+          },
+          
+          vehicle_type: app.vehicle_info?.vehicle_type,
+          status: app.status,
+          verification_status: app.verification?.overall_verification_status,
+          submitted_at: app.submitted_at,
+          reviewed_at: app.review_info?.reviewed_at,
+          user_info: app.user_id
+        };
+      } catch (decryptError) {
+        console.error('🚨 DECRYPTION ERROR for application:', app._id, decryptError);
+        return {
+          id: app._id,
+          search_data: app.search_data,
+          personal_data: {
+            first_name: app.search_data?.first_name || 'Н/Д',
+            last_name: app.search_data?.last_name || 'Н/Д',
+            email: 'Ошибка расшифровки',
+            phone: 'Ошибка расшифровки',
+            city: app.search_data?.city || 'Н/Д'
+          },
+          vehicle_type: app.vehicle_info?.vehicle_type,
+          status: app.status,
+          error: 'Ошибка расшифровки данных'
+        };
+      }
+    });
 
     // Статистика по статусам
     const statusStats = await CourierApplication.aggregate([
@@ -73,22 +115,8 @@ const getAllCourierApplications = async (req, res) => {
 
     res.status(200).json({
       result: true,
-      message: "Заявки курьеров получены",
-      applications: applications.map(app => ({
-        id: app._id,
-        personal_data: {
-          first_name: app.personal_data.first_name,
-          last_name: app.personal_data.last_name,
-          email: app.personal_data.email,
-          phone: app.personal_data.phone
-        },
-        vehicle_type: app.vehicle_info.vehicle_type,
-        status: app.status,
-        verification_status: app.verification.overall_verification_status,
-        submitted_at: app.submitted_at,
-        reviewed_at: app.review_info.reviewed_at,
-        user_info: app.user_id
-      })),
+      message: "Заявки курьеров получены (с расшифровкой)",
+      applications: decryptedApplications,
       pagination: {
         current_page: parseInt(page),
         total_pages: Math.ceil(totalCount / parseInt(limit)),
@@ -109,13 +137,18 @@ const getAllCourierApplications = async (req, res) => {
 };
 
 /**
- * 2. Получение детальной информации о заявке
+ * 2. Получение детальной информации о заявке - С ПОЛНОЙ РАСШИФРОВКОЙ
  * GET /api/admin/couriers/applications/:id
  */
 const getCourierApplicationDetails = async (req, res) => {
   try {
     const { admin } = req;
     const { id } = req.params;
+
+    console.log('🔍 GET COURIER APPLICATION DETAILS WITH DECRYPTION:', {
+      application_id: id,
+      admin_id: admin._id
+    });
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -124,9 +157,10 @@ const getCourierApplicationDetails = async (req, res) => {
       });
     }
 
+    // 🔐 ПОЛУЧАЕМ ЗАШИФРОВАННУЮ ЗАЯВКУ
     const application = await CourierApplication.findById(id)
       .populate('user_id', 'role is_active createdAt last_login_at')
-      .populate('review_info.reviewed_by', 'first_name last_name role');
+      .populate('review_info.reviewed_by', 'full_name role');
 
     if (!application) {
       return res.status(404).json({
@@ -135,20 +169,74 @@ const getCourierApplicationDetails = async (req, res) => {
       });
     }
 
-    // Проверяем есть ли уже профиль курьера
-    const existingProfile = await CourierProfile.findOne({ 
-      user_id: application.user_id._id 
-    });
-
-    res.status(200).json({
-      result: true,
-      message: "Детали заявки курьера получены",
-      application: {
+    // 🔐 ПОЛНАЯ РАСШИФРОВКА ВСЕХ ДАННЫХ
+    try {
+      const decryptedApplication = {
         ...application.toObject(),
+        
+        // 🔐 РАСШИФРОВАННЫЕ ПЕРСОНАЛЬНЫЕ ДАННЫЕ
+        personal_data: {
+          first_name: decryptString(application.personal_data.first_name),
+          last_name: decryptString(application.personal_data.last_name),
+          email: decryptString(application.personal_data.email),
+          phone: decryptString(application.personal_data.phone),
+          date_of_birth: application.personal_data.date_of_birth,
+          address: {
+            street: decryptString(application.personal_data.address.street),
+            city: decryptString(application.personal_data.address.city),
+            postal_code: decryptString(application.personal_data.address.postal_code),
+            country: application.personal_data.address.country
+          }
+        },
+        
+        // 🔐 РАСШИФРОВАННЫЕ ДОКУМЕНТЫ
+        documents: {
+          id_card_url: decryptString(application.documents.id_card_url),
+          bank_rib_url: decryptString(application.documents.bank_rib_url),
+          driver_license_url: application.documents.driver_license_url ? 
+            decryptString(application.documents.driver_license_url) : null,
+          insurance_url: application.documents.insurance_url ? 
+            decryptString(application.documents.insurance_url) : null,
+          vehicle_registration_url: application.documents.vehicle_registration_url ? 
+            decryptString(application.documents.vehicle_registration_url) : null
+        },
+        
+        // 🔐 РАСШИФРОВАННЫЕ ДАННЫЕ ТРАНСПОРТА
+        vehicle_info: {
+          ...application.vehicle_info,
+          license_plate: application.vehicle_info.license_plate ? 
+            decryptString(application.vehicle_info.license_plate) : null,
+          insurance_policy_number: application.vehicle_info.insurance_policy_number ? 
+            decryptString(application.vehicle_info.insurance_policy_number) : null
+        }
+      };
+
+      // Проверяем есть ли уже профиль курьера
+      const existingProfile = await CourierProfile.findOne({ 
+        user_id: application.user_id._id 
+      });
+
+      res.status(200).json({
+        result: true,
+        message: "Детали заявки курьера получены (полностью расшифровано)",
+        application: decryptedApplication,
         has_courier_profile: !!existingProfile,
         courier_profile_id: existingProfile?._id
-      }
-    });
+      });
+
+    } catch (decryptError) {
+      console.error('🚨 FULL DECRYPTION ERROR:', decryptError);
+      
+      // Возвращаем частично расшифрованные данные
+      res.status(200).json({
+        result: true,
+        message: "Детали заявки получены (частичная расшифровка)",
+        application: {
+          ...application.toObject(),
+          decryption_error: "Некоторые поля не удалось расшифровать"
+        }
+      });
+    }
 
   } catch (error) {
     console.error('🚨 GET COURIER APPLICATION DETAILS - Error:', error);
@@ -207,58 +295,46 @@ const approveCourierApplication = async (req, res) => {
       });
     }
 
-    // Одобрение заявки
-    application.status = 'approved';
-    application.review_info.reviewed_by = admin._id;
-    application.review_info.reviewed_at = new Date();
-    application.review_info.admin_notes = admin_notes;
-    application.verification.overall_verification_status = 'completed';
+    // Проверяем, что профиль еще не создан
+    const existingProfile = await CourierProfile.findOne({ 
+      user_id: application.user_id 
+    });
 
-    await application.save();
-
-    // Создание профиля курьера автоматически
-    try {
-      const courierProfile = await application.createCourierProfile();
-      
-      console.log('✅ COURIER PROFILE CREATED:', {
-        profile_id: courierProfile._id,
-        user_id: application.user_id
-      });
-
-      res.status(200).json({
-        result: true,
-        message: "Заявка курьера одобрена, профиль создан",
-        application: {
-          id: application._id,
-          status: application.status,
-          reviewed_at: application.review_info.reviewed_at
-        },
-        courier_profile: {
-          id: courierProfile._id,
-          is_approved: courierProfile.is_approved,
-          application_status: courierProfile.application_status
-        },
-        next_step: {
-          action: "courier_can_work",
-          description: "Курьер может начать работать"
-        }
-      });
-
-    } catch (profileError) {
-      console.error('🚨 CREATE COURIER PROFILE - Error:', profileError);
-      
-      // Откатываем статус заявки если не удалось создать профиль
-      application.status = 'pending';
-      application.review_info.reviewed_by = undefined;
-      application.review_info.reviewed_at = undefined;
-      await application.save();
-
-      res.status(500).json({
+    if (existingProfile) {
+      return res.status(400).json({
         result: false,
-        message: "Ошибка создания профиля курьера",
-        error: profileError.message
+        message: "Профиль курьера уже существует"
       });
     }
+
+    // Одобряем заявку
+    await application.approve(admin._id, admin_notes);
+
+    // Создаем профиль курьера
+    const courierProfile = await application.createCourierProfile();
+
+    console.log('✅ COURIER APPROVED AND PROFILE CREATED:', {
+      application_id: application._id,
+      profile_id: courierProfile._id,
+      user_id: application.user_id
+    });
+
+    res.status(200).json({
+      result: true,
+      message: "Заявка курьера одобрена и профиль создан",
+      application: {
+        id: application._id,
+        status: application.status,
+        approved_at: application.review_info.approved_at,
+        approved_by: admin._id
+      },
+      courier_profile: {
+        id: courierProfile._id,
+        first_name: courierProfile.first_name,
+        last_name: courierProfile.last_name,
+        is_approved: courierProfile.is_approved
+      }
+    });
 
   } catch (error) {
     console.error('🚨 APPROVE COURIER APPLICATION - Error:', error);
@@ -278,22 +354,23 @@ const rejectCourierApplication = async (req, res) => {
   try {
     const { admin } = req;
     const { id } = req.params;
-    const { rejection_reason } = req.body;
+    const { rejection_reason, admin_notes = '' } = req.body;
 
     console.log('❌ REJECT COURIER APPLICATION:', {
       application_id: id,
-      admin_id: admin._id
+      admin_id: admin._id,
+      reason: rejection_reason
     });
 
-    // Валидация прав
+    // Валидация прав доступа
     if (!['manager', 'owner'].includes(admin.role)) {
       return res.status(403).json({
         result: false,
-        message: "Недостаточно прав для отклонения заявок"
+        message: "Недостаточно прав для отклонения заявок курьеров"
       });
     }
 
-    if (!rejection_reason) {
+    if (!rejection_reason || rejection_reason.trim().length === 0) {
       return res.status(400).json({
         result: false,
         message: "Причина отклонения обязательна"
@@ -324,14 +401,14 @@ const rejectCourierApplication = async (req, res) => {
       });
     }
 
-    // Отклонение заявки
-    application.status = 'rejected';
-    application.review_info.reviewed_by = admin._id;
-    application.review_info.reviewed_at = new Date();
-    application.review_info.admin_notes = rejection_reason;
-    application.verification.overall_verification_status = 'failed';
+    // Отклоняем заявку
+    await application.reject(admin._id, rejection_reason.trim(), admin_notes);
 
-    await application.save();
+    console.log('❌ COURIER APPLICATION REJECTED:', {
+      application_id: application._id,
+      rejected_by: admin._id,
+      reason: rejection_reason
+    });
 
     res.status(200).json({
       result: true,
@@ -339,8 +416,9 @@ const rejectCourierApplication = async (req, res) => {
       application: {
         id: application._id,
         status: application.status,
-        rejection_reason: rejection_reason,
-        reviewed_at: application.review_info.reviewed_at
+        rejected_at: application.review_info.reviewed_at,
+        rejection_reason: application.review_info.rejection_reason,
+        rejected_by: admin._id
       }
     });
 
@@ -362,43 +440,44 @@ const getAllCourierProfiles = async (req, res) => {
   try {
     const { admin } = req;
     const { 
-      status = 'all',
-      availability = 'all', 
       page = 1, 
-      limit = 20,
-      sort_by = 'createdAt',
-      sort_order = 'desc'
+      limit = 20, 
+      is_available = 'all',
+      is_blocked = 'all',
+      vehicle_type = 'all'
     } = req.query;
 
-    // Фильтры
+    console.log('👥 GET ALL COURIER PROFILES:', {
+      admin_id: admin._id,
+      filters: { is_available, is_blocked, vehicle_type }
+    });
+
+    // Построение фильтров
     const filters = {};
     
-    if (status !== 'all') {
-      filters.application_status = status;
+    if (is_available !== 'all') {
+      filters.is_available = is_available === 'true';
     }
     
-    if (availability === 'available') {
-      filters.is_available = true;
-      filters.is_online = true;
-    } else if (availability === 'offline') {
-      filters.$or = [
-        { is_available: false },
-        { is_online: false }
-      ];
+    if (is_blocked !== 'all') {
+      filters.is_blocked = is_blocked === 'true';
+    }
+    
+    if (vehicle_type !== 'all') {
+      filters.vehicle_type = vehicle_type;
     }
 
-    // Сортировка и пагинация
-    const sortOptions = {};
-    sortOptions[sort_by] = sort_order === 'desc' ? -1 : 1;
+    // Пагинация
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    // Получение профилей курьеров
     const [profiles, totalCount] = await Promise.all([
       CourierProfile.find(filters)
-        .sort(sortOptions)
+        .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit))
         .populate('user_id', 'role is_active createdAt')
-        .populate('approved_by', 'first_name last_name')
+        .populate('approved_by', 'full_name role')
         .lean(),
       CourierProfile.countDocuments(filters)
     ]);
@@ -408,29 +487,31 @@ const getAllCourierProfiles = async (req, res) => {
       message: "Профили курьеров получены",
       profiles: profiles.map(profile => ({
         id: profile._id,
-        full_name: `${profile.first_name} ${profile.last_name}`,
-        phone: profile.phone,
+        user_id: profile.user_id,
+        first_name: profile.first_name,
+        last_name: profile.last_name,
         vehicle_type: profile.vehicle_type,
-        is_approved: profile.is_approved,
         is_available: profile.is_available,
         is_online: profile.is_online,
+        is_approved: profile.is_approved,
         is_blocked: profile.is_blocked,
-        application_status: profile.application_status,
-        earnings: profile.earnings,
+        location: profile.location,
+        work_radius: profile.work_radius,
         ratings: profile.ratings,
-        last_activity: profile.last_activity,
+        approved_by: profile.approved_by,
         approved_at: profile.approved_at,
-        approved_by: profile.approved_by
+        createdAt: profile.createdAt
       })),
       pagination: {
         current_page: parseInt(page),
         total_pages: Math.ceil(totalCount / parseInt(limit)),
-        total_items: totalCount
+        total_items: totalCount,
+        items_per_page: parseInt(limit)
       }
     });
 
   } catch (error) {
-    console.error('GET ALL COURIER PROFILES - Error:', error);
+    console.error('🚨 GET ALL COURIER PROFILES - Error:', error);
     res.status(500).json({
       result: false,
       message: "Ошибка получения профилей курьеров",
@@ -541,34 +622,32 @@ const unblockCourierProfile = async (req, res) => {
 };
 
 /**
- * 7. Получение статистики курьеров
+ * 7. Статистика курьеров
  * GET /api/admin/couriers/statistics
  */
 const getCourierStatistics = async (req, res) => {
   try {
     const { admin } = req;
-    const { period = 'today' } = req.query;
+    const { period = '30' } = req.query;
 
-    // Определяем временные рамки
-    const now = new Date();
-    let startDate, endDate = now;
+    const days = parseInt(period);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const endDate = new Date();
 
-    switch (period) {
-      case 'today':
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        break;
-      case 'week':
-        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case 'month':
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        break;
-      default:
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    }
+    console.log('📊 GET COURIER STATISTICS:', {
+      admin_id: admin._id,
+      period: `${days} days`,
+      date_range: { startDate, endDate }
+    });
 
     // Статистика заявок
-    const applicationStats = await CourierApplication.aggregate([
+    const applications = await CourierApplication.aggregate([
+      {
+        $match: {
+          submitted_at: { $gte: startDate, $lte: endDate }
+        }
+      },
       {
         $group: {
           _id: '$status',
@@ -578,25 +657,14 @@ const getCourierStatistics = async (req, res) => {
     ]);
 
     // Статистика профилей
-    const profileStats = await CourierProfile.aggregate([
+    const profiles = await CourierProfile.aggregate([
       {
         $group: {
           _id: null,
-          total_couriers: { $sum: 1 },
-          approved_couriers: {
-            $sum: { $cond: ['$is_approved', 1, 0] }
-          },
-          available_couriers: {
-            $sum: { $cond: ['$is_available', 1, 0] }
-          },
-          online_couriers: {
-            $sum: { $cond: ['$is_online', 1, 0] }
-          },
-          blocked_couriers: {
-            $sum: { $cond: ['$is_blocked', 1, 0] }
-          },
-          total_earnings: { $sum: '$earnings.total_earned' },
-          total_orders: { $sum: '$earnings.completed_orders' }
+          total: { $sum: 1 },
+          active: { $sum: { $cond: [{ $eq: ['$is_available', true] }, 1, 0] } },
+          blocked: { $sum: { $cond: [{ $eq: ['$is_blocked', true] }, 1, 0] } },
+          avg_rating: { $avg: '$ratings.average_rating' }
         }
       }
     ]);
@@ -607,26 +675,16 @@ const getCourierStatistics = async (req, res) => {
         $group: {
           _id: '$vehicle_type',
           count: { $sum: 1 },
-          avg_rating: { $avg: '$ratings.avg_rating' }
+          avg_rating: { $avg: '$ratings.average_rating' }
         }
       }
     ]);
 
-    // Формируем ответ
-    const applications = {};
-    applicationStats.forEach(stat => {
-      applications[stat._id] = stat.count;
-    });
-
-    const profiles = profileStats[0] || {
-      total_couriers: 0,
-      approved_couriers: 0,
-      available_couriers: 0,
-      online_couriers: 0,
-      blocked_couriers: 0,
-      total_earnings: 0,
-      total_orders: 0
-    };
+    // Преобразование данных заявок
+    const applicationStats = applications.reduce((acc, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, { pending: 0, approved: 0, rejected: 0 });
 
     res.status(200).json({
       result: true,
@@ -638,12 +696,17 @@ const getCourierStatistics = async (req, res) => {
       },
       statistics: {
         applications: {
-          pending: applications.pending || 0,
-          approved: applications.approved || 0,
-          rejected: applications.rejected || 0,
-          total: Object.values(applications).reduce((sum, count) => sum + count, 0)
+          pending: applicationStats.pending || 0,
+          approved: applicationStats.approved || 0,
+          rejected: applicationStats.rejected || 0,
+          total: Object.values(applicationStats).reduce((sum, count) => sum + count, 0)
         },
-        profiles: profiles,
+        profiles: profiles[0] || {
+          total: 0,
+          active: 0,
+          blocked: 0,
+          avg_rating: 0
+        },
         vehicles: vehicleStats.reduce((acc, vehicle) => {
           acc[vehicle._id] = {
             count: vehicle.count,
@@ -664,12 +727,13 @@ const getCourierStatistics = async (req, res) => {
   }
 };
 
-export { getAllCourierApplications,
-         getCourierApplicationDetails,
-         approveCourierApplication,
-         rejectCourierApplication,
-         getAllCourierProfiles,
-         blockCourierProfile,
-         unblockCourierProfile,
-         getCourierStatistics
-        }
+export { 
+  getAllCourierApplications,
+  getCourierApplicationDetails,
+  approveCourierApplication,
+  rejectCourierApplication,
+  getAllCourierProfiles,
+  blockCourierProfile,
+  unblockCourierProfile,
+  getCourierStatistics
+};
