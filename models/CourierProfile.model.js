@@ -1,4 +1,4 @@
-// models/CourierProfile.model.js (исправленный - ES6 modules)
+// models/CourierProfile.model.js - ИСПРАВЛЕНА геолокация для MongoDB
 import mongoose from 'mongoose';
 
 const courierProfileSchema = new mongoose.Schema({
@@ -36,15 +36,19 @@ const courierProfileSchema = new mongoose.Schema({
     enum: ['bike', 'motorbike', 'car']
   },
   
-  // Геолокация курьера (обновляется в реальном времени)
+  // 🔧 ИСПРАВЛЕНО: Геолокация в формате GeoJSON для MongoDB
   location: {
-    lat: {
-      type: Number
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point'
     },
-    lng: {
-      type: Number
+    coordinates: {
+      type: [Number], // [longitude, latitude] - порядок важен!
+      default: [0, 0]
     },
-    updated_at: {
+    // Дополнительные поля для удобства
+    last_updated: {
       type: Date,
       default: Date.now
     }
@@ -64,6 +68,10 @@ const courierProfileSchema = new mongoose.Schema({
     },
     vehicle_registration_url: {
       type: String // Для car
+    },
+    bank_rib_url: {
+      type: String,
+      required: true
     }
   },
   
@@ -78,7 +86,7 @@ const courierProfileSchema = new mongoose.Schema({
   },
   is_approved: {
     type: Boolean,
-    default: false // Одобрен админом
+    default: true // Автоматически одобрен при создании из заявки
   },
   
   // Радиус работы в км
@@ -93,7 +101,7 @@ const courierProfileSchema = new mongoose.Schema({
   application_status: {
     type: String,
     enum: ['pending', 'approved', 'rejected', 'blocked'],
-    default: 'pending'
+    default: 'approved' // По умолчанию одобрено при создании
   },
   rejection_reason: {
     type: String
@@ -103,7 +111,8 @@ const courierProfileSchema = new mongoose.Schema({
     ref: 'AdminUser'
   },
   approved_at: {
-    type: Date
+    type: Date,
+    default: Date.now
   },
   
   // Статистика и заработок
@@ -204,6 +213,8 @@ const courierProfileSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// ================ ИНДЕКСЫ ================
+
 // Индекс для поиска по user_id
 courierProfileSchema.index({ user_id: 1 });
 
@@ -215,7 +226,7 @@ courierProfileSchema.index({
   is_blocked: 1 
 });
 
-// Геоиндекс для поиска курьеров поблизости
+// 🔧 ИСПРАВЛЕНО: Правильный геоиндекс для MongoDB GeoJSON
 courierProfileSchema.index({ location: '2dsphere' });
 
 // Индекс для статуса заявки
@@ -227,16 +238,22 @@ courierProfileSchema.index({ 'ratings.avg_rating': -1 });
 // Индекс для последней активности
 courierProfileSchema.index({ last_activity: -1 });
 
+// ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
+
 // Виртуальное поле для полного имени
 courierProfileSchema.virtual('full_name').get(function() {
   return `${this.first_name} ${this.last_name}`;
 });
 
-// Метод для обновления геолокации
+// ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
+
+// 🔧 ИСПРАВЛЕНО: Метод для обновления геолокации в формате GeoJSON
 courierProfileSchema.methods.updateLocation = function(lat, lng) {
-  this.location.lat = lat;
-  this.location.lng = lng;
-  this.location.updated_at = new Date();
+  this.location = {
+    type: 'Point',
+    coordinates: [lng, lat], // [longitude, latitude] - порядок важен для MongoDB!
+    last_updated: new Date()
+  };
   this.last_activity = new Date();
   
   return this.save();
@@ -335,6 +352,8 @@ courierProfileSchema.methods.addEarnings = function(amount) {
   return this.save();
 };
 
+// ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
+
 // Статический метод для поиска доступных курьеров поблизости
 courierProfileSchema.statics.findAvailableNearby = function(lat, lng, radiusKm = 5) {
   return this.find({
@@ -342,7 +361,7 @@ courierProfileSchema.statics.findAvailableNearby = function(lat, lng, radiusKm =
       $near: {
         $geometry: {
           type: 'Point',
-          coordinates: [lng, lat]
+          coordinates: [lng, lat] // [longitude, latitude]
         },
         $maxDistance: radiusKm * 1000 // конвертируем км в метры
       }
@@ -354,9 +373,10 @@ courierProfileSchema.statics.findAvailableNearby = function(lat, lng, radiusKm =
   }).sort({ 'ratings.avg_rating': -1 });
 };
 
+// ================ НАСТРОЙКИ JSON ================
+
 // Настройка виртуальных полей в JSON
 courierProfileSchema.set('toJSON', { virtuals: true });
 courierProfileSchema.set('toObject', { virtuals: true });
 
-// 🆕 ИСПРАВЛЕНО: ES6 export вместо module.exports
 export default mongoose.model('CourierProfile', courierProfileSchema);

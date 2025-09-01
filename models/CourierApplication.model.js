@@ -360,14 +360,36 @@ courierApplicationSchema.set('toJSON', {
 
 // ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
-// Одобрение заявки
+
+// Одобрение заявки с правильной верификацией
 courierApplicationSchema.methods.approve = function(adminId, adminNotes = '') {
   this.status = 'approved';
   this.review_info.reviewed_by = adminId;
   this.review_info.reviewed_at = new Date();
   this.review_info.approved_at = new Date();
   this.review_info.admin_notes = adminNotes;
+  
+  // Автоматически верифицируем документы при одобрении
+  this.verification.identity_verified = true;
   this.verification.overall_verification_status = 'completed';
+  this.verification.last_verification_update = new Date();
+  
+  // Верифицируем документы в зависимости от типа транспорта
+  if (this.vehicle_info.vehicle_type === 'motorbike' || this.vehicle_info.vehicle_type === 'car') {
+    this.verification.license_verified = true;
+    this.verification.insurance_verified = true;
+  }
+  
+  if (this.vehicle_info.vehicle_type === 'car') {
+    this.verification.vehicle_verified = true;
+  }
+  
+  // Для bike - права и страховка не требуются
+  if (this.vehicle_info.vehicle_type === 'bike') {
+    this.verification.license_verified = false;
+    this.verification.insurance_verified = false;
+    this.verification.vehicle_verified = false;
+  }
   
   return this.save();
 };

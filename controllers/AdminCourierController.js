@@ -307,7 +307,7 @@ const approveCourierApplication = async (req, res) => {
       });
     }
 
-    // Одобряем заявку
+    // Одобряем заявку с автоматической верификацией документов
     await application.approve(admin._id, admin_notes);
 
     // Создаем профиль курьера
