@@ -1,4 +1,4 @@
-// models/index.js (исправленный - ES6 modules)
+// models/index.js - ИСПРАВЛЕННЫЙ с правильным экспортом Cart
 
 // Базовые модели
 export { default as User } from './User.model.js';
@@ -15,7 +15,7 @@ export { default as Product } from './Product.model.js';
 export { default as Order } from './Order.model.js';
 export { default as Review } from './Review.model.js';
 export { default as Message } from './Message.model.js';
-export { default as Cart } from './Cart.model.js';
+export { default as Cart } from './Cart.model.js';        // ✅ ИСПРАВЛЕНО: добавили Cart
 
 // Администрирование партнеров
 export { default as InitialPartnerRequest } from './InitialPartnerRequest.model.js';
@@ -39,6 +39,7 @@ import Product from './Product.model.js';
 import Order from './Order.model.js';
 import Review from './Review.model.js';
 import Message from './Message.model.js';
+import Cart from './Cart.model.js';                       // ✅ ИСПРАВЛЕНО: добавили Cart
 import InitialPartnerRequest from './InitialPartnerRequest.model.js';
 import PartnerLegalInfo from './PartnerLegalInfo.model.js';
 import CourierApplication from './CourierApplication.model.js';
@@ -59,6 +60,7 @@ export default {
   Order,
   Review,
   Message,
+  Cart,                                                   // ✅ ИСПРАВЛЕНО: добавили Cart
   InitialPartnerRequest,
   PartnerLegalInfo,
   CourierApplication,

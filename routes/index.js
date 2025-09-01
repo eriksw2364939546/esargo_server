@@ -1,4 +1,4 @@
-// routes/index.js (ОБНОВЛЕННЫЙ с системой заказов как UberEats)
+// routes/index.js - ИСПРАВЛЕННЫЕ ИМПОРТЫ
 import express from 'express';
 const router = express.Router();
 
@@ -11,10 +11,10 @@ import adminRoutes from './Admin.route.js';
 import adminPartnerRoutes from './AdminPartner.route.js';
 import adminCourierRoutes from './AdminCourier.route.js';
 
-// 🆕 НОВЫЕ РОУТЫ ДЛЯ СИСТЕМЫ ЗАКАЗОВ
-import publicRoutes from '../routes/Public/Public.route.js';        // Публичный каталог
-import cartRoutes from './Cart.route.js';            // Корзина покупок
-import orderRoutes from './Order.route.js';          // Заказы
+// 🆕 ИСПРАВЛЕННЫЕ ИМПОРТЫ ДЛЯ СИСТЕМЫ ЗАКАЗОВ
+import publicRoutes from './Public.route.js';      // ИСПРАВЛЕНО: убрали ../routes/Public/
+import cartRoutes from './Cart.route.js';          // Корзина покупок
+import orderRoutes from './Order.route.js';        // Заказы
 
 // Health check endpoint
 router.get('/health', (req, res) => {
@@ -38,43 +38,26 @@ router.get('/health', (req, res) => {
 });
 
 // ================ ПУБЛИЧНЫЕ РОУТЫ (без авторизации) ================
-// 🆕 Публичный каталог ресторанов - как UberEats главная страница
 router.use('/public', publicRoutes);
 
 // ================ ОСНОВНЫЕ ПОЛЬЗОВАТЕЛЬСКИЕ РОУТЫ ================
-
-// Customer routes (регистрация, авторизация, профиль)
 router.use('/customers', customerRoutes);
-
-// 🆕 Cart routes (корзина покупок) - требует авторизации клиента
 router.use('/cart', cartRoutes);
-
-// 🆕 Order routes (создание и управление заказами) - мульти-роль
 router.use('/orders', orderRoutes);
 
-// Partner routes (управление рестораном)
+// ================ ПАРТНЕРСКИЕ РОУТЫ ================
 router.use('/partners', partnerRoutes);
-
-// Partner menu routes (управление меню)
 router.use('/partners/menu', partnerMenuRoutes);
 
-// Courier routes (система курьеров)
+// ================ КУРЬЕРСКИЕ РОУТЫ ================
 router.use('/couriers', courierRoutes);
 
 // ================ АДМИНИСТРАТИВНЫЕ РОУТЫ ================
-
-// Admin routes (основная админка)
 router.use('/admin', adminRoutes);
-
-// Admin partner management routes (управление партнерами)
 router.use('/admin/partners', adminPartnerRoutes);
-
-// Admin courier management routes (управление курьерами) 
 router.use('/admin/couriers', adminCourierRoutes);
 
 // ================ СИСТЕМНАЯ ИНФОРМАЦИЯ ================
-
-// Главная страница API
 router.get('/', (req, res) => {
     res.json({
         success: true,
@@ -82,7 +65,6 @@ router.get('/', (req, res) => {
         version: '2.1.0',
         architecture: 'Service Layer + Meta Security Model + Full Order Management + Cart System',
         
-        // 🆕 ОБНОВЛЕННЫЕ ЭНДПОИНТЫ
         available_endpoints: {
             // ПУБЛИЧНЫЕ (без авторизации) - как UberEats
             public_catalog: {
@@ -111,96 +93,48 @@ router.get('/', (req, res) => {
                 cart_clear: 'DELETE /api/cart',
                 cart_calculate_delivery: 'POST /api/cart/calculate-delivery',
                 
-                // Заказы клиента
-                create_order: 'POST /api/orders',
-                my_orders: 'GET /api/orders/my',
-                order_details: 'GET /api/orders/:id',
-                cancel_order: 'POST /api/orders/:id/cancel',
-                rate_order: 'POST /api/orders/:id/rate'
+                // Заказы
+                orders_create: 'POST /api/orders',
+                orders_my: 'GET /api/orders/my',
+                orders_details: 'GET /api/orders/:id',
+                orders_cancel: 'POST /api/orders/:id/cancel',
+                orders_rate: 'POST /api/orders/:id/rate',
+                orders_track: 'GET /api/orders/:id/track'
             },
             
-            // ПАРТНЕРСКИЕ (рестораны)
+            // ПАРТНЕРСКИЕ (требуют авторизации partner)
             partners: {
                 register: 'POST /api/partners/register',
                 login: 'POST /api/partners/login',
-                verify: 'GET /api/partners/verify',
-                dashboard: 'GET /api/partners/dashboard',
-                legal_info: 'POST /api/partners/legal-info/:request_id',
                 profile: 'GET /api/partners/profile',
-                update_profile: 'PUT /api/partners/profile/:id',
+                menu_management: 'GET /api/partners/menu/*',
                 
-                // Управление меню
-                menu_categories: {
-                    list: 'GET /api/partners/menu/categories',
-                    create: 'POST /api/partners/menu/categories',
-                    update: 'PUT /api/partners/menu/categories/:category_id',
-                    delete: 'DELETE /api/partners/menu/categories/:category_id'
-                },
-                menu_products: {
-                    list: 'GET /api/partners/menu/products',
-                    create: 'POST /api/partners/menu/products',
-                    update: 'PUT /api/partners/menu/products/:product_id',
-                    delete: 'DELETE /api/partners/menu/products/:product_id'
-                },
-                menu_stats: 'GET /api/partners/menu/stats',
-                
-                // Управление заказами ресторана
+                // Заказы партнера
                 orders_list: 'GET /api/orders/partner/list',
-                accept_order: 'POST /api/orders/:id/accept',
-                reject_order: 'POST /api/orders/:id/reject',
-                mark_ready: 'POST /api/orders/:id/ready'
+                orders_accept: 'POST /api/orders/:id/accept',
+                orders_reject: 'POST /api/orders/:id/reject',
+                orders_ready: 'POST /api/orders/:id/ready'
             },
             
-            // КУРЬЕРСКИЕ (доставка)
+            // КУРЬЕРСКИЕ (требуют авторизации courier)
             couriers: {
                 register: 'POST /api/couriers/register',
                 login: 'POST /api/couriers/login',
-                verify: 'GET /api/couriers/verify',
                 profile: 'GET /api/couriers/profile',
-                toggle_availability: 'PATCH /api/couriers/availability',
-                update_location: 'PATCH /api/couriers/location',
                 
-                // Управление заказами курьера
-                available_orders: 'GET /api/orders/courier/available',
-                my_orders: 'GET /api/orders/courier/my',
-                take_order: 'POST /api/orders/:id/take',
-                pickup_order: 'POST /api/orders/:id/pickup',
-                deliver_order: 'POST /api/orders/:id/deliver'
+                // Заказы курьера
+                orders_available: 'GET /api/orders/courier/available',
+                orders_my: 'GET /api/orders/courier/my',
+                orders_take: 'POST /api/orders/:id/take',
+                orders_pickup: 'POST /api/orders/:id/pickup',
+                orders_deliver: 'POST /api/orders/:id/deliver'
             },
             
-            // ОБЩИЕ (отслеживание заказов)
-            tracking: {
-                track_order: 'GET /api/orders/:id/track',
-                order_status: 'GET /api/orders/:id/status'
-            },
-            
-            // АДМИНИСТРАТИВНЫЕ
+            // АДМИНИСТРАТИВНЫЕ (требуют авторизации admin)
             admin: {
                 login: 'POST /api/admin/login',
-                verify: 'GET /api/admin/verify',
-                profile: 'GET /api/admin/profile',
-                create_admin: 'POST /api/admin/create',
-                list_admins: 'GET /api/admin/list',
-                edit_admin: 'PUT /api/admin/edit/:id',
-                delete_admin: 'DELETE /api/admin/delete/:id'
-            },
-            admin_partners: {
-                view_requests: 'GET /api/admin/partners/requests',
-                view_request: 'GET /api/admin/partners/requests/:id',
-                approve_request: 'POST /api/admin/partners/requests/:id/approve',
-                reject_request: 'POST /api/admin/partners/requests/:id/reject',
-                approve_legal: 'POST /api/admin/partners/legal/:id/approve',
-                reject_legal: 'POST /api/admin/partners/legal/:id/reject',
-                publish_partner: 'POST /api/admin/partners/profiles/:id/publish'
-            },
-            admin_couriers: {
-                view_applications: 'GET /api/admin/couriers/applications',
-                view_application: 'GET /api/admin/couriers/applications/:id',
-                approve_application: 'POST /api/admin/couriers/applications/:id/approve',
-                reject_application: 'POST /api/admin/couriers/applications/:id/reject',
-                view_profiles: 'GET /api/admin/couriers/profiles',
-                block_courier: 'POST /api/admin/couriers/profiles/:id/block',
-                unblock_courier: 'POST /api/admin/couriers/profiles/:id/unblock'
+                partners: 'GET /api/admin/partners/*',
+                couriers: 'GET /api/admin/couriers/*'
             }
         },
         
@@ -226,47 +160,13 @@ router.get('/', (req, res) => {
             step_5: "Клиент рассчитывает доставку (POST /api/cart/calculate-delivery)",
             step_6: "Клиент создает заказ (POST /api/orders)",
             step_7: "Ресторан принимает/отклоняет заказ (POST /api/orders/:id/accept|reject)",
-            step_8: "Ресторан готовит заказ и помечает готовым (POST /api/orders/:id/ready)",
+            step_8: "Ресторан помечает заказ готовым (POST /api/orders/:id/ready)",
             step_9: "Курьер берет заказ (POST /api/orders/:id/take)",
-            step_10: "Курьер забирает у ресторана (POST /api/orders/:id/pickup)",
-            step_11: "Курьер доставляет клиенту (POST /api/orders/:id/deliver)",
+            step_10: "Курьер забирает заказ (POST /api/orders/:id/pickup)",
+            step_11: "Курьер доставляет заказ (POST /api/orders/:id/deliver)",
             step_12: "Клиент оценивает заказ (POST /api/orders/:id/rate)"
         },
         
-        security_features: {
-            meta_mode: "Шифрование и хэширование чувствительных данных",
-            jwt_authentication: "JWT токены для всех ролей",
-            role_based_access: "Разграничение прав по ролям",
-            session_security: "Защищенные серверные сессии для корзин",
-            input_validation: "Валидация входящих данных",
-            rate_limiting: "Ограничение частоты запросов"
-        },
-        
-        payment_system: {
-            status: "stub_implementation",
-            description: "Заглушка платежной системы для тестирования",
-            supported_methods: ["card", "cash"],
-            currencies: ["EUR", "USD", "RUB"],
-            ready_for_integration: ["Stripe", "PayPal", "Square"],
-            test_endpoints: {
-                success_payment: "Используйте test_mode: true в запросе",
-                failed_payment: "Используйте test_error: 'card_declined' в запросе"
-            }
-        },
-        
-        database_collections: {
-            users: "Базовые пользователи (клиенты, партнеры, курьеры)",
-            customer_profiles: "Профили клиентов",
-            partner_profiles: "Профили ресторанов",
-            courier_profiles: "Профили курьеров", 
-            products: "Товары и блюда",
-            carts: "Корзины покупок (серверная сторона)",
-            orders: "Заказы с полным жизненным циклом",
-            messages: "Системные уведомления",
-            admin_logs: "Логи административных действий"
-        },
-        
-        environment: process.env.NODE_ENV || 'development',
         timestamp: new Date().toISOString()
     });
 });
