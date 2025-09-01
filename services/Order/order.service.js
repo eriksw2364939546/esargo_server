@@ -7,7 +7,7 @@ import mongoose from 'mongoose';
 /**
  * 📦 СОЗДАТЬ ЗАКАЗ ИЗ КОРЗИНЫ
  */
-export const createOrderFromCart = async (customerId, sessionId, orderData) => {
+const createOrderFromCart = async (customerId, sessionId, orderData) => {
   const session = await mongoose.startSession();
   
   try {
@@ -193,7 +193,7 @@ export const createOrderFromCart = async (customerId, sessionId, orderData) => {
 /**
  * 📋 ПОЛУЧИТЬ ЗАКАЗЫ КЛИЕНТА
  */
-export const getCustomerOrders = async (customerId, filters = {}) => {
+const getCustomerOrders = async (customerId, filters = {}) => {
   try {
     const {
       status = null,
@@ -294,7 +294,7 @@ export const getCustomerOrders = async (customerId, filters = {}) => {
 /**
  * 🔍 ПОЛУЧИТЬ ДЕТАЛИ ЗАКАЗА
  */
-export const getOrderDetails = async (orderId, userId, userRole = 'customer') => {
+const getOrderDetails = async (orderId, userId, userRole = 'customer') => {
   try {
     console.log('🔍 GET ORDER DETAILS:', { orderId, userId, userRole });
 
@@ -440,7 +440,7 @@ export const getOrderDetails = async (orderId, userId, userRole = 'customer') =>
 /**
  * ❌ ОТМЕНИТЬ ЗАКАЗ КЛИЕНТОМ
  */
-export const cancelCustomerOrder = async (orderId, customerId, cancellationData) => {
+const cancelCustomerOrder = async (orderId, customerId, cancellationData) => {
   try {
     const { reason, details = '' } = cancellationData;
 
@@ -494,7 +494,7 @@ export const cancelCustomerOrder = async (orderId, customerId, cancellationData)
 /**
  * ⭐ ОЦЕНИТЬ ЗАКАЗ
  */
-export const rateCompletedOrder = async (orderId, customerId, ratingData) => {
+const rateCompletedOrder = async (orderId, customerId, ratingData) => {
   try {
     const {
       partner_rating,
@@ -580,7 +580,7 @@ export const rateCompletedOrder = async (orderId, customerId, ratingData) => {
 /**
  * 🏪 ПОЛУЧИТЬ ЗАКАЗЫ РЕСТОРАНА
  */
-export const getRestaurantOrders = async (partnerId, filters = {}) => {
+const getRestaurantOrders = async (partnerId, filters = {}) => {
   try {
     const {
       status = null,
@@ -690,7 +690,7 @@ export const getRestaurantOrders = async (partnerId, filters = {}) => {
 /**
  * ✅ ПРИНЯТЬ ЗАКАЗ РЕСТОРАНОМ
  */
-export const acceptRestaurantOrder = async (orderId, partnerId, acceptanceData) => {
+const acceptRestaurantOrder = async (orderId, partnerId, acceptanceData) => {
   try {
     const { estimated_preparation_time = 25 } = acceptanceData;
 
@@ -746,7 +746,7 @@ export const acceptRestaurantOrder = async (orderId, partnerId, acceptanceData) 
 /**
  * ❌ ОТКЛОНИТЬ ЗАКАЗ РЕСТОРАНОМ
  */
-export const rejectRestaurantOrder = async (orderId, partnerId, rejectionData) => {
+const rejectRestaurantOrder = async (orderId, partnerId, rejectionData) => {
   try {
     const { reason, details = '' } = rejectionData;
 
@@ -800,7 +800,7 @@ export const rejectRestaurantOrder = async (orderId, partnerId, rejectionData) =
 /**
  * 🍳 ЗАКАЗ ГОТОВ К ВЫДАЧЕ
  */
-export const markRestaurantOrderReady = async (orderId, partnerId) => {
+const markRestaurantOrderReady = async (orderId, partnerId) => {
   try {
     console.log('🍳 MARK ORDER READY:', { orderId, partnerId });
 
@@ -845,7 +845,7 @@ export const markRestaurantOrderReady = async (orderId, partnerId) => {
 /**
  * 🚴 ПОЛУЧИТЬ ДОСТУПНЫЕ ЗАКАЗЫ ДЛЯ КУРЬЕРА
  */
-export const getAvailableOrdersForCourier = async (courierId, location = {}) => {
+const getAvailableOrdersForCourier = async (courierId, location = {}) => {
   try {
     const { lat = null, lng = null, radius = 10 } = location;
 
@@ -955,7 +955,7 @@ export const getAvailableOrdersForCourier = async (courierId, location = {}) => 
 /**
  * 📦 ВЗЯТЬ ЗАКАЗ НА ДОСТАВКУ
  */
-export const acceptOrderForDelivery = async (orderId, courierId) => {
+const acceptOrderForDelivery = async (orderId, courierId) => {
   try {
     console.log('📦 ACCEPT ORDER FOR DELIVERY:', { orderId, courierId });
 
@@ -1008,7 +1008,7 @@ export const acceptOrderForDelivery = async (orderId, courierId) => {
 /**
  * 🏪 ЗАБРАТЬ ЗАКАЗ У РЕСТОРАНА
  */
-export const markOrderPickedUpByCourier = async (orderId, courierId) => {
+const markOrderPickedUpByCourier = async (orderId, courierId) => {
   try {
     console.log('🏪 MARK ORDER PICKED UP:', { orderId, courierId });
 
@@ -1051,7 +1051,7 @@ export const markOrderPickedUpByCourier = async (orderId, courierId) => {
 /**
  * 🏠 ДОСТАВИТЬ ЗАКАЗ КЛИЕНТУ
  */
-export const markOrderDeliveredByCourier = async (orderId, courierId, deliveryData) => {
+const markOrderDeliveredByCourier = async (orderId, courierId, deliveryData) => {
   try {
     const { delivery_notes = '' } = deliveryData;
 
@@ -1110,7 +1110,7 @@ export const markOrderDeliveredByCourier = async (orderId, courierId, deliveryDa
 /**
  * 🚴 ПОЛУЧИТЬ АКТИВНЫЕ ЗАКАЗЫ КУРЬЕРА
  */
-export const getCourierActiveOrders = async (courierId, filters = {}) => {
+const getCourierActiveOrders = async (courierId, filters = {}) => {
   try {
     const { status = 'active', limit = 20, offset = 0 } = filters;
 
@@ -1199,7 +1199,7 @@ export const getCourierActiveOrders = async (courierId, filters = {}) => {
 /**
  * 📍 ОТСЛЕДИТЬ ЗАКАЗ
  */
-export const trackOrderStatus = async (orderId) => {
+const trackOrderStatus = async (orderId) => {
   try {
     console.log('📍 TRACK ORDER:', { orderId });
 
@@ -1263,7 +1263,7 @@ export const trackOrderStatus = async (orderId) => {
 /**
  * ⚡ ПОЛУЧИТЬ ТОЛЬКО СТАТУС ЗАКАЗА
  */
-export const getOrderStatusOnly = async (orderId) => {
+const getOrderStatusOnly = async (orderId) => {
   try {
     const order = await Order.findById(orderId).select('order_number status estimated_delivery_time').lean();
     

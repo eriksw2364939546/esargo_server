@@ -5,7 +5,7 @@ import {
   getPublicRestaurantMenu,
   searchPublicContent,
   getPublicRestaurantCategories,
-  getPopularRestaurants
+  getPopularRestaurants as getPopularRestaurantsService  // ✅ ИСПРАВЛЕНО: переименовали импорт
 } from '../services/Public/public.service.js';
 
 /**
@@ -244,7 +244,8 @@ const getPopularRestaurants = async (req, res) => {
 
     console.log('⭐ GET POPULAR RESTAURANTS');
 
-    const result = await getPopularRestaurants(parseInt(limit));
+    // ✅ ИСПРАВЛЕНО: используем переименованный сервис
+    const result = await getPopularRestaurantsService(parseInt(limit));
 
     res.status(200).json({
       result: true,
