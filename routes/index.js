@@ -12,7 +12,7 @@ import adminPartnerRoutes from './AdminPartner.route.js';
 import adminCourierRoutes from './AdminCourier.route.js';
 
 // 🆕 НОВЫЕ РОУТЫ ДЛЯ СИСТЕМЫ ЗАКАЗОВ
-import publicRoutes from './Public.route.js';        // Публичный каталог
+import publicRoutes from '../routes/Public/Public.route.js';        // Публичный каталог
 import cartRoutes from './Cart.route.js';            // Корзина покупок
 import orderRoutes from './Order.route.js';          // Заказы
 
