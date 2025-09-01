@@ -15,6 +15,7 @@ export { default as Product } from './Product.model.js';
 export { default as Order } from './Order.model.js';
 export { default as Review } from './Review.model.js';
 export { default as Message } from './Message.model.js';
+export { default as Cart } from './Cart.model.js';
 
 // Администрирование партнеров
 export { default as InitialPartnerRequest } from './InitialPartnerRequest.model.js';
