@@ -1,4 +1,4 @@
-// models/Cart.model.js - Модель корзины покупок
+// models/Cart.model.js - ПОЛНАЯ ИСПРАВЛЕННАЯ модель корзины покупок
 import mongoose from 'mongoose';
 
 const cartSchema = new mongoose.Schema({
@@ -396,7 +396,7 @@ cartSchema.methods.updateActivity = function() {
 // ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
 /**
- * 🔍 Найти активную корзину пользователя
+ * 🔍 Найти активную корзину пользователя - ИСПРАВЛЕНО
  */
 cartSchema.statics.findActiveCart = function(customerId, sessionId = null) {
   const query = {
@@ -473,5 +473,5 @@ cartSchema.virtual('meets_minimum_order').get(function() {
   return this.pricing.subtotal >= this.restaurant_info.min_order_amount;
 });
 
-// 🆕 ЭКСПОРТ
+// Экспорт модели
 export default mongoose.model('Cart', cartSchema);
