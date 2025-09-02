@@ -30,7 +30,7 @@ const createOrder = async (req, res) => {
     const {
       delivery_address,
       customer_contact,
-      payment_method = 'cash',
+      payment_method = 'card',
       special_requests = ''
     } = req.body;
 

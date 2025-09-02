@@ -19,7 +19,7 @@ function getReasonText(reason) {
 }
 
 /**
- * Расчет времени доставки - ИСПРАВЛЕНО
+ * Расчет времени доставки
  */
 function calculateEstimatedDeliveryTime(delivery_address, restaurant_location, restaurant_delivery_info) {
   let baseTime = 30; // минут
@@ -28,29 +28,15 @@ function calculateEstimatedDeliveryTime(delivery_address, restaurant_location, r
     baseTime = restaurant_delivery_info.base_delivery_time;
   }
   
-  // Проверяем наличие координат для расчета расстояния
-  if (!delivery_address || !delivery_address.lat || !delivery_address.lng) {
-    console.warn('⚠️ NO DELIVERY COORDINATES - using base time only');
-    return baseTime;
-  }
-  
   // Добавляем время в зависимости от расстояния
   const distance = calculateDistance(
-    restaurant_location?.coordinates?.[1] || 48.8566, // lat ресторана
-    restaurant_location?.coordinates?.[0] || 2.3522,  // lng ресторана
+    restaurant_location?.coordinates?.[1] || 48.8566,
+    restaurant_location?.coordinates?.[0] || 2.3522,
     delivery_address.lat,
     delivery_address.lng
   );
   
   const extraTime = Math.round(distance * 2); // 2 минуты на км
-  
-  console.log('🕒 DELIVERY TIME CALCULATED:', {
-    base_time: baseTime,
-    distance_km: Math.round(distance * 10) / 10,
-    extra_time: extraTime,
-    total_time: baseTime + extraTime
-  });
-  
   return baseTime + extraTime;
 }
 
@@ -253,11 +239,11 @@ async function returnProductsToStock(orderItems, session = null) {
 }
 
 /**
- * Заглушка платежной системы
+ * Заглушка платежной системы - ИСПРАВЛЕНА
  */
 async function processPayment(order, options = {}) {
-  // Имитация обработки платежа
-  const isSuccess = Math.random() > 0.05; // 95% успешных платежей
+  // Имитация обработки платежа - только успешные для card
+  const isSuccess = Math.random() > 0.08; // 92% успешных платежей
   
   if (isSuccess) {
     return {
@@ -356,21 +342,67 @@ export const createOrderFromCart = async (customerId, orderData) => {
       .filter(cartItem => 
         availableProducts.some(p => p._id.toString() === cartItem.product_id.toString())
       )
-      .map(cartItem => ({
-        product_id: cartItem.product_id,
-        title: cartItem.product_snapshot.title,
-        price: cartItem.product_snapshot.price,
-        quantity: cartItem.quantity,
-        selected_options: cartItem.selected_options || [],
-        item_total: cartItem.item_total,
-        special_requests: cartItem.special_requests || ''
-      }));
+      .map(cartItem => {
+        // ✅ ИСПРАВЛЕНО: используем правильные поля из корзины
+        const basePrice = parseFloat(cartItem.product_snapshot?.price || cartItem.item_price || 0);
+        const quantity = parseInt(cartItem.quantity || 1);
+        
+        // Используем готовую сумму из корзины или рассчитываем
+        let itemTotal = parseFloat(cartItem.total_item_price || cartItem.item_total || 0);
+        
+        if (!itemTotal || isNaN(itemTotal)) {
+          // Если нет готовой суммы, рассчитываем
+          const optionsPrice = parseFloat(cartItem.options_price || 0);
+          itemTotal = (basePrice + optionsPrice) * quantity;
+        }
 
-    // Пересчитать цену только для доступных товаров
-    const subtotal = orderItems.reduce((sum, item) => sum + item.item_total, 0);
-    const delivery_fee = cart.pricing.delivery_fee || 3.50;
-    const service_fee = Math.round(subtotal * 0.05 * 100) / 100; // 5% сервисный сбор
-    const total_price = subtotal + delivery_fee + service_fee;
+        console.log(`💰 ITEM CALCULATION:`, {
+          title: cartItem.product_snapshot?.title,
+          base_price: basePrice,
+          quantity: quantity,
+          item_total: itemTotal,
+          from_field: cartItem.total_item_price ? 'total_item_price' : 'calculated'
+        });
+
+        return {
+          product_id: cartItem.product_id,
+          title: cartItem.product_snapshot?.title || 'Unknown Product',
+          price: basePrice,
+          quantity: quantity,
+          selected_options: cartItem.selected_options || [],
+          item_total: itemTotal,
+          special_requests: cartItem.special_requests || ''
+        };
+      });
+
+    // ✅ ИСПРАВЛЕН РАСЧЕТ ОБЩИХ СУМ - используем данные корзины
+    let subtotal = parseFloat(cart.pricing?.subtotal || 0);
+    
+    // Если нет subtotal в корзине, рассчитываем из товаров
+    if (!subtotal || isNaN(subtotal)) {
+      subtotal = orderItems.reduce((sum, item) => {
+        const itemTotal = parseFloat(item.item_total || 0);
+        return sum + (isNaN(itemTotal) ? 0 : itemTotal);
+      }, 0);
+    }
+    
+    const delivery_fee = parseFloat(cart.pricing?.delivery_fee || cart.restaurant_info?.delivery_fee || 3.50);
+    const service_fee = parseFloat(cart.pricing?.service_fee || Math.round(subtotal * 0.05 * 100) / 100);
+    const total_price = parseFloat(cart.pricing?.total_price || (subtotal + delivery_fee + service_fee));
+
+    console.log('💰 FINAL PRICING:', {
+      subtotal,
+      delivery_fee,
+      service_fee,
+      total_price,
+      cart_pricing: cart.pricing,
+      all_numbers_valid: !isNaN(subtotal) && !isNaN(delivery_fee) && !isNaN(service_fee) && !isNaN(total_price)
+    });
+
+    // ✅ ПРОВЕРКА НА NaN
+    if (isNaN(subtotal) || isNaN(delivery_fee) || isNaN(service_fee) || isNaN(total_price)) {
+      throw new Error('Ошибка расчета стоимости заказа. Проверьте данные корзины.');
+    }
 
     // 6. Сгенерировать уникальный номер заказа
     const orderNumber = await Order.generateOrderNumber();
@@ -421,19 +453,42 @@ export const createOrderFromCart = async (customerId, orderData) => {
     const reservationResults = await reserveProductsStock(orderItems, availableProducts, session);
 
     // 10. Обработать платеж
-    let paymentResult;
-    if (payment_method === 'card') {
-      paymentResult = await processPayment(newOrder, { session });
-      newOrder.payment_status = paymentResult.success ? 'completed' : 'failed';
-      newOrder.payment_details = paymentResult.details;
-      await newOrder.save({ session });
-    } else {
-      paymentResult = {
-        success: true,
-        method: 'cash',
-        message: 'Оплата при получении'
-      };
+let paymentResult;
+if (payment_method !== 'card') {
+  throw new Error('Доступна только онлайн оплата картой');
+}
+
+try {
+  paymentResult = await processPayment(newOrder, { session });
+  
+  if (!paymentResult.success) {
+    throw new Error(paymentResult.details || 'Ошибка обработки платежа');
+  }
+  
+  newOrder.payment_status = 'completed';
+  newOrder.payment_details = {
+    transaction_id: paymentResult.transaction_id,
+    payment_processor: 'stub',
+    gateway_response: {
+      method: paymentResult.method,
+      amount: paymentResult.amount,
+      processed_at: paymentResult.processed_at,
+      details: paymentResult.details
     }
+  };
+  
+  console.log('💳 PAYMENT SUCCESS:', {
+    payment_id: paymentResult.transaction_id,
+    amount: paymentResult.amount
+  });
+  
+} catch (paymentError) {
+  console.error('💳 PAYMENT FAILED:', paymentError.message);
+  await returnProductsToStock(orderItems, session);
+  throw new Error(`Ошибка оплаты: ${paymentError.message}`);
+}
+
+await newOrder.save({ session });
 
     // 11. Конвертировать корзину в заказ
     await cart.convertToOrder();
@@ -611,11 +666,37 @@ export const cancelCustomerOrder = async (orderId, customerId, cancellationData)
     // Отменяем заказ
     await order.cancelOrder(reason, customerId, 'customer', details);
 
-    // Возвращаем средства если заказ был оплачен
+    // Возвращаем средства если заказ был оплачен картой
     if (order.payment_status === 'completed' && order.payment_method === 'card') {
-      const refundResult = await processRefund(order);
-      order.payment_status = 'refunded';
-      order.refund_details = refundResult;
+      try {
+        const { processOrderRefund } = await import('../payment.service.js');
+        
+        const refundResult = await processOrderRefund({
+          original_payment_id: order.payment_details?.payment_id,
+          amount: order.total_price,
+          order_id: order._id,
+          reason: `Отмена заказа: ${reason}`
+        });
+        
+        order.payment_status = 'refunded';
+        order.refund_details = {
+          refund_id: refundResult.refund_id,
+          amount: refundResult.amount,
+          processed_at: refundResult.processed_at,
+          estimated_arrival: refundResult.estimated_arrival
+        };
+        
+        console.log('💸 REFUND SUCCESS:', {
+          refund_id: refundResult.refund_id,
+          amount: refundResult.amount
+        });
+        
+      } catch (refundError) {
+        console.error('💸 REFUND ERROR:', refundError.message);
+        order.payment_status = 'refund_pending';
+        order.refund_error = refundError.message;
+      }
+      
       await order.save({ session });
     }
 
