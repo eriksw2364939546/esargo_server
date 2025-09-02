@@ -1,83 +1,399 @@
-d.toString())
-      )
-      .map(cartItem => {
-        const product = availableProducts.find(p => p._id.toString() === cartItem.product_id.toString());
-        return {
-          product_id: cartItem.product_id,
-          title: product.title,
-          price: cartItem.product_snapshot.price,
-          quantity: cartItem.quantity,
-          selected_options: cartItem.selected_options || [],
-          item_total: cartItem.quantity * cartItem.product_snapshot.price,
-          special_requests: cartItem.special_requests || ''
-        };
+// services/Order/order.service.js - ПОЛНАЯ система заказов с валидацией и резервированием
+import { Order, Cart, User, PartnerProfile, CourierProfile, Product } from '../../models/index.js';
+import mongoose from 'mongoose';
+
+// ================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ================
+
+/**
+ * Получение текстового описания причины недоступности
+ */
+function getReasonText(reason) {
+  const reasons = {
+    'product_deactivated': 'товар снят с продажи',
+    'out_of_stock': 'закончился на складе',
+    'time_restricted': 'недоступен в данное время',
+    'partner_unavailable': 'ресторан недоступен',
+    'insufficient_stock': 'недостаточно товара на складе'
+  };
+  return reasons[reason] || 'неизвестная причина';
+}
+
+/**
+ * Расчет времени доставки
+ */
+function calculateEstimatedDeliveryTime(delivery_address, restaurant_location, restaurant_delivery_info) {
+  let baseTime = 30; // минут
+  
+  if (restaurant_delivery_info && restaurant_delivery_info.base_delivery_time) {
+    baseTime = restaurant_delivery_info.base_delivery_time;
+  }
+  
+  // Добавляем время в зависимости от расстояния
+  const distance = calculateDistance(
+    restaurant_location?.coordinates?.[1] || 48.8566,
+    restaurant_location?.coordinates?.[0] || 2.3522,
+    delivery_address.lat,
+    delivery_address.lng
+  );
+  
+  const extraTime = Math.round(distance * 2); // 2 минуты на км
+  return baseTime + extraTime;
+}
+
+/**
+ * Расчет расстояния между координатами (Haversine formula)
+ */
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Радиус Земли в км
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+/**
+ * НОВАЯ ФУНКЦИЯ: Детальная валидация доступности товаров
+ */
+async function validateProductsAvailability(cartItems, session = null) {
+  const productIds = cartItems.map(item => item.product_id);
+  const products = await Product.find({
+    _id: { $in: productIds }
+  }).session(session);
+
+  const unavailableItems = [];
+  const availableProducts = [];
+  const itemsSnapshot = [];
+
+  for (const cartItem of cartItems) {
+    const product = products.find(p => p._id.toString() === cartItem.product_id.toString());
+    
+    if (!product) {
+      unavailableItems.push({
+        product_id: cartItem.product_id,
+        title: cartItem.product_snapshot?.title || 'Неизвестный товар',
+        reason: 'product_deactivated',
+        requested_quantity: cartItem.quantity
       });
-
-    // НОВОЕ: Пересчет стоимости если товары были исключены
-    let adjustedSubtotal = cart.pricing.subtotal;
-    let adjustedServiceFee = cart.pricing.service_fee;
-    let adjustedTotalPrice = cart.pricing.total_price;
-
-    if (unavailableItems.length > 0) {
-      adjustedSubtotal = orderItems.reduce((sum, item) => sum + item.item_total, 0);
-      adjustedServiceFee = Math.round(adjustedSubtotal * 0.02 * 100) / 100;
-      adjustedTotalPrice = adjustedSubtotal + cart.pricing.delivery_fee + adjustedServiceFee;
+      continue;
     }
 
+    // Создаем снимок состояния товара на момент заказа
+    itemsSnapshot.push({
+      product_id: product._id,
+      availability_at_order: {
+        is_active: product.is_active,
+        is_available: product.is_available,
+        stock_quantity: product.stock_quantity,
+        availability_schedule: product.availability_schedule,
+        captured_at: new Date()
+      }
+    });
+
+    // Проверка базовой доступности
+    if (!product.is_active || !product.is_available) {
+      unavailableItems.push({
+        product_id: product._id,
+        title: product.title,
+        reason: 'product_deactivated',
+        requested_quantity: cartItem.quantity
+      });
+      continue;
+    }
+
+    // Проверка складских остатков для магазинов
+    if (product.category === 'store' && typeof product.stock_quantity === 'number') {
+      if (product.stock_quantity < cartItem.quantity) {
+        if (product.stock_quantity > 0) {
+          // Частичная доступность
+          unavailableItems.push({
+            product_id: product._id,
+            title: product.title,
+            reason: 'insufficient_stock',
+            requested_quantity: cartItem.quantity,
+            available_quantity: product.stock_quantity
+          });
+        } else {
+          // Полная недоступность
+          unavailableItems.push({
+            product_id: product._id,
+            title: product.title,
+            reason: 'out_of_stock',
+            requested_quantity: cartItem.quantity,
+            available_quantity: 0
+          });
+        }
+        continue;
+      }
+    }
+
+    // Проверка временной доступности
+    if (product.isAvailableNow && !product.isAvailableNow()) {
+      unavailableItems.push({
+        product_id: product._id,
+        title: product.title,
+        reason: 'time_restricted',
+        requested_quantity: cartItem.quantity
+      });
+      continue;
+    }
+
+    availableProducts.push(product);
+  }
+
+  return {
+    unavailableItems,
+    availableProducts,
+    itemsSnapshot,
+    validationStatus: unavailableItems.length === 0 ? 'valid' : 
+                     unavailableItems.length < cartItems.length ? 'has_issues' : 'critical_issues'
+  };
+}
+
+/**
+ * НОВАЯ ФУНКЦИЯ: Резервирование товаров на складе
+ */
+async function reserveProductsStock(orderItems, availableProducts, session = null) {
+  const reservationResults = [];
+
+  for (const product of availableProducts) {
+    if (product.category === 'store' && typeof product.stock_quantity === 'number') {
+      const orderItem = orderItems.find(item => 
+        item.product_id.toString() === product._id.toString()
+      );
+      
+      if (orderItem) {
+        // Резервируем товар (снимаем со склада)
+        const updatedProduct = await Product.findByIdAndUpdate(
+          product._id,
+          { 
+            $inc: { stock_quantity: -orderItem.quantity },
+            $push: {
+              reservation_history: {
+                order_id: null, // Будет обновлен после создания заказа
+                quantity_reserved: orderItem.quantity,
+                reserved_at: new Date(),
+                type: 'order_creation'
+              }
+            }
+          },
+          { session, new: true }
+        );
+
+        reservationResults.push({
+          product_id: product._id,
+          title: product.title,
+          quantity_reserved: orderItem.quantity,
+          remaining_stock: updatedProduct.stock_quantity,
+          reserved_at: new Date()
+        });
+
+        console.log(`📦 RESERVED: ${orderItem.quantity}x "${product.title}", осталось: ${updatedProduct.stock_quantity}`);
+      }
+    }
+  }
+
+  return reservationResults;
+}
+
+/**
+ * НОВАЯ ФУНКЦИЯ: Возврат товаров на склад при отмене заказа
+ */
+async function returnProductsToStock(orderItems, session = null) {
+  const returnResults = [];
+
+  for (const item of orderItems) {
+    const product = await Product.findById(item.product_id).session(session);
+    
+    if (product && product.category === 'store' && typeof product.stock_quantity === 'number') {
+      const updatedProduct = await Product.findByIdAndUpdate(
+        item.product_id,
+        { 
+          $inc: { stock_quantity: item.quantity },
+          $push: {
+            reservation_history: {
+              order_id: item.order_id || null,
+              quantity_returned: item.quantity,
+              returned_at: new Date(),
+              type: 'order_cancellation'
+            }
+          }
+        },
+        { session, new: true }
+      );
+
+      returnResults.push({
+        product_id: item.product_id,
+        title: item.title,
+        quantity_returned: item.quantity,
+        new_stock: updatedProduct.stock_quantity
+      });
+
+      console.log(`↩️ RETURNED: ${item.quantity}x "${item.title}", новый остаток: ${updatedProduct.stock_quantity}`);
+    }
+  }
+
+  return returnResults;
+}
+
+/**
+ * Заглушка платежной системы
+ */
+async function processPayment(order, options = {}) {
+  // Имитация обработки платежа
+  const isSuccess = Math.random() > 0.05; // 95% успешных платежей
+  
+  if (isSuccess) {
+    return {
+      success: true,
+      transaction_id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      method: 'card',
+      amount: order.total_price,
+      processed_at: new Date(),
+      details: 'Платеж успешно обработан'
+    };
+  } else {
+    return {
+      success: false,
+      error_code: 'PAYMENT_DECLINED',
+      method: 'card',
+      amount: order.total_price,
+      details: 'Карта отклонена банком'
+    };
+  }
+}
+
+/**
+ * Заглушка возврата средств
+ */
+async function processRefund(order, options = {}) {
+  return {
+    success: true,
+    refund_id: `ref_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    amount: order.total_price,
+    processed_at: new Date(),
+    details: 'Возврат средств обработан'
+  };
+}
+
+// ================ КЛИЕНТСКИЕ СЕРВИСЫ ================
+
+/**
+ * 🛒 СОЗДАТЬ ЗАКАЗ ИЗ КОРЗИНЫ - с полной валидацией и резервированием
+ */
+export const createOrderFromCart = async (customerId, orderData) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.startTransaction();
+
+    const { delivery_address, customer_contact, payment_method = 'cash', special_requests = '' } = orderData;
+
+    console.log('🆕 CREATE ORDER FROM CART:', { customerId, payment_method });
+
+    // 1. Найти активную корзину
+    const cart = await Cart.findActiveCart(customerId).session(session);
+    if (!cart || cart.items.length === 0) {
+      throw new Error('Корзина пуста или не найдена');
+    }
+
+    // 2. Проверить минимальную сумму заказа
+    const minOrderAmount = cart.restaurant_info.min_order_amount || 0;
+    if (cart.pricing.subtotal < minOrderAmount) {
+      throw new Error(`Минимальная сумма заказа: ${minOrderAmount}€`);
+    }
+
+    // 3. Получить информацию о ресторане
+    const restaurant = await PartnerProfile.findById(cart.restaurant_id).session(session);
+    if (!restaurant || !restaurant.is_active || !restaurant.is_approved) {
+      throw new Error('Ресторан недоступен для заказов');
+    }
+
+    // 4. ✅ НОВАЯ РАСШИРЕННАЯ ВАЛИДАЦИЯ ДОСТУПНОСТИ ТОВАРОВ
+    const validation = await validateProductsAvailability(cart.items, session);
+    const { unavailableItems, availableProducts, itemsSnapshot, validationStatus } = validation;
+
+    // Обработка недоступных товаров
+    if (validationStatus === 'critical_issues') {
+      throw new Error(
+        `Все товары в корзине недоступны:\n${unavailableItems.map(item => 
+          `• "${item.title}" - ${getReasonText(item.reason)}`
+        ).join('\n')}`
+      );
+    }
+
+    // 5. Создать заказ только с доступными товарами
+    const orderItems = cart.items
+      .filter(cartItem => 
+        availableProducts.some(p => p._id.toString() === cartItem.product_id.toString())
+      )
+      .map(cartItem => ({
+        product_id: cartItem.product_id,
+        title: cartItem.product_snapshot.title,
+        price: cartItem.product_snapshot.price,
+        quantity: cartItem.quantity,
+        selected_options: cartItem.selected_options || [],
+        item_total: cartItem.item_total,
+        special_requests: cartItem.special_requests || ''
+      }));
+
+    // Пересчитать цену только для доступных товаров
+    const subtotal = orderItems.reduce((sum, item) => sum + item.item_total, 0);
+    const delivery_fee = cart.pricing.delivery_fee || 3.50;
+    const service_fee = Math.round(subtotal * 0.05 * 100) / 100; // 5% сервисный сбор
+    const total_price = subtotal + delivery_fee + service_fee;
+
+    // 6. Сгенерировать уникальный номер заказа
+    const orderNumber = await Order.generateOrderNumber();
+
+    // 7. Расчет времени доставки
+    const estimatedDeliveryTime = calculateEstimatedDeliveryTime(
+      delivery_address,
+      restaurant.location,
+      restaurant.delivery_info
+    );
+
+    // 8. Создать заказ
     const newOrder = new Order({
       order_number: orderNumber,
       customer_id: customerId,
-      partner_id: cart.restaurant_id,
-      
-      // Товары заказа
+      partner_id: restaurant._id,
       items: orderItems,
       
-      // НОВЫЕ ПОЛЯ: Снимки и валидация
+      // ✅ СНИМОК ТОВАРОВ НА МОМЕНТ ЗАКАЗА
       items_snapshot: itemsSnapshot,
+      
+      // ✅ ИНФОРМАЦИЯ О ВАЛИДАЦИИ
       availability_validation: {
         validated_at: new Date(),
         unavailable_items: unavailableItems,
-        validation_status: unavailableItems.length === 0 ? 'valid' : 'has_issues'
+        validation_status: validationStatus
       },
+
+      subtotal,
+      delivery_fee,
+      service_fee,
+      total_price,
       
-      // Стоимость (пересчитанная при необходимости)
-      subtotal: adjustedSubtotal,
-      delivery_fee: cart.pricing.delivery_fee,
-      service_fee: adjustedServiceFee,
-      discount_amount: cart.pricing.discount_amount || 0,
-      tax_amount: cart.pricing.tax_amount || 0,
-      total_price: adjustedTotalPrice,
-      
-      // Адрес и контакты
       delivery_address,
       customer_contact,
+      payment_method,
+      special_requests,
       
-      // Статус и время
-      status: 'pending',
       estimated_delivery_time: estimatedDeliveryTime,
       
-      // Платеж
-      payment_method,
-      payment_status: payment_method === 'cash' ? 'pending' : 'processing',
-      
-      // Дополнительная информация
-      special_requests,
-      source: 'web',
-      user_agent: 'ESARGO Web App',
-      
-      // История статусов
-      status_history: [{
-        status: 'pending',
-        timestamp: new Date(),
-        updated_by: customerId,
-        user_role: 'customer',
-        notes: 'Заказ создан клиентом'
-      }]
+      status: 'pending',
+      payment_status: payment_method === 'cash' ? 'pending' : 'pending'
     });
 
     await newOrder.save({ session });
 
-    // 8. Обработать платеж
+    // 9. ✅ РЕЗЕРВИРОВАНИЕ ТОВАРОВ НА СКЛАДЕ
+    const reservationResults = await reserveProductsStock(orderItems, availableProducts, session);
+
+    // 10. Обработать платеж
     let paymentResult;
     if (payment_method === 'card') {
       paymentResult = await processPayment(newOrder, { session });
@@ -92,25 +408,11 @@ d.toString())
       };
     }
 
-    // НОВОЕ: Резервируем товары на складе для магазинов
-    for (const product of availableProducts) {
-      if (product.category === 'store' && product.stock_quantity !== undefined) {
-        const orderItem = orderItems.find(item => item.product_id.toString() === product._id.toString());
-        if (orderItem) {
-          await Product.findByIdAndUpdate(
-            product._id,
-            { $inc: { stock_quantity: -orderItem.quantity } },
-            { session }
-          );
-        }
-      }
-    }
-
-    // 9. Конвертировать корзину в заказ
+    // 11. Конвертировать корзину в заказ
     await cart.convertToOrder();
     await cart.save({ session });
 
-    // 10. Обновить статистику ресторана
+    // 12. Обновить статистику ресторана
     await PartnerProfile.findByIdAndUpdate(
       cart.restaurant_id,
       { 
@@ -129,14 +431,16 @@ d.toString())
       order_number: orderNumber,
       total_price: newOrder.total_price,
       payment_status: newOrder.payment_status,
-      unavailable_items_count: unavailableItems.length
+      unavailable_items_count: unavailableItems.length,
+      reserved_items: reservationResults.length
     });
 
-    // НОВОЕ: Формируем ответ с предупреждениями о недоступных товарах
+    // ✅ ФОРМИРУЕМ ОТВЕТ С УВЕДОМЛЕНИЯМИ О ПРОБЛЕМАХ
     const response = {
       order: newOrder,
       payment: paymentResult,
-      estimatedDelivery: estimatedDeliveryTime
+      estimatedDelivery: estimatedDeliveryTime,
+      reservation_info: reservationResults
     };
 
     if (unavailableItems.length > 0) {
@@ -144,7 +448,9 @@ d.toString())
         message: `${unavailableItems.length} товар(ов) были исключены из заказа`,
         unavailable_items: unavailableItems.map(item => ({
           title: item.title,
-          reason: getReasonText(item.reason)
+          reason: getReasonText(item.reason),
+          requested_quantity: item.requested_quantity,
+          available_quantity: item.available_quantity || 0
         })),
         price_adjustment: {
           original_total: cart.pricing.total_price,
@@ -166,22 +472,13 @@ d.toString())
 };
 
 /**
- * ПОЛУЧИТЬ ЗАКАЗЫ КЛИЕНТА
+ * 📋 ПОЛУЧИТЬ ЗАКАЗЫ КЛИЕНТА
  */
 export const getCustomerOrders = async (customerId, filters = {}) => {
   try {
-    const {
-      status,
-      limit = 20,
-      offset = 0
-    } = filters;
+    const { status, limit = 10, offset = 0 } = filters;
 
-    console.log('📋 GET CUSTOMER ORDERS:', {
-      customerId,
-      status,
-      limit,
-      offset
-    });
+    console.log('📋 GET CUSTOMER ORDERS:', { customerId, status, limit, offset });
 
     const query = { customer_id: customerId };
     if (status) {
@@ -189,36 +486,22 @@ export const getCustomerOrders = async (customerId, filters = {}) => {
     }
 
     const orders = await Order.find(query)
-      .populate('partner_id', 'business_name brand_name category')
+      .populate('partner_id', 'business_name category location phone')
+      .populate('courier_id', 'user_id vehicle_info phone')
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(offset));
+      .limit(limit)
+      .skip(offset);
 
-    const total = await Order.countDocuments(query);
-
-    // Статистика по статусам
-    const statusStats = await Order.aggregate([
-      { $match: { customer_id: new mongoose.Types.ObjectId(customerId) } },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    const summary = {
-      total_orders: total,
-      by_status: statusStats.reduce((acc, stat) => {
-        acc[stat._id] = stat.count;
-        return acc;
-      }, {})
-    };
+    const totalCount = await Order.countDocuments(query);
 
     return {
       orders,
-      total,
-      summary
+      pagination: {
+        total: totalCount,
+        limit,
+        offset,
+        hasMore: offset + limit < totalCount
+      }
     };
 
   } catch (error) {
@@ -228,36 +511,25 @@ export const getCustomerOrders = async (customerId, filters = {}) => {
 };
 
 /**
- * ПОЛУЧИТЬ ДЕТАЛИ ЗАКАЗА
+ * 📄 ПОЛУЧИТЬ ДЕТАЛИ ЗАКАЗА
  */
-export const getOrderDetails = async (orderId, userId, userRole) => {
+export const getOrderDetails = async (orderId, userId, userRole = 'customer') => {
   try {
-    console.log('🔍 GET ORDER DETAILS:', { orderId, userId, userRole });
+    console.log('📄 GET ORDER DETAILS:', { orderId, userId, userRole });
 
     const order = await Order.findById(orderId)
-      .populate('customer_id', 'email')
-      .populate('partner_id', 'business_name brand_name phone email')
-      .populate('courier_id', 'user_id');
+      .populate('customer_id', 'first_name last_name phone email')
+      .populate('partner_id', 'business_name category phone location')
+      .populate('courier_id', 'user_id vehicle_info phone');
 
     if (!order) {
       throw new Error('Заказ не найден');
     }
 
     // Проверка прав доступа
-    let hasAccess = false;
-    if (userRole === 'customer' && order.customer_id._id.toString() === userId.toString()) {
-      hasAccess = true;
-    } else if (userRole === 'partner' && order.partner_id.user_id?.toString() === userId.toString()) {
-      hasAccess = true;
-    } else if (userRole === 'courier' && order.courier_id?.user_id?.toString() === userId.toString()) {
-      hasAccess = true;
-    }
+    await checkOrderAccess(order, userId, userRole);
 
-    if (!hasAccess) {
-      throw new Error('Нет доступа к этому заказу');
-    }
-
-    // НОВОЕ: Проверяем актуальность товаров если заказ еще не принят
+    // ✅ ПРОВЕРЯЕМ АКТУАЛЬНОСТЬ ТОВАРОВ если заказ еще не принят
     if (order.status === 'pending') {
       await order.validateItemsAvailability();
     }
@@ -269,7 +541,8 @@ export const getOrderDetails = async (orderId, userId, userRole) => {
       order,
       canCancel,
       canRate,
-      estimatedDelivery: order.estimated_delivery_time
+      estimatedDelivery: order.estimated_delivery_time,
+      availability_info: order.availability_validation
     };
 
   } catch (error) {
@@ -279,15 +552,19 @@ export const getOrderDetails = async (orderId, userId, userRole) => {
 };
 
 /**
- * ОТМЕНИТЬ ЗАКАЗ КЛИЕНТОМ
+ * ❌ ОТМЕНИТЬ ЗАКАЗ КЛИЕНТОМ - с возвратом товаров на склад
  */
 export const cancelCustomerOrder = async (orderId, customerId, cancellationData) => {
+  const session = await mongoose.startSession();
+  
   try {
+    await session.startTransaction();
+    
     const { reason = 'Отмена клиентом', details = '' } = cancellationData;
 
     console.log('❌ CANCEL CUSTOMER ORDER:', { orderId, customerId, reason });
 
-    const order = await Order.findById(orderId);
+    const order = await Order.findById(orderId).session(session);
 
     if (!order) {
       throw new Error('Заказ не найден');
@@ -301,29 +578,26 @@ export const cancelCustomerOrder = async (orderId, customerId, cancellationData)
       throw new Error('Заказ нельзя отменить - он уже готовится или доставляется');
     }
 
+    // ✅ ВОЗВРАЩАЕМ ТОВАРЫ НА СКЛАД
+    const returnResults = await returnProductsToStock(order.items, session);
+
     // Отменяем заказ
     await order.cancelOrder(reason, customerId, 'customer', details);
 
-    // НОВОЕ: Возвращаем товары на склад при отмене
-    for (const item of order.items) {
-      const product = await Product.findById(item.product_id);
-      if (product && product.category === 'store' && product.stock_quantity !== undefined) {
-        await Product.findByIdAndUpdate(
-          item.product_id,
-          { $inc: { stock_quantity: item.quantity } }
-        );
-      }
-    }
-
     // Возвращаем средства если заказ был оплачен
     if (order.payment_status === 'completed' && order.payment_method === 'card') {
+      const refundResult = await processRefund(order);
       order.payment_status = 'refunded';
-      await order.save();
+      order.refund_details = refundResult;
+      await order.save({ session });
     }
+
+    await session.commitTransaction();
 
     console.log('✅ ORDER CANCELLED SUCCESS:', {
       order_number: order.order_number,
-      reason
+      reason,
+      items_returned_to_stock: returnResults.length
     });
 
     return {
@@ -332,33 +606,28 @@ export const cancelCustomerOrder = async (orderId, customerId, cancellationData)
       status: order.status,
       cancelled_at: order.cancelled_at,
       message: 'Заказ отменен успешно',
+      stock_return_info: returnResults,
       refund_info: order.payment_method === 'card' ? 
-        'Возврат будет обработан в течение 3-5 рабочих дней' : null
+        'Средства будут возвращены в течение 3-5 рабочих дней' : null
     };
 
   } catch (error) {
-    console.error('🚨 CANCEL ORDER ERROR:', error);
+    await session.abortTransaction();
+    console.error('🚨 CANCEL CUSTOMER ORDER ERROR:', error);
     throw error;
+  } finally {
+    session.endSession();
   }
 };
 
 /**
- * ОЦЕНИТЬ ЗАКАЗ
+ * ⭐ ОЦЕНИТЬ ЗАКАЗ
  */
 export const rateCompletedOrder = async (orderId, customerId, ratingData) => {
   try {
-    const {
-      partner_rating,
-      courier_rating,
-      comment = ''
-    } = ratingData;
+    const { partner_rating, courier_rating, comment = '' } = ratingData;
 
-    console.log('⭐ RATE ORDER:', {
-      orderId,
-      customerId,
-      partner_rating,
-      courier_rating
-    });
+    console.log('⭐ RATE ORDER:', { orderId, customerId, partner_rating, courier_rating });
 
     const order = await Order.findById(orderId);
 
@@ -374,23 +643,14 @@ export const rateCompletedOrder = async (orderId, customerId, ratingData) => {
       throw new Error('Можно оценить только доставленный заказ');
     }
 
-    if (order.ratings.partner_rating) {
-      throw new Error('Заказ уже был оценен');
+    if (order.ratings && order.ratings.partner_rating) {
+      throw new Error('Заказ уже оценен');
     }
 
-    // Валидация рейтингов
-    if (partner_rating && (partner_rating < 1 || partner_rating > 5)) {
-      throw new Error('Рейтинг ресторана должен быть от 1 до 5');
-    }
-
-    if (courier_rating && (courier_rating < 1 || courier_rating > 5)) {
-      throw new Error('Рейтинг курьера должен быть от 1 до 5');
-    }
-
-    // Обновляем рейтинги в заказе
+    // Обновляем рейтинг заказа
     order.ratings = {
-      partner_rating: partner_rating || null,
-      courier_rating: courier_rating || null,
+      partner_rating: partner_rating,
+      courier_rating: courier_rating,
       comment: comment.trim(),
       rated_at: new Date()
     };
@@ -399,12 +659,22 @@ export const rateCompletedOrder = async (orderId, customerId, ratingData) => {
 
     // Обновляем рейтинг ресторана
     if (partner_rating) {
-      await updatePartnerRating(order.partner_id, partner_rating);
+      await PartnerProfile.findByIdAndUpdate(order.partner_id, {
+        $inc: {
+          'ratings.total_reviews': 1,
+          'ratings.total_points': partner_rating
+        }
+      });
     }
 
     // Обновляем рейтинг курьера
     if (courier_rating && order.courier_id) {
-      await updateCourierRating(order.courier_id, courier_rating);
+      await CourierProfile.findByIdAndUpdate(order.courier_id, {
+        $inc: {
+          'ratings.total_reviews': 1,
+          'ratings.total_points': courier_rating
+        }
+      });
     }
 
     console.log('✅ ORDER RATED SUCCESS:', {
@@ -417,7 +687,7 @@ export const rateCompletedOrder = async (orderId, customerId, ratingData) => {
       order_id: order._id,
       order_number: order.order_number,
       ratings: order.ratings,
-      message: 'Спасибо за оценку! Ваше мнение поможет нам стать лучше.'
+      message: 'Спасибо за оценку!'
     };
 
   } catch (error) {
@@ -429,40 +699,45 @@ export const rateCompletedOrder = async (orderId, customerId, ratingData) => {
 // ================ ПАРТНЕРСКИЕ СЕРВИСЫ ================
 
 /**
- * ПОЛУЧИТЬ ЗАКАЗЫ РЕСТОРАНА
+ * 📋 ПОЛУЧИТЬ ЗАКАЗЫ РЕСТОРАНА
  */
 export const getRestaurantOrders = async (partnerId, filters = {}) => {
   try {
-    const {
-      status,
-      limit = 20,
-      offset = 0
-    } = filters;
+    const { status, date, limit = 20, offset = 0 } = filters;
 
-    console.log('🏪 GET RESTAURANT ORDERS:', {
-      partnerId,
-      status,
-      limit,
-      offset
-    });
+    console.log('📋 GET RESTAURANT ORDERS:', { partnerId, status, date });
 
     const query = { partner_id: partnerId };
+    
     if (status) {
       query.status = status;
     }
+    
+    if (date) {
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+      query.createdAt = { $gte: startOfDay, $lte: endOfDay };
+    }
 
     const orders = await Order.find(query)
-      .populate('customer_id', 'email')
-      .populate('courier_id', 'user_id')
+      .populate('customer_id', 'first_name last_name phone')
+      .populate('courier_id', 'user_id vehicle_info phone')
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .skip(parseInt(offset));
+      .limit(limit)
+      .skip(offset);
 
-    const total = await Order.countDocuments(query);
+    const totalCount = await Order.countDocuments(query);
 
     return {
       orders,
-      total
+      pagination: {
+        total: totalCount,
+        limit,
+        offset,
+        hasMore: offset + limit < totalCount
+      }
     };
 
   } catch (error) {
@@ -472,17 +747,13 @@ export const getRestaurantOrders = async (partnerId, filters = {}) => {
 };
 
 /**
- * ПРИНЯТЬ ЗАКАЗ РЕСТОРАНОМ
+ * ✅ ПРИНЯТЬ ЗАКАЗ РЕСТОРАНОМ
  */
-export const acceptRestaurantOrder = async (orderId, partnerId, acceptanceData) => {
+export const acceptRestaurantOrder = async (orderId, partnerId, acceptanceData = {}) => {
   try {
-    const { estimated_preparation_time = 30 } = acceptanceData;
+    const { estimated_preparation_time = 20 } = acceptanceData;
 
-    console.log('✅ ACCEPT RESTAURANT ORDER:', {
-      orderId,
-      partnerId,
-      estimated_preparation_time
-    });
+    console.log('✅ ACCEPT RESTAURANT ORDER:', { orderId, partnerId, estimated_preparation_time });
 
     const order = await Order.findById(orderId);
 
@@ -498,9 +769,15 @@ export const acceptRestaurantOrder = async (orderId, partnerId, acceptanceData) 
       throw new Error('Заказ нельзя принять - неверный статус');
     }
 
+    // ✅ ПОВТОРНАЯ ВАЛИДАЦИЯ ТОВАРОВ перед принятием
+    const currentValidation = await validateProductsAvailability(order.items);
+    if (currentValidation.validationStatus === 'critical_issues') {
+      throw new Error('Заказ нельзя принять - товары больше недоступны');
+    }
+
     // Принимаем заказ
     await order.addStatusHistory('accepted', partnerId, 'partner', 
-      `Заказ принят. Время приготовления: ${estimated_preparation_time} минут`);
+      `Время приготовления: ${estimated_preparation_time} минут`);
 
     console.log('✅ ORDER ACCEPTED SUCCESS:', {
       order_number: order.order_number,
@@ -523,19 +800,19 @@ export const acceptRestaurantOrder = async (orderId, partnerId, acceptanceData) 
 };
 
 /**
- * ОТКЛОНИТЬ ЗАКАЗ РЕСТОРАНОМ
+ * ❌ ОТКЛОНИТЬ ЗАКАЗ РЕСТОРАНОМ - с возвратом товаров
  */
 export const rejectRestaurantOrder = async (orderId, partnerId, rejectionData) => {
+  const session = await mongoose.startSession();
+  
   try {
+    await session.startTransaction();
+    
     const { reason, details = '' } = rejectionData;
 
-    console.log('❌ REJECT RESTAURANT ORDER:', {
-      orderId,
-      partnerId,
-      reason
-    });
+    console.log('❌ REJECT RESTAURANT ORDER:', { orderId, partnerId, reason });
 
-    const order = await Order.findById(orderId);
+    const order = await Order.findById(orderId).session(session);
 
     if (!order) {
       throw new Error('Заказ не найден');
@@ -549,29 +826,26 @@ export const rejectRestaurantOrder = async (orderId, partnerId, rejectionData) =
       throw new Error('Заказ нельзя отклонить - неверный статус');
     }
 
+    // ✅ ВОЗВРАЩАЕМ ТОВАРЫ НА СКЛАД
+    const returnResults = await returnProductsToStock(order.items, session);
+
     // Отклоняем заказ
     await order.cancelOrder(reason, partnerId, 'partner', details);
 
-    // НОВОЕ: Возвращаем товары на склад
-    for (const item of order.items) {
-      const product = await Product.findById(item.product_id);
-      if (product && product.category === 'store' && product.stock_quantity !== undefined) {
-        await Product.findByIdAndUpdate(
-          item.product_id,
-          { $inc: { stock_quantity: item.quantity } }
-        );
-      }
-    }
-
     // Возвращаем средства клиенту если заказ был оплачен
     if (order.payment_status === 'completed' && order.payment_method === 'card') {
+      const refundResult = await processRefund(order);
       order.payment_status = 'refunded';
-      await order.save();
+      order.refund_details = refundResult;
+      await order.save({ session });
     }
+
+    await session.commitTransaction();
 
     console.log('✅ ORDER REJECTED SUCCESS:', {
       order_number: order.order_number,
-      reason
+      reason,
+      items_returned_to_stock: returnResults.length
     });
 
     return {
@@ -579,17 +853,21 @@ export const rejectRestaurantOrder = async (orderId, partnerId, rejectionData) =
       order_number: order.order_number,
       status: order.status,
       cancelled_at: order.cancelled_at,
-      message: 'Заказ отклонен. Клиент получит уведомление.'
+      message: 'Заказ отклонен. Клиент получит уведомление.',
+      stock_return_info: returnResults
     };
 
   } catch (error) {
+    await session.abortTransaction();
     console.error('🚨 REJECT ORDER ERROR:', error);
     throw error;
+  } finally {
+    session.endSession();
   }
 };
 
 /**
- * ЗАКАЗ ГОТОВ К ВЫДАЧЕ
+ * 🍳 ЗАКАЗ ГОТОВ К ВЫДАЧЕ
  */
 export const markRestaurantOrderReady = async (orderId, partnerId) => {
   try {
@@ -605,11 +883,11 @@ export const markRestaurantOrderReady = async (orderId, partnerId) => {
       throw new Error('Нет доступа к этому заказу');
     }
 
-    if (!['accepted', 'preparing'].includes(order.status)) {
+    if (order.status !== 'accepted') {
       throw new Error('Заказ нельзя пометить готовым - неверный статус');
     }
 
-    // Обновляем статус на готов
+    // Помечаем заказ готовым
     await order.addStatusHistory('ready', partnerId, 'partner', 'Заказ готов к выдаче курьеру');
 
     console.log('✅ ORDER READY SUCCESS:', {
@@ -622,7 +900,8 @@ export const markRestaurantOrderReady = async (orderId, partnerId) => {
       order_number: order.order_number,
       status: order.status,
       ready_at: order.ready_at,
-      message: 'Заказ готов! Ищем курьера для доставки.'
+      message: 'Заказ готов! Ожидается курьер.',
+      next_step: 'Дождитесь курьера для передачи заказа'
     };
 
   } catch (error) {
@@ -634,86 +913,53 @@ export const markRestaurantOrderReady = async (orderId, partnerId) => {
 // ================ КУРЬЕРСКИЕ СЕРВИСЫ ================
 
 /**
- * ПОЛУЧИТЬ ДОСТУПНЫЕ ЗАКАЗЫ ДЛЯ КУРЬЕРА
+ * 📋 ПОЛУЧИТЬ ДОСТУПНЫЕ ЗАКАЗЫ ДЛЯ КУРЬЕРА
  */
 export const getAvailableOrdersForCourier = async (courierId, location = {}) => {
   try {
-    const { lat = null, lng = null, radius = 10 } = location;
+    const { lat, lng, radius = 10 } = location; // радиус в км
 
-    console.log('🚴 GET AVAILABLE ORDERS FOR COURIER:', {
-      courierId,
-      has_location: !!(lat && lng),
-      radius
-    });
+    console.log('📋 GET AVAILABLE ORDERS FOR COURIER:', { courierId, lat, lng, radius });
 
-    let orders;
+    let query = {
+      status: 'ready',
+      courier_id: { $exists: false }
+    };
+
+    // Фильтр по географии если указаны координаты
     if (lat && lng) {
-      orders = await Order.findAvailableOrders(lat, lng, radius);
-    } else {
-      orders = await Order.find({
-        status: 'ready',
-        courier_id: null
-      }).sort({ createdAt: 1 }).limit(50);
+      query['delivery_address.lat'] = {
+        $gte: lat - (radius * 0.009), // Примерно 1км = 0.009 градуса
+        $lte: lat + (radius * 0.009)
+      };
+      query['delivery_address.lng'] = {
+        $gte: lng - (radius * 0.009),
+        $lte: lng + (radius * 0.009)
+      };
     }
 
-    const enrichedOrders = await Promise.all(
-      orders.map(async (order) => {
-        const restaurant = await PartnerProfile.findById(order.partner_id).select('business_name location');
-        
-        let distanceToRestaurant = null;
-        let distanceToCustomer = null;
-        
-        if (lat && lng) {
-          if (restaurant.location?.coordinates) {
-            distanceToRestaurant = calculateDistance(
-              lat, lng,
-              restaurant.location.coordinates[1],
-              restaurant.location.coordinates[0]
-            );
-          }
-          
-          distanceToCustomer = calculateDistance(
-            lat, lng,
-            order.delivery_address.lat,
-            order.delivery_address.lng
-          );
-        }
+    const orders = await Order.find(query)
+      .populate('partner_id', 'business_name phone location')
+      .populate('customer_id', 'first_name last_name phone')
+      .sort({ ready_at: 1 }) // Старые заказы первыми
+      .limit(20);
 
-        return {
-          order_id: order._id,
-          order_number: order.order_number,
-          total_price: order.total_price,
-          created_at: order.createdAt,
-          estimated_delivery_time: order.estimated_delivery_time,
-          
-          restaurant: {
-            name: restaurant.business_name,
-            distance: distanceToRestaurant ? `${distanceToRestaurant.toFixed(1)} км` : null
-          },
-          
-          delivery_address: {
-            address: order.delivery_address.address,
-            apartment: order.delivery_address.apartment,
-            distance: distanceToCustomer ? `${distanceToCustomer.toFixed(1)} км` : null
-          },
-          
-          customer_contact: {
-            name: order.customer_contact.name,
-            phone: order.customer_contact.phone
-          },
-          
-          payment_method: order.payment_method,
-          special_requests: order.special_requests,
-          
-          // Приблизительный доход курьера
-          estimated_earnings: calculateCourierEarnings(order.delivery_fee, distanceToCustomer)
-        };
-      })
-    );
+    // Обогащаем данными о расстоянии и заработке
+    const enrichedOrders = orders.map(order => {
+      const distance = lat && lng ? calculateDistance(
+        lat, lng,
+        order.delivery_address.lat,
+        order.delivery_address.lng
+      ) : null;
 
-    console.log('✅ GET AVAILABLE ORDERS SUCCESS:', {
-      orders_found: enrichedOrders.length,
-      with_geolocation: !!(lat && lng)
+      const estimatedEarnings = calculateCourierEarnings(order, distance);
+
+      return {
+        ...order.toObject(),
+        distance_km: distance ? Math.round(distance * 10) / 10 : null,
+        estimated_earnings: estimatedEarnings,
+        delivery_time_estimate: distance ? Math.round(distance * 3) + 10 : 15 // 3 мин/км + 10 мин базовых
+      };
     });
 
     return {
@@ -729,7 +975,7 @@ export const getAvailableOrdersForCourier = async (courierId, location = {}) => 
 };
 
 /**
- * ВЗЯТЬ ЗАКАЗ НА ДОСТАВКУ
+ * 📦 ВЗЯТЬ ЗАКАЗ НА ДОСТАВКУ
  */
 export const acceptOrderForDelivery = async (orderId, courierId) => {
   try {
@@ -772,7 +1018,12 @@ export const acceptOrderForDelivery = async (orderId, courierId) => {
       order_id: order._id,
       order_number: order.order_number,
       status: order.status,
-      message: 'Заказ взят на доставку. Направляйтесь в ресторан.'
+      message: 'Заказ взят на доставку. Направляйтесь в ресторан.',
+      partner_info: {
+        name: order.partner_id?.business_name,
+        phone: order.partner_id?.phone,
+        address: order.partner_id?.location?.address
+      }
     };
 
   } catch (error) {
@@ -782,7 +1033,7 @@ export const acceptOrderForDelivery = async (orderId, courierId) => {
 };
 
 /**
- * ЗАБРАТЬ ЗАКАЗ У РЕСТОРАНА
+ * 🏪 ЗАБРАТЬ ЗАКАЗ У РЕСТОРАНА
  */
 export const markOrderPickedUpByCourier = async (orderId, courierId) => {
   try {
@@ -815,7 +1066,12 @@ export const markOrderPickedUpByCourier = async (orderId, courierId) => {
       order_number: order.order_number,
       status: order.status,
       picked_up_at: order.picked_up_at,
-      message: 'Заказ забран! Направляйтесь к клиенту.'
+      message: 'Заказ забран! Направляйтесь к клиенту.',
+      customer_info: {
+        name: `${order.customer_contact?.name || 'Клиент'}`,
+        phone: order.customer_contact?.phone,
+        address: order.delivery_address?.address
+      }
     };
 
   } catch (error) {
@@ -825,13 +1081,11 @@ export const markOrderPickedUpByCourier = async (orderId, courierId) => {
 };
 
 /**
- * ДОСТАВИТЬ ЗАКАЗ КЛИЕНТУ
+ * 🚚 ДОСТАВИТЬ ЗАКАЗ КЛИЕНТУ
  */
-export const markOrderDeliveredByCourier = async (orderId, courierId, deliveryData) => {
+export const markOrderDeliveredByCourier = async (orderId, courierId) => {
   try {
-    const { delivery_notes = '' } = deliveryData;
-
-    console.log('🏠 MARK ORDER DELIVERED:', { orderId, courierId });
+    console.log('🚚 MARK ORDER DELIVERED:', { orderId, courierId });
 
     const order = await Order.findById(orderId);
 
@@ -844,23 +1098,19 @@ export const markOrderDeliveredByCourier = async (orderId, courierId, deliveryDa
     }
 
     if (order.status !== 'on_the_way') {
-      throw new Error('Заказ нельзя доставить - неверный статус');
+      throw new Error('Заказ нельзя пометить доставленным - неверный статус');
     }
 
-    // Отмечаем как доставленный
-    await order.addStatusHistory('delivered', courierId, 'courier', 
-      delivery_notes ? `Заказ доставлен. Примечания: ${delivery_notes}` : 'Заказ доставлен');
+    // Обновляем статус
+    await order.addStatusHistory('delivered', courierId, 'courier', 'Заказ доставлен клиенту');
 
     // Обновляем статистику курьера
-    await CourierProfile.findOneAndUpdate(
-      { user_id: courierId },
-      { 
-        $inc: { 
-          'delivery_stats.completed_deliveries': 1,
-          'delivery_stats.total_earnings': calculateCourierEarnings(order.delivery_fee)
-        }
+    await CourierProfile.findByIdAndUpdate(courierId, {
+      $inc: {
+        'delivery_stats.total_deliveries': 1,
+        'delivery_stats.total_earnings': calculateCourierEarnings(order)
       }
-    );
+    });
 
     console.log('✅ ORDER DELIVERED SUCCESS:', {
       order_number: order.order_number,
@@ -874,7 +1124,7 @@ export const markOrderDeliveredByCourier = async (orderId, courierId, deliveryDa
       status: order.status,
       delivered_at: order.delivered_at,
       actual_delivery_time: order.actual_delivery_time,
-      message: 'Заказ успешно доставлен! Спасибо за работу.'
+      message: 'Заказ доставлен успешно! Спасибо за работу.'
     };
 
   } catch (error) {
@@ -884,7 +1134,7 @@ export const markOrderDeliveredByCourier = async (orderId, courierId, deliveryDa
 };
 
 /**
- * ПОЛУЧИТЬ АКТИВНЫЕ ЗАКАЗЫ КУРЬЕРА
+ * 📋 ПОЛУЧИТЬ АКТИВНЫЕ ЗАКАЗЫ КУРЬЕРА
  */
 export const getCourierActiveOrders = async (courierId) => {
   try {
@@ -894,7 +1144,8 @@ export const getCourierActiveOrders = async (courierId) => {
       courier_id: courierId,
       status: { $in: ['picked_up', 'on_the_way'] }
     })
-    .populate('partner_id', 'business_name phone')
+    .populate('partner_id', 'business_name phone location')
+    .populate('customer_id', 'first_name last_name phone')
     .sort({ createdAt: -1 });
 
     return {
@@ -911,229 +1162,474 @@ export const getCourierActiveOrders = async (courierId) => {
 // ================ ОБЩИЕ СЕРВИСЫ ================
 
 /**
- * ОТСЛЕЖИВАНИЕ ЗАКАЗА
+ * 🔍 ОТСЛЕЖИВАНИЕ СТАТУСА ЗАКАЗА
  */
-export const trackOrderStatus = async (orderId, userId = null)// services/Order/order.service.js - ПОЛНЫЙ сервис заказов с добавлением валидации доступности товаров
-import { Order, Cart, User, PartnerProfile, CourierProfile, Product } from '../../models/index.js';
-import mongoose from 'mongoose';
+export const trackOrderStatus = async (orderId, userId = null) => {
+  try {
+    console.log('🔍 TRACK ORDER STATUS:', { orderId, userId });
 
-// ================ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ================
+    const order = await Order.findById(orderId)
+      .populate('partner_id', 'business_name phone location')
+      .populate('courier_id', 'user_id vehicle_info phone')
+      .populate('customer_id', 'first_name last_name phone');
 
-/**
- * НОВАЯ ФУНКЦИЯ: Получение текстового описания причины недоступности
- */
-function getReasonText(reason) {
-  const reasons = {
-    'product_deactivated': 'товар снят с продажи',
-    'out_of_stock': 'закончился на складе',
-    'time_restricted': 'недоступен в данное время',
-    'partner_unavailable': 'ресторан недоступен'
-  };
-  return reasons[reason] || 'неизвестная причина';
-}
-
-function calculateEstimatedDeliveryTime(delivery_address, restaurant_location, restaurant_delivery_info) {
-  // Базовое время доставки
-  let baseTime = 30; // минут
-  
-  if (restaurant_delivery_info && restaurant_delivery_info.base_delivery_time) {
-    baseTime = restaurant_delivery_info.base_delivery_time;
-  }
-  
-  // Добавляем время в зависимости от расстояния (примерно)
-  const distance = calculateDistance(
-    restaurant_location?.coordinates?.[1] || 48.8566,
-    restaurant_location?.coordinates?.[0] || 2.3522,
-    delivery_address.lat,
-    delivery_address.lng
-  );
-  
-  const additionalTime = Math.round(distance * 2); // 2 минуты на км
-  const totalTime = baseTime + additionalTime;
-  
-  return new Date(Date.now() + totalTime * 60 * 1000);
-}
-
-function calculateDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Радиус Земли в км
-  const dLat = deg2rad(lat2 - lat1);
-  const dLon = deg2rad(lon2 - lon1);
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  const d = R * c;
-  return d;
-}
-
-function deg2rad(deg) {
-  return deg * (Math.PI/180);
-}
-
-function processPayment(order, options = {}) {
-  // Заглушка для обработки платежа
-  return {
-    success: true,
-    details: {
-      transaction_id: `tx_${Date.now()}`,
-      payment_processor: 'stripe',
-      gateway_response: { status: 'approved' }
+    if (!order) {
+      throw new Error('Заказ не найден');
     }
-  };
-}
 
-function calculateCourierEarnings(deliveryFee, distance) {
-  // Примерный расчет заработка курьера
-  const basePay = deliveryFee * 0.8; // 80% от стоимости доставки
-  const distanceBonus = distance > 5 ? (distance - 5) * 0.5 : 0;
-  return Math.round((basePay + distanceBonus) * 100) / 100;
-}
+    // Если указан userId, проверяем доступ
+    if (userId) {
+      const hasAccess = await checkOrderAccess(order, userId);
+      if (!hasAccess) {
+        throw new Error('Нет доступа к этому заказу');
+      }
+    }
 
-// ================ КЛИЕНТСКИЕ СЕРВИСЫ ================
+    const progress = getOrderProgress(order.status);
+    const statusDescription = getStatusDescription(order.status);
+    const nextStep = getNextStep(order.status);
+
+    return {
+      order_id: order._id,
+      order_number: order.order_number,
+      status: order.status,
+      status_description: statusDescription,
+      progress,
+      next_step: nextStep,
+      estimated_delivery_time: order.estimated_delivery_time,
+      actual_delivery_time: order.actual_delivery_time,
+      created_at: order.createdAt,
+      status_history: order.status_history,
+      partner_info: order.partner_id ? {
+        name: order.partner_id.business_name,
+        phone: order.partner_id.phone
+      } : null,
+      courier_info: order.courier_id ? {
+        phone: order.courier_id.phone,
+        vehicle: order.courier_id.vehicle_info?.vehicle_type
+      } : null
+    };
+
+  } catch (error) {
+    console.error('🚨 TRACK ORDER ERROR:', error);
+    throw error;
+  }
+};
 
 /**
- * СОЗДАТЬ ЗАКАЗ ИЗ КОРЗИНЫ - ОБНОВЛЕННАЯ ФУНКЦИЯ с валидацией доступности
+ * 📊 ПОЛУЧИТЬ ТОЛЬКО СТАТУС ЗАКАЗА (быстрый метод)
  */
-export const createOrderFromCart = async (customerId, sessionId, orderData) => {
+export const getOrderStatusOnly = async (orderId) => {
+  try {
+    const order = await Order.findById(orderId).select('status order_number estimated_delivery_time actual_delivery_time');
+    
+    if (!order) {
+      throw new Error('Заказ не найден');
+    }
+
+    return {
+      order_id: orderId,
+      order_number: order.order_number,
+      status: order.status,
+      status_description: getStatusDescription(order.status),
+      progress: getOrderProgress(order.status),
+      estimated_delivery_time: order.estimated_delivery_time,
+      actual_delivery_time: order.actual_delivery_time
+    };
+
+  } catch (error) {
+    console.error('🚨 GET ORDER STATUS ERROR:', error);
+    throw error;
+  }
+};
+
+// ================ УТИЛИТАРНЫЕ ФУНКЦИИ ================
+
+/**
+ * ✅ ПРОВЕРКА ДОСТУПА К ЗАКАЗУ
+ */
+export const checkOrderAccess = async (order, userId, userRole = null) => {
+  try {
+    // Если роль не указана, определяем по мета-информации
+    if (!userRole) {
+      const Meta = mongoose.model('Meta');
+      const meta = await Meta.findOne({ 
+        $or: [
+          { customer: userId },
+          { partner: userId }, 
+          { courier: userId }
+        ]
+      });
+      
+      if (meta) {
+        userRole = meta.role;
+      }
+    }
+
+    // Проверка прав доступа по ролям
+    let hasAccess = false;
+    
+    if (userRole === 'customer' && order.customer_id._id.toString() === userId.toString()) {
+      hasAccess = true;
+    } else if (userRole === 'partner' && order.partner_id.user_id?.toString() === userId.toString()) {
+      hasAccess = true;
+    } else if (userRole === 'courier' && order.courier_id?.user_id?.toString() === userId.toString()) {
+      hasAccess = true;
+    }
+
+    if (!hasAccess) {
+      throw new Error('Нет доступа к этому заказу');
+    }
+
+    return true;
+
+  } catch (error) {
+    console.error('🚨 CHECK ORDER ACCESS ERROR:', error);
+    throw error;
+  }
+};
+
+/**
+ * 💰 РАСЧЕТ ЗАРАБОТКА КУРЬЕРА
+ */
+export const calculateCourierEarnings = (order, distance = null) => {
+  const baseEarning = 4.50; // Базовая ставка за доставку
+  const distanceBonus = distance ? Math.round(distance * 0.50 * 100) / 100 : 1.50; // 0.50€ за км
+  const orderSizeBonus = order.total_price > 30 ? 1.00 : 0; // Бонус за крупный заказ
+  
+  return Math.round((baseEarning + distanceBonus + orderSizeBonus) * 100) / 100;
+};
+
+/**
+ * 📊 ПОЛУЧИТЬ ПРОГРЕСС ЗАКАЗА (в процентах)
+ */
+export const getOrderProgress = (status) => {
+  const progressMap = {
+    'pending': 10,
+    'accepted': 30,
+    'ready': 60,
+    'picked_up': 70,
+    'on_the_way': 90,
+    'delivered': 100,
+    'cancelled': 0
+  };
+  
+  return progressMap[status] || 0;
+};
+
+/**
+ * 📝 ПОЛУЧИТЬ ОПИСАНИЕ СТАТУСА
+ */
+export const getStatusDescription = (status) => {
+  const descriptions = {
+    'pending': 'Ожидает подтверждения ресторана',
+    'accepted': 'Заказ принят, готовится',
+    'ready': 'Готов к выдаче, ожидается курьер',
+    'picked_up': 'Курьер забрал заказ',
+    'on_the_way': 'Курьер в пути к вам',
+    'delivered': 'Заказ доставлен',
+    'cancelled': 'Заказ отменен'
+  };
+  
+  return descriptions[status] || 'Неизвестный статус';
+};
+
+/**
+ * ➡️ ПОЛУЧИТЬ СЛЕДУЮЩИЙ ШАГ
+ */
+export const getNextStep = (status) => {
+  const nextSteps = {
+    'pending': 'Ожидаем подтверждения от ресторана',
+    'accepted': 'Ваш заказ готовится',
+    'ready': 'Ищем курьера для доставки',
+    'picked_up': 'Курьер забирает заказ у ресторана',
+    'on_the_way': 'Курьер направляется к вам',
+    'delivered': 'Заказ доставлен! Можете оценить сервис',
+    'cancelled': 'Заказ был отменен'
+  };
+  
+  return nextSteps[status] || 'Обратитесь в поддержку';
+};
+
+// ================ НОВЫЕ ФУНКЦИИ ДЛЯ АВТООЧИСТКИ ================
+
+/**
+ * 🧹 АВТООЧИСТКА ПРОСРОЧЕННЫХ КОРЗИН И ЗАКАЗОВ
+ */
+export const cleanupExpiredData = async () => {
+  try {
+    console.log('🧹 STARTING CLEANUP OF EXPIRED DATA...');
+    
+    const now = new Date();
+    const results = {
+      expired_carts_cleaned: 0,
+      expired_orders_cleaned: 0,
+      stock_returned: 0,
+      start_time: now
+    };
+
+    // 1. Очистка просроченных корзин (старше 24 часов)
+    const expiredCarts = await Cart.find({
+      status: { $in: ['active', 'abandoned'] },
+      expires_at: { $lt: now }
+    });
+
+    for (const cart of expiredCarts) {
+      await cart.clear();
+      results.expired_carts_cleaned++;
+    }
+
+    // 2. Очистка зависших заказов (pending дольше 30 минут)
+    const expiredOrders = await Order.find({
+      status: 'pending',
+      createdAt: { $lt: new Date(now - 30 * 60 * 1000) } // 30 минут назад
+    });
+
+    const session = await mongoose.startSession();
+    await session.startTransaction();
+
+    try {
+      for (const order of expiredOrders) {
+        // Возвращаем товары на склад
+        const returnResults = await returnProductsToStock(order.items, session);
+        results.stock_returned += returnResults.length;
+
+        // Отменяем заказ
+        await order.cancelOrder('Автоматическая отмена - превышено время ожидания', null, 'system', 'Заказ не был подтвержден в течение 30 минут');
+        results.expired_orders_cleaned++;
+      }
+
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+
+    // 3. Очистка старой истории резервирований в товарах (старше 30 дней)
+    await Product.updateMany(
+      {},
+      {
+        $pull: {
+          reservation_history: {
+            $or: [
+              { reserved_at: { $lt: new Date(now - 30 * 24 * 60 * 60 * 1000) } },
+              { returned_at: { $lt: new Date(now - 30 * 24 * 60 * 60 * 1000) } }
+            ]
+          }
+        }
+      }
+    );
+
+    results.end_time = new Date();
+    results.duration_ms = results.end_time - results.start_time;
+
+    console.log('✅ CLEANUP COMPLETED:', results);
+    return results;
+
+  } catch (error) {
+    console.error('🚨 CLEANUP ERROR:', error);
+    throw error;
+  }
+};
+
+/**
+ * 🔍 ВАЛИДАЦИЯ ТОВАРОВ В КОНКРЕТНОМ ЗАКАЗЕ
+ */
+export const validateOrderItems = async (orderId) => {
+  try {
+    console.log('🔍 VALIDATE ORDER ITEMS:', { orderId });
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      throw new Error('Заказ не найден');
+    }
+
+    // Выполняем валидацию через метод модели
+    const validationResult = await order.validateItemsAvailability();
+
+    return {
+      order_id: orderId,
+      order_number: order.order_number,
+      validation_status: order.availability_validation.validation_status,
+      unavailable_items: order.availability_validation.unavailable_items,
+      validated_at: order.availability_validation.validated_at,
+      is_valid: order.availability_validation.validation_status === 'valid'
+    };
+
+  } catch (error) {
+    console.error('🚨 VALIDATE ORDER ITEMS ERROR:', error);
+    throw error;
+  }
+};
+
+/**
+ * 📊 ПОЛУЧИТЬ СТАТИСТИКУ ЗАКАЗОВ
+ */
+export const getOrdersStatistics = async (filters = {}) => {
+  try {
+    const { partnerId, courierId, customerId, period = 30 } = filters;
+    
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - period);
+
+    let matchQuery = {
+      createdAt: { $gte: startDate }
+    };
+
+    if (partnerId) matchQuery.partner_id = new mongoose.Types.ObjectId(partnerId);
+    if (courierId) matchQuery.courier_id = new mongoose.Types.ObjectId(courierId);
+    if (customerId) matchQuery.customer_id = new mongoose.Types.ObjectId(customerId);
+
+    const stats = await Order.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          total_amount: { $sum: '$total_price' },
+          avg_amount: { $avg: '$total_price' },
+          avg_delivery_time: { $avg: '$actual_delivery_time' }
+        }
+      }
+    ]);
+
+    const totalOrders = await Order.countDocuments(matchQuery);
+    const totalRevenue = await Order.aggregate([
+      { $match: matchQuery },
+      { $group: { _id: null, total: { $sum: '$total_price' } } }
+    ]);
+
+    return {
+      period_days: period,
+      total_orders: totalOrders,
+      total_revenue: totalRevenue[0]?.total || 0,
+      by_status: stats,
+      generated_at: new Date()
+    };
+
+  } catch (error) {
+    console.error('🚨 GET ORDERS STATISTICS ERROR:', error);
+    throw error;
+  }
+};
+
+/**
+ * 🔄 МАССОВОЕ ОБНОВЛЕНИЕ СТАТУСОВ ЗАКАЗОВ (для админки)
+ */
+export const bulkUpdateOrderStatus = async (orderIds, newStatus, adminId, reason = '') => {
   const session = await mongoose.startSession();
   
   try {
     await session.startTransaction();
     
-    const {
-      delivery_address,
-      customer_contact,
-      payment_method,
-      special_requests
-    } = orderData;
+    console.log('🔄 BULK UPDATE ORDER STATUS:', { orderIds, newStatus, adminId });
 
-    console.log('📦 CREATE ORDER FROM CART:', {
-      customerId,
-      sessionId,
-      payment_method,
-      has_address: !!delivery_address
-    });
-
-    // 1. Найти активную корзину
-    const cart = await Cart.findActiveCart(customerId, sessionId);
-
-    if (!cart) {
-      throw new Error('Активная корзина не найдена');
-    }
-
-    if (cart.items.length === 0) {
-      throw new Error('Корзина пуста');
-    }
-
-    // 2. Проверить минимальную сумму заказа
-    const minOrderAmount = cart.restaurant_info.min_order_amount || 0;
-    if (cart.pricing.subtotal < minOrderAmount) {
-      throw new Error(`Минимальная сумма заказа: ${minOrderAmount}€`);
-    }
-
-    // 3. Получить информацию о ресторане
-    const restaurant = await PartnerProfile.findById(cart.restaurant_id).session(session);
-    if (!restaurant || !restaurant.is_active || !restaurant.is_approved) {
-      throw new Error('Ресторан недоступен для заказов');
-    }
-
-    // 4. НОВАЯ РАСШИРЕННАЯ ПРОВЕРКА ДОСТУПНОСТИ ТОВАРОВ
-    const productIds = cart.items.map(item => item.product_id);
-    const products = await Product.find({
-      _id: { $in: productIds }
+    const orders = await Order.find({
+      _id: { $in: orderIds }
     }).session(session);
 
-    const unavailableItems = [];
-    const availableProducts = [];
-    const itemsSnapshot = []; // НОВОЕ: снимок товаров на момент заказа
+    const results = [];
 
-    for (const cartItem of cart.items) {
-      const product = products.find(p => p._id.toString() === cartItem.product_id.toString());
-      
-      if (!product) {
-        unavailableItems.push({
-          product_id: cartItem.product_id,
-          title: cartItem.product_snapshot.title,
-          reason: 'product_deactivated'
-        });
-        continue;
-      }
-
-      // НОВОЕ: Создаем снимок состояния товара
-      itemsSnapshot.push({
-        product_id: product._id,
-        availability_at_order: {
-          is_active: product.is_active,
-          is_available: product.is_available,
-          stock_quantity: product.stock_quantity,
-          availability_schedule: product.availability_schedule
+    for (const order of orders) {
+      try {
+        // Если отменяем заказ - возвращаем товары на склад
+        if (newStatus === 'cancelled') {
+          await returnProductsToStock(order.items, session);
         }
-      });
 
-      // Проверка базовой доступности
-      if (!product.is_active || !product.is_available) {
-        unavailableItems.push({
-          product_id: product._id,
-          title: product.title,
-          reason: 'product_deactivated'
+        await order.addStatusHistory(newStatus, adminId, 'admin', reason || `Массовое обновление статуса`);
+        
+        results.push({
+          order_id: order._id,
+          order_number: order.order_number,
+          old_status: order.status,
+          new_status: newStatus,
+          success: true
         });
-        continue;
-      }
 
-      // НОВОЕ: Проверка складских остатков для магазинов
-      if (product.category === 'store' && product.stock_quantity !== undefined) {
-        if (product.stock_quantity < cartItem.quantity) {
-          unavailableItems.push({
-            product_id: product._id,
-            title: product.title,
-            reason: 'out_of_stock'
-          });
-          continue;
-        }
-      }
-
-      // НОВОЕ: Проверка временной доступности
-      if (product.isAvailableNow && !product.isAvailableNow()) {
-        unavailableItems.push({
-          product_id: product._id,
-          title: product.title,
-          reason: 'time_restricted'
+      } catch (error) {
+        results.push({
+          order_id: order._id,
+          order_number: order.order_number,
+          success: false,
+          error: error.message
         });
-        continue;
-      }
-
-      availableProducts.push(product);
-    }
-
-    // НОВАЯ ЛОГИКА: Обработка недоступных товаров
-    if (unavailableItems.length > 0) {
-      const criticalIssues = unavailableItems.length === cart.items.length;
-      
-      if (criticalIssues) {
-        // Все товары недоступны - отменяем создание заказа
-        throw new Error(
-          `Все товары в корзине недоступны:\n${unavailableItems.map(item => 
-            `• "${item.title}" - ${getReasonText(item.reason)}`
-          ).join('\n')}`
-        );
-      } else {
-        // Частично недоступны - продолжаем с доступными товарами
-        console.warn('⚠️ PARTIAL AVAILABILITY ISSUES:', unavailableItems);
       }
     }
 
-    // 5. Генерировать уникальный номер заказа
-    const orderNumber = await Order.generateOrderNumber();
+    await session.commitTransaction();
 
-    // 6. Расчет времени доставки
-    const estimatedDeliveryTime = calculateEstimatedDeliveryTime(
-      delivery_address,
-      restaurant.location,
-      restaurant.delivery_info
-    );
+    console.log('✅ BULK UPDATE COMPLETED:', {
+      total_processed: results.length,
+      successful: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length
+    });
 
-    // 7. Создать заказ только с доступными товарами
-    const orderItems = cart.items
-      .filter(cartItem => 
-        availableProducts.some(p => p._id.toString() === cartItem.product_i
+    return {
+      results,
+      summary: {
+        total_processed: results.length,
+        successful: results.filter(r => r.success).length,
+        failed: results.filter(r => !r.success).length
+      }
+    };
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('🚨 BULK UPDATE ERROR:', error);
+    throw error;
+  } finally {
+    session.endSession();
+  }
+};
+
+// ================ ЭКСПОРТ ВСЕХ ФУНКЦИЙ ================
+
+export default {
+  // Клиентские сервисы
+  createOrderFromCart,
+  getCustomerOrders,
+  getOrderDetails,
+  cancelCustomerOrder,
+  rateCompletedOrder,
+  
+  // Партнерские сервисы
+  getRestaurantOrders,
+  acceptRestaurantOrder,
+  rejectRestaurantOrder,
+  markRestaurantOrderReady,
+  
+  // Курьерские сервисы
+  getAvailableOrdersForCourier,
+  acceptOrderForDelivery,
+  markOrderPickedUpByCourier,
+  markOrderDeliveredByCourier,
+  getCourierActiveOrders,
+  
+  // Общие сервисы
+  trackOrderStatus,
+  getOrderStatusOnly,
+  
+  // ✅ НОВЫЕ УТИЛИТАРНЫЕ ФУНКЦИИ
+  validateOrderItems,
+  cleanupExpiredData,
+  getOrdersStatistics,
+  bulkUpdateOrderStatus,
+  
+  // Утилитарные функции для тестирования
+  calculateEstimatedDeliveryTime,
+  processPayment,
+  processRefund,
+  checkOrderAccess,
+  calculateCourierEarnings,
+  getOrderProgress,
+  getStatusDescription,
+  getNextStep,
+  
+  // ✅ НОВЫЕ ФУНКЦИИ ВАЛИДАЦИИ И РЕЗЕРВИРОВАНИЯ
+  validateProductsAvailability,
+  reserveProductsStock,
+  returnProductsToStock
+};
