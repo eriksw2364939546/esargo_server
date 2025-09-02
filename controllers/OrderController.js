@@ -1,4 +1,4 @@
-// controllers/OrderController.js - Контроллеры системы заказов
+// controllers/OrderController.js - ИСПРАВЛЕННЫЙ контроллер системы заказов
 import { 
   createOrderFromCart,
   getCustomerOrders,
@@ -21,17 +21,16 @@ import {
 // ================ КЛИЕНТСКИЕ КОНТРОЛЛЕРЫ ================
 
 /**
- * 📦 СОЗДАТЬ ЗАКАЗ ИЗ КОРЗИНЫ
+ * 📦 СОЗДАТЬ ЗАКАЗ ИЗ КОРЗИНЫ - ИСПРАВЛЕНО
  * POST /api/orders
  */
 const createOrder = async (req, res) => {
   try {
     const { user } = req;
-    const sessionId = req.sessionID;
     const {
       delivery_address,
       customer_contact,
-      payment_method = 'card',
+      payment_method = 'cash',
       special_requests = ''
     } = req.body;
 
@@ -41,56 +40,151 @@ const createOrder = async (req, res) => {
       has_delivery_address: !!delivery_address
     });
 
-    // Валидация обязательных полей
-    if (!delivery_address || !delivery_address.address || !delivery_address.lat || !delivery_address.lng) {
+    // ✅ ИСПРАВЛЕННАЯ ВАЛИДАЦИЯ ВХОДНЫХ ДАННЫХ
+    const errors = [];
+
+    // Проверка адреса доставки
+    if (!delivery_address) {
+      errors.push('Адрес доставки обязателен');
+    } else {
+      if (!delivery_address.address || delivery_address.address.trim().length === 0) {
+        errors.push('Текстовый адрес доставки обязателен');
+      }
+      
+      if (!delivery_address.lat || typeof delivery_address.lat !== 'number') {
+        errors.push('Широта адреса (lat) обязательна и должна быть числом');
+      }
+      
+      if (!delivery_address.lng || typeof delivery_address.lng !== 'number') {
+        errors.push('Долгота адреса (lng) обязательна и должна быть числом');
+      }
+
+      // Проверка корректности координат Парижа
+      if (delivery_address.lat && (delivery_address.lat < 48.8 || delivery_address.lat > 48.9)) {
+        errors.push('Координаты должны быть в пределах Парижа');
+      }
+      
+      if (delivery_address.lng && (delivery_address.lng < 2.2 || delivery_address.lng > 2.5)) {
+        errors.push('Координаты должны быть в пределах Парижа');
+      }
+    }
+
+    // Проверка контактной информации
+    if (!customer_contact) {
+      errors.push('Контактная информация обязательна');
+    } else {
+      if (!customer_contact.name || customer_contact.name.trim().length === 0) {
+        errors.push('Имя контакта обязательно');
+      }
+      
+      if (!customer_contact.phone || customer_contact.phone.trim().length === 0) {
+        errors.push('Телефон контакта обязателен');
+      } else {
+        // Проверка французского формата телефона
+        const phoneRegex = /^(?:(?:\+33|0)[1-9](?:[0-9]{8}))$/;
+        if (!phoneRegex.test(customer_contact.phone.replace(/\s/g, ''))) {
+          errors.push('Неверный формат телефона (ожидается французский: +33XXXXXXXXX или 0XXXXXXXXX)');
+        }
+      }
+
+      if (customer_contact.email && customer_contact.email.trim().length > 0) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(customer_contact.email)) {
+          errors.push('Неверный формат email');
+        }
+      }
+    }
+
+    // Проверка метода оплаты
+    if (!['cash', 'card'].includes(payment_method)) {
+      errors.push('Метод оплаты должен быть "cash" или "card"');
+    }
+
+    if (errors.length > 0) {
       return res.status(400).json({
         result: false,
-        message: "Адрес доставки с координатами обязателен"
+        message: "Ошибки валидации данных",
+        errors
       });
     }
 
-    if (!customer_contact || !customer_contact.name || !customer_contact.phone) {
-      return res.status(400).json({
-        result: false,
-        message: "Контактная информация (имя и телефон) обязательна"
-      });
-    }
-
-    const result = await createOrderFromCart(user._id, sessionId, {
-      delivery_address,
-      customer_contact,
+    // ✅ ИСПРАВЛЕННЫЙ ВЫЗОВ СЕРВИСА (убрали sessionId)
+    const result = await createOrderFromCart(user._id, {
+      delivery_address: {
+        address: delivery_address.address.trim(),
+        lat: delivery_address.lat,
+        lng: delivery_address.lng,
+        apartment: delivery_address.apartment?.trim() || '',
+        entrance: delivery_address.entrance?.trim() || '',
+        intercom: delivery_address.intercom?.trim() || '',
+        delivery_notes: delivery_address.delivery_notes?.trim() || ''
+      },
+      customer_contact: {
+        name: customer_contact.name.trim(),
+        phone: customer_contact.phone.replace(/\s/g, ''),
+        email: customer_contact.email?.toLowerCase().trim() || ''
+      },
       payment_method,
       special_requests: special_requests.trim()
     });
 
-    res.status(201).json({
+    // ✅ УЛУЧШЕННЫЙ ОТВЕТ С ОБРАБОТКОЙ ПРЕДУПРЕЖДЕНИЙ
+    const response = {
       result: true,
-      message: "Заказ создан успешно",
-      order: result.order,
+      message: result.warnings ? 
+        "Заказ создан с изменениями" : 
+        "Заказ создан успешно",
+      order: {
+        id: result.order._id,
+        order_number: result.order.order_number,
+        status: result.order.status,
+        total_price: result.order.total_price,
+        estimated_delivery_time: result.estimatedDelivery,
+        payment_status: result.order.payment_status
+      },
       payment: result.payment,
-      estimated_delivery: result.estimatedDelivery,
       next_steps: [
         "Ресторан получит уведомление о заказе",
         "Ожидайте подтверждения в течение 10-15 минут",
         "Вы получите уведомления об изменении статуса"
       ]
-    });
+    };
+
+    // Добавляем информацию о предупреждениях если есть
+    if (result.warnings) {
+      response.warnings = result.warnings;
+      response.next_steps.unshift("⚠️ Некоторые товары были исключены из заказа");
+    }
+
+    res.status(201).json(response);
 
   } catch (error) {
     console.error('🚨 CREATE ORDER Error:', error);
     
     let statusCode = 500;
+    
+    // Детальная обработка ошибок
     if (error.message.includes('корзина пуста') || 
-        error.message.includes('не найден') ||
-        error.message.includes('не активен')) {
+        error.message.includes('не найдена')) {
       statusCode = 400;
-    } else if (error.message.includes('платеж')) {
+    } else if (error.message.includes('недоступен для заказов') ||
+               error.message.includes('недоступны')) {
+      statusCode = 400;
+    } else if (error.message.includes('Минимальная сумма заказа')) {
+      statusCode = 400;
+    } else if (error.message.includes('платеж') || 
+               error.message.includes('Карта отклонена')) {
       statusCode = 402; // Payment Required
+    } else if (error.message.includes('Координаты') ||
+               error.message.includes('обязательн')) {
+      statusCode = 400;
     }
 
     res.status(statusCode).json({
       result: false,
-      message: error.message || "Ошибка создания заказа"
+      message: error.message || "Ошибка создания заказа",
+      error_type: statusCode === 402 ? 'payment_error' : 
+                  statusCode === 400 ? 'validation_error' : 'server_error'
     });
   }
 };
@@ -125,13 +219,7 @@ const getMyOrders = async (req, res) => {
       result: true,
       message: "Заказы получены",
       orders: result.orders,
-      total: result.total,
-      pagination: {
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        has_more: result.total > (parseInt(offset) + parseInt(limit))
-      },
-      summary: result.summary
+      pagination: result.pagination
     });
 
   } catch (error) {
@@ -165,13 +253,15 @@ const getOrderById = async (req, res) => {
       order: result.order,
       can_cancel: result.canCancel,
       can_rate: result.canRate,
-      estimated_delivery: result.estimatedDelivery
+      estimated_delivery: result.estimatedDelivery,
+      availability_info: result.availability_info
     });
 
   } catch (error) {
     console.error('🚨 GET ORDER BY ID Error:', error);
     
-    const statusCode = error.message.includes('не найден') ? 404 : 500;
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('доступ') ? 403 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -188,7 +278,7 @@ const cancelOrder = async (req, res) => {
   try {
     const { user } = req;
     const { id } = req.params;
-    const { reason } = req.body;
+    const { reason = 'Отмена клиентом', details = '' } = req.body;
 
     console.log('❌ CANCEL ORDER:', {
       customer_id: user._id,
@@ -196,32 +286,27 @@ const cancelOrder = async (req, res) => {
       reason
     });
 
-    if (!reason || reason.trim() === '') {
-      return res.status(400).json({
-        result: false,
-        message: "Причина отмены обязательна"
-      });
-    }
-
-    const result = await cancelCustomerOrder(id, user._id, reason.trim());
+    const result = await cancelCustomerOrder(id, user._id, { reason, details });
 
     res.status(200).json({
       result: true,
-      message: "Заказ отменен",
-      order: result.order,
-      refund: result.refund,
-      cancellation_info: result.cancellationInfo
+      message: "Заказ отменен успешно",
+      order: {
+        id: result.order_id,
+        order_number: result.order_number,
+        status: result.status,
+        cancelled_at: result.cancelled_at
+      },
+      stock_return_info: result.stock_return_info,
+      refund_info: result.refund_info
     });
 
   } catch (error) {
     console.error('🚨 CANCEL ORDER Error:', error);
     
-    let statusCode = 500;
-    if (error.message.includes('не найден')) {
-      statusCode = 404;
-    } else if (error.message.includes('нельзя отменить')) {
-      statusCode = 400;
-    }
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('доступ') ? 403 : 
+                      error.message.includes('нельзя отменить') ? 400 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -238,11 +323,7 @@ const rateOrder = async (req, res) => {
   try {
     const { user } = req;
     const { id } = req.params;
-    const { 
-      partner_rating, 
-      courier_rating, 
-      comment = '' 
-    } = req.body;
+    const { partner_rating, courier_rating, comment = '' } = req.body;
 
     console.log('⭐ RATE ORDER:', {
       customer_id: user._id,
@@ -269,26 +350,25 @@ const rateOrder = async (req, res) => {
     const result = await rateCompletedOrder(id, user._id, {
       partner_rating,
       courier_rating,
-      comment: comment.trim()
+      comment
     });
 
     res.status(200).json({
       result: true,
       message: "Спасибо за оценку!",
-      order: result.order,
-      ratings_updated: result.ratingsUpdated
+      order: {
+        id: result.order_id,
+        order_number: result.order_number,
+        ratings: result.ratings
+      }
     });
 
   } catch (error) {
     console.error('🚨 RATE ORDER Error:', error);
     
-    let statusCode = 500;
-    if (error.message.includes('не найден')) {
-      statusCode = 404;
-    } else if (error.message.includes('нельзя оценить') || 
-               error.message.includes('уже оценен')) {
-      statusCode = 400;
-    }
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('доступ') ? 403 : 
+                      error.message.includes('оценен') ? 400 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -300,26 +380,39 @@ const rateOrder = async (req, res) => {
 // ================ ПАРТНЕРСКИЕ КОНТРОЛЛЕРЫ ================
 
 /**
- * 🏪 ПОЛУЧИТЬ ЗАКАЗЫ РЕСТОРАНА
- * GET /api/orders/partner/list
+ * 📋 ПОЛУЧИТЬ ЗАКАЗЫ РЕСТОРАНА
+ * GET /api/orders/partner
  */
 const getPartnerOrders = async (req, res) => {
   try {
     const { user } = req;
     const { 
       status, 
+      date,
       limit = 20, 
       offset = 0 
     } = req.query;
 
-    console.log('🏪 GET PARTNER ORDERS:', {
-      partner_id: user._id,
+    console.log('📋 GET PARTNER ORDERS:', {
+      partner_user_id: user._id,
       status,
-      limit
+      date
     });
 
-    const result = await getRestaurantOrders(user._id, {
+    // Сначала находим профиль партнера
+    const { PartnerProfile } = await import('../../models/index.js');
+    const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
+    
+    if (!partnerProfile) {
+      return res.status(404).json({
+        result: false,
+        message: "Профиль партнера не найден"
+      });
+    }
+
+    const result = await getRestaurantOrders(partnerProfile._id, {
       status,
+      date,
       limit: parseInt(limit),
       offset: parseInt(offset)
     });
@@ -328,13 +421,7 @@ const getPartnerOrders = async (req, res) => {
       result: true,
       message: "Заказы ресторана получены",
       orders: result.orders,
-      total: result.total,
-      summary: result.summary,
-      pagination: {
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        has_more: result.total > (parseInt(offset) + parseInt(limit))
-      }
+      pagination: result.pagination
     });
 
   } catch (error) {
@@ -357,41 +444,44 @@ const acceptOrder = async (req, res) => {
     const { estimated_preparation_time = 20 } = req.body;
 
     console.log('✅ ACCEPT ORDER:', {
-      partner_id: user._id,
+      partner_user_id: user._id,
       order_id: id,
-      prep_time: estimated_preparation_time
+      estimated_preparation_time
     });
 
-    if (estimated_preparation_time < 5 || estimated_preparation_time > 120) {
-      return res.status(400).json({
+    // Находим профиль партнера
+    const { PartnerProfile } = await import('../../models/index.js');
+    const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
+    
+    if (!partnerProfile) {
+      return res.status(404).json({
         result: false,
-        message: "Время приготовления должно быть от 5 до 120 минут"
+        message: "Профиль партнера не найден"
       });
     }
 
-    const result = await acceptRestaurantOrder(id, user._id, estimated_preparation_time);
+    const result = await acceptRestaurantOrder(id, partnerProfile._id, {
+      estimated_preparation_time: parseInt(estimated_preparation_time)
+    });
 
     res.status(200).json({
       result: true,
-      message: "Заказ принят в работу",
-      order: result.order,
-      estimated_ready_at: result.estimatedReadyAt,
-      next_steps: [
-        "Начните приготовление заказа",
-        "Отметьте заказ готовым когда будет готов",
-        "Система найдет курьера для доставки"
-      ]
+      message: "Заказ принят успешно",
+      order: {
+        id: result.order_id,
+        order_number: result.order_number,
+        status: result.status,
+        accepted_at: result.accepted_at
+      },
+      next_step: result.next_step
     });
 
   } catch (error) {
     console.error('🚨 ACCEPT ORDER Error:', error);
     
-    let statusCode = 500;
-    if (error.message.includes('не найден')) {
-      statusCode = 404;
-    } else if (error.message.includes('нельзя принять')) {
-      statusCode = 400;
-    }
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('доступ') ? 403 : 
+                      error.message.includes('нельзя принять') ? 400 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -408,39 +498,55 @@ const rejectOrder = async (req, res) => {
   try {
     const { user } = req;
     const { id } = req.params;
-    const { reason } = req.body;
+    const { reason, details = '' } = req.body;
 
     console.log('❌ REJECT ORDER:', {
-      partner_id: user._id,
+      partner_user_id: user._id,
       order_id: id,
       reason
     });
 
-    if (!reason || reason.trim() === '') {
+    if (!reason || reason.trim().length === 0) {
       return res.status(400).json({
         result: false,
         message: "Причина отклонения обязательна"
       });
     }
 
-    const result = await rejectRestaurantOrder(id, user._id, reason.trim());
+    // Находим профиль партнера
+    const { PartnerProfile } = await import('../../models/index.js');
+    const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
+    
+    if (!partnerProfile) {
+      return res.status(404).json({
+        result: false,
+        message: "Профиль партнера не найден"
+      });
+    }
+
+    const result = await rejectRestaurantOrder(id, partnerProfile._id, {
+      reason: reason.trim(),
+      details: details.trim()
+    });
 
     res.status(200).json({
       result: true,
-      message: "Заказ отклонен",
-      order: result.order,
-      refund: result.refund
+      message: "Заказ отклонен. Клиент получит уведомление.",
+      order: {
+        id: result.order_id,
+        order_number: result.order_number,
+        status: result.status,
+        cancelled_at: result.cancelled_at
+      },
+      stock_return_info: result.stock_return_info
     });
 
   } catch (error) {
     console.error('🚨 REJECT ORDER Error:', error);
     
-    let statusCode = 500;
-    if (error.message.includes('не найден')) {
-      statusCode = 404;
-    } else if (error.message.includes('нельзя отклонить')) {
-      statusCode = 400;
-    }
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('доступ') ? 403 : 
+                      error.message.includes('нельзя отклонить') ? 400 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -450,7 +556,7 @@ const rejectOrder = async (req, res) => {
 };
 
 /**
- * ✅ ЗАКАЗ ГОТОВ
+ * 🍳 ЗАКАЗ ГОТОВ
  * POST /api/orders/:id/ready
  */
 const markOrderReady = async (req, res) => {
@@ -458,34 +564,42 @@ const markOrderReady = async (req, res) => {
     const { user } = req;
     const { id } = req.params;
 
-    console.log('✅ MARK ORDER READY:', {
-      partner_id: user._id,
+    console.log('🍳 MARK ORDER READY:', {
+      partner_user_id: user._id,
       order_id: id
     });
 
-    const result = await markRestaurantOrderReady(id, user._id);
+    // Находим профиль партнера
+    const { PartnerProfile } = await import('../../models/index.js');
+    const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
+    
+    if (!partnerProfile) {
+      return res.status(404).json({
+        result: false,
+        message: "Профиль партнера не найден"
+      });
+    }
+
+    const result = await markRestaurantOrderReady(id, partnerProfile._id);
 
     res.status(200).json({
       result: true,
-      message: "Заказ помечен как готовый",
-      order: result.order,
-      courier_search: result.courierSearch,
-      next_steps: [
-        "Система ищет доступного курьера",
-        "Курьер получит уведомление о готовом заказе",
-        "Ожидайте прибытия курьера"
-      ]
+      message: "Заказ готов! Ожидается курьер.",
+      order: {
+        id: result.order_id,
+        order_number: result.order_number,
+        status: result.status,
+        ready_at: result.ready_at
+      },
+      next_step: result.next_step
     });
 
   } catch (error) {
     console.error('🚨 MARK ORDER READY Error:', error);
     
-    let statusCode = 500;
-    if (error.message.includes('не найден')) {
-      statusCode = 404;
-    } else if (error.message.includes('нельзя пометить')) {
-      statusCode = 400;
-    }
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('доступ') ? 403 : 
+                      error.message.includes('нельзя пометить') ? 400 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -497,8 +611,8 @@ const markOrderReady = async (req, res) => {
 // ================ КУРЬЕРСКИЕ КОНТРОЛЛЕРЫ ================
 
 /**
- * 🚚 ПОЛУЧИТЬ ДОСТУПНЫЕ ЗАКАЗЫ
- * GET /api/orders/courier/available
+ * 📋 ПОЛУЧИТЬ ДОСТУПНЫЕ ЗАКАЗЫ
+ * GET /api/orders/available
  */
 const getAvailableOrders = async (req, res) => {
   try {
@@ -509,13 +623,14 @@ const getAvailableOrders = async (req, res) => {
       radius = 10 
     } = req.query;
 
-    console.log('🚚 GET AVAILABLE ORDERS:', {
-      courier_id: user._id,
+    console.log('📋 GET AVAILABLE ORDERS:', {
+      courier_user_id: user._id,
       lat,
       lng,
       radius
     });
 
+    // Валидация координат
     if (!lat || !lng) {
       return res.status(400).json({
         result: false,
@@ -523,7 +638,18 @@ const getAvailableOrders = async (req, res) => {
       });
     }
 
-    const result = await getAvailableOrdersForCourier(user._id, {
+    // Находим профиль курьера
+    const { CourierProfile } = await import('../../models/index.js');
+    const courierProfile = await CourierProfile.findOne({ user_id: user._id });
+    
+    if (!courierProfile) {
+      return res.status(404).json({
+        result: false,
+        message: "Профиль курьера не найден"
+      });
+    }
+
+    const result = await getAvailableOrdersForCourier(courierProfile._id, {
       lat: parseFloat(lat),
       lng: parseFloat(lng),
       radius: parseFloat(radius)
@@ -531,12 +657,10 @@ const getAvailableOrders = async (req, res) => {
 
     res.status(200).json({
       result: true,
-      message: `Найдено ${result.orders.length} доступных заказов`,
-      orders: result.orders,
-      search_area: {
-        center: { lat: parseFloat(lat), lng: parseFloat(lng) },
-        radius_km: parseFloat(radius)
-      }
+      message: `Найдено ${result.available_orders.length} доступных заказов`,
+      orders: result.available_orders,
+      total: result.total,
+      location_filter: result.location_filter
     });
 
   } catch (error) {
@@ -558,18 +682,32 @@ const acceptDelivery = async (req, res) => {
     const { id } = req.params;
 
     console.log('📦 ACCEPT DELIVERY:', {
-      courier_id: user._id,
+      courier_user_id: user._id,
       order_id: id
     });
 
-    const result = await acceptOrderForDelivery(id, user._id);
+    // Находим профиль курьера
+    const { CourierProfile } = await import('../../models/index.js');
+    const courierProfile = await CourierProfile.findOne({ user_id: user._id });
+    
+    if (!courierProfile) {
+      return res.status(404).json({
+        result: false,
+        message: "Профиль курьера не найден"
+      });
+    }
+
+    const result = await acceptOrderForDelivery(id, courierProfile._id);
 
     res.status(200).json({
       result: true,
       message: "Заказ взят на доставку",
-      order: result.order,
-      restaurant: result.restaurant,
-      route: result.route,
+      order: {
+        id: result.order_id,
+        order_number: result.order_number,
+        status: result.status
+      },
+      partner_info: result.partner_info,
       next_steps: [
         "Направляйтесь к ресторану",
         "Заберите заказ у ресторана",
@@ -580,13 +718,9 @@ const acceptDelivery = async (req, res) => {
   } catch (error) {
     console.error('🚨 ACCEPT DELIVERY Error:', error);
     
-    let statusCode = 500;
-    if (error.message.includes('не найден')) {
-      statusCode = 404;
-    } else if (error.message.includes('уже взят') || 
-               error.message.includes('нельзя взять')) {
-      statusCode = 400;
-    }
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('уже взят') || 
+                      error.message.includes('активный заказ') ? 400 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -605,18 +739,33 @@ const markOrderPickedUp = async (req, res) => {
     const { id } = req.params;
 
     console.log('📍 MARK ORDER PICKED UP:', {
-      courier_id: user._id,
+      courier_user_id: user._id,
       order_id: id
     });
 
-    const result = await markOrderPickedUpByCourier(id, user._id);
+    // Находим профиль курьера
+    const { CourierProfile } = await import('../../models/index.js');
+    const courierProfile = await CourierProfile.findOne({ user_id: user._id });
+    
+    if (!courierProfile) {
+      return res.status(404).json({
+        result: false,
+        message: "Профиль курьера не найден"
+      });
+    }
+
+    const result = await markOrderPickedUpByCourier(id, courierProfile._id);
 
     res.status(200).json({
       result: true,
       message: "Заказ забран у ресторана",
-      order: result.order,
-      customer: result.customer,
-      route_to_customer: result.routeToCustomer,
+      order: {
+        id: result.order_id,
+        order_number: result.order_number,
+        status: result.status,
+        picked_up_at: result.picked_up_at
+      },
+      customer_info: result.customer_info,
       next_steps: [
         "Направляйтесь к клиенту",
         "Доставьте заказ по указанному адресу",
@@ -627,12 +776,9 @@ const markOrderPickedUp = async (req, res) => {
   } catch (error) {
     console.error('🚨 MARK ORDER PICKED UP Error:', error);
     
-    let statusCode = 500;
-    if (error.message.includes('не найден')) {
-      statusCode = 404;
-    } else if (error.message.includes('нельзя забрать')) {
-      statusCode = 400;
-    }
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('доступ') ? 403 : 
+                      error.message.includes('нельзя забрать') ? 400 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -652,31 +798,43 @@ const markOrderDelivered = async (req, res) => {
     const { delivery_notes = '' } = req.body;
 
     console.log('🎯 MARK ORDER DELIVERED:', {
-      courier_id: user._id,
+      courier_user_id: user._id,
       order_id: id,
       has_notes: !!delivery_notes
     });
 
-    const result = await markOrderDeliveredByCourier(id, user._id, delivery_notes.trim());
+    // Находим профиль курьера
+    const { CourierProfile } = await import('../../models/index.js');
+    const courierProfile = await CourierProfile.findOne({ user_id: user._id });
+    
+    if (!courierProfile) {
+      return res.status(404).json({
+        result: false,
+        message: "Профиль курьера не найден"
+      });
+    }
+
+    const result = await markOrderDeliveredByCourier(id, courierProfile._id);
 
     res.status(200).json({
       result: true,
       message: "Заказ успешно доставлен!",
-      order: result.order,
-      delivery_summary: result.deliverySummary,
-      earnings: result.earnings,
+      order: {
+        id: result.order_id,
+        order_number: result.order_number,
+        status: result.status,
+        delivered_at: result.delivered_at,
+        actual_delivery_time: result.actual_delivery_time
+      },
       completion_message: "Отличная работа! Заказ доставлен."
     });
 
   } catch (error) {
     console.error('🚨 MARK ORDER DELIVERED Error:', error);
     
-    let statusCode = 500;
-    if (error.message.includes('не найден')) {
-      statusCode = 404;
-    } else if (error.message.includes('нельзя пометить')) {
-      statusCode = 400;
-    }
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('доступ') ? 403 : 
+                      error.message.includes('нельзя пометить') ? 400 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -686,48 +844,40 @@ const markOrderDelivered = async (req, res) => {
 };
 
 /**
- * 📋 ПОЛУЧИТЬ МОИ ЗАКАЗЫ (КУРЬЕР)
- * GET /api/orders/courier/my
+ * 🚴 ПОЛУЧИТЬ АКТИВНЫЕ ЗАКАЗЫ КУРЬЕРА
+ * GET /api/orders/courier/active
  */
 const getCourierOrders = async (req, res) => {
   try {
     const { user } = req;
-    const { 
-      status, 
-      limit = 20, 
-      offset = 0 
-    } = req.query;
 
-    console.log('📋 GET COURIER ORDERS:', {
-      courier_id: user._id,
-      status,
-      limit
-    });
+    console.log('🚴 GET COURIER ORDERS:', { courier_user_id: user._id });
 
-    const result = await getCourierActiveOrders(user._id, {
-      status,
-      limit: parseInt(limit),
-      offset: parseInt(offset)
-    });
+    // Находим профиль курьера
+    const { CourierProfile } = await import('../../models/index.js');
+    const courierProfile = await CourierProfile.findOne({ user_id: user._id });
+    
+    if (!courierProfile) {
+      return res.status(404).json({
+        result: false,
+        message: "Профиль курьера не найден"
+      });
+    }
+
+    const result = await getCourierActiveOrders(courierProfile._id);
 
     res.status(200).json({
       result: true,
-      message: "Заказы курьера получены",
-      orders: result.orders,
-      total: result.total,
-      summary: result.summary,
-      pagination: {
-        limit: parseInt(limit),
-        offset: parseInt(offset),
-        has_more: result.total > (parseInt(offset) + parseInt(limit))
-      }
+      message: "Активные заказы курьера получены",
+      active_orders: result.active_orders,
+      total: result.total
     });
 
   } catch (error) {
     console.error('🚨 GET COURIER ORDERS Error:', error);
     res.status(500).json({
       result: false,
-      message: error.message || "Ошибка получения заказов курьера"
+      message: error.message || "Ошибка получения активных заказов"
     });
   }
 };
@@ -735,31 +885,50 @@ const getCourierOrders = async (req, res) => {
 // ================ ОБЩИЕ КОНТРОЛЛЕРЫ ================
 
 /**
- * 👀 ОТСЛЕДИТЬ ЗАКАЗ
- * GET /api/orders/:id/track
+ * 🔍 ОТСЛЕЖИВАНИЕ ЗАКАЗА (публичный доступ по номеру заказа)
+ * GET /api/orders/track/:orderNumber
  */
 const trackOrder = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { orderNumber } = req.params;
+    const userId = req.user?._id || null; // Опционально для авторизованных пользователей
 
-    console.log('👀 TRACK ORDER:', { order_id: id });
+    console.log('🔍 TRACK ORDER:', { orderNumber, userId });
 
-    const result = await trackOrderStatus(id);
+    // Находим заказ по номеру
+    const { Order } = await import('../../models/index.js');
+    const order = await Order.findOne({ order_number: orderNumber });
+    
+    if (!order) {
+      return res.status(404).json({
+        result: false,
+        message: "Заказ с таким номером не найден"
+      });
+    }
+
+    const result = await trackOrderStatus(order._id, userId);
 
     res.status(200).json({
       result: true,
-      message: "Отслеживание заказа",
-      order: result.order,
-      timeline: result.timeline,
-      current_status: result.currentStatus,
-      estimated_delivery: result.estimatedDelivery,
-      can_track: true
+      message: "Информация о заказе получена",
+      tracking: {
+        order_number: result.order_number,
+        status: result.status,
+        status_description: result.status_description,
+        progress: result.progress,
+        next_step: result.next_step,
+        estimated_delivery_time: result.estimated_delivery_time,
+        created_at: result.created_at
+      },
+      partner_info: result.partner_info,
+      courier_info: result.courier_info
     });
 
   } catch (error) {
     console.error('🚨 TRACK ORDER Error:', error);
     
-    const statusCode = error.message.includes('не найден') ? 404 : 500;
+    const statusCode = error.message.includes('не найден') ? 404 : 
+                      error.message.includes('доступ') ? 403 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -769,7 +938,7 @@ const trackOrder = async (req, res) => {
 };
 
 /**
- * ℹ️ ПОЛУЧИТЬ СТАТУС ЗАКАЗА
+ * ℹ️ ПОЛУЧИТЬ ТОЛЬКО СТАТУС ЗАКАЗА (быстрый метод)
  * GET /api/orders/:id/status
  */
 const getOrderStatus = async (req, res) => {
@@ -783,10 +952,15 @@ const getOrderStatus = async (req, res) => {
     res.status(200).json({
       result: true,
       message: "Статус заказа получен",
-      status: result.status,
-      status_description: result.statusDescription,
-      estimated_delivery: result.estimatedDelivery,
-      last_update: result.lastUpdate
+      status: {
+        order_id: result.order_id,
+        order_number: result.order_number,
+        status: result.status,
+        status_description: result.status_description,
+        progress: result.progress,
+        estimated_delivery_time: result.estimated_delivery_time,
+        actual_delivery_time: result.actual_delivery_time
+      }
     });
 
   } catch (error) {
@@ -801,27 +975,30 @@ const getOrderStatus = async (req, res) => {
   }
 };
 
+// ================ ЭКСПОРТ КОНТРОЛЛЕРОВ ================
 
 export {
-        createOrder,
-        getMyOrders,
-        getOrderById,    // КЛИЕНТСКИЕ КОНТРОЛЛЕРЫ
-        cancelOrder,
-        rateOrder,
-
-        getPartnerOrders,
-        acceptOrder,
-        rejectOrder,    // ПАРТНЕРСКИЕ КОНТРОЛЛЕРЫ
-        markOrderReady,
-
-        getAvailableOrders,
-        acceptDelivery,
-        markOrderPickedUp,  // КУРЬЕРСКИЕ КОНТРОЛЛЕРЫ
-        markOrderDelivered,
-        getCourierOrders,
-
-        trackOrder,      // ОБЩИЕ КОНТРОЛЛЕРЫ
-        getOrderStatus
-
-
-}
+  // Клиентские контроллеры
+  createOrder,
+  getMyOrders,
+  getOrderById,
+  cancelOrder,
+  rateOrder,
+  
+  // Партнерские контроллеры  
+  getPartnerOrders,
+  acceptOrder,
+  rejectOrder,
+  markOrderReady,
+  
+  // Курьерские контроллеры
+  getAvailableOrders,
+  acceptDelivery,
+  markOrderPickedUp,
+  markOrderDelivered,
+  getCourierOrders,
+  
+  // Общие контроллеры
+  trackOrder,
+  getOrderStatus
+};

@@ -1,4 +1,4 @@
-// app.js (ПОЛНЫЙ с поддержкой сессий и всеми изменениями)
+// app.js (ПОЛНЫЙ с поддержкой сессий и автоочисткой)
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -11,6 +11,9 @@ import mongoSanitize from 'express-mongo-sanitize';
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
 
+// 🆕 ИМПОРТ СИСТЕМЫ АВТООЧИСТКИ
+import cleanupService from './services/System/cleanup.service.js';
+
 import config from './config/app.js';
 import connectDB from './config/database.js';
 import { requestLogger, startupLogger } from './middleware/logger.js';
@@ -20,9 +23,37 @@ import initOwnerAccount from './services/initOwner.service.js';
 
 const app = express();
 
-// Подключение к базе данных и инициализация системы
-connectDB().then(() => {
-  initOwnerAccount(); 
+// 🧹 ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ И ИНИЦИАЛИЗАЦИЯ АВТООЧИСТКИ
+connectDB().then(async () => {
+  initOwnerAccount();
+  
+  // ✅ ЗАПУСК СИСТЕМЫ АВТООЧИСТКИ
+  try {
+    console.log('🚀 Initializing cleanup system...');
+    
+    // Проверяем состояние системы
+    const healthCheck = await cleanupService.getSystemHealthCheck();
+    console.log('📊 System health:', {
+      expired_carts: healthCheck.expired_carts,
+      expired_pending_orders: healthCheck.expired_pending_orders,
+      needs_cleanup: healthCheck.needs_cleanup
+    });
+    
+    // Выполняем начальную очистку если нужно
+    if (healthCheck.needs_cleanup) {
+      console.log('🧹 Running initial cleanup...');
+      await cleanupService.cleanupExpiredData();
+    }
+    
+    // Запускаем планировщик (каждые 30 минут)
+    cleanupService.setupCleanupScheduler();
+    
+    console.log('✅ Cleanup system active - running every 30 minutes');
+    
+  } catch (error) {
+    console.error('🚨 Cleanup system initialization failed:', error);
+    // Продолжаем работу сервера даже если автоочистка не запустилась
+  }
 });
 
 // 🆕 НАСТРОЙКА СЕССИЙ ДЛЯ КОРЗИНЫ
@@ -133,7 +164,8 @@ app.get('/health', (req, res) => {
       shopping_cart: 'enabled', 
       public_catalog: 'enabled',
       payment_stub: 'enabled',
-      sessions: 'enabled'
+      sessions: 'enabled',
+      auto_cleanup: 'enabled' // ✅ ДОБАВЛЕНО
     },
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
@@ -152,6 +184,43 @@ app.use((req, res, next) => {
 // Основные API роуты
 app.use(config.API_PREFIX, routes);
 
+// 🔧 РОУТЫ ДЛЯ УПРАВЛЕНИЯ АВТООЧИСТКОЙ
+app.get('/api/admin/system/health', async (req, res) => {
+  try {
+    const healthCheck = await cleanupService.getSystemHealthCheck();
+    res.json({
+      result: true,
+      health: healthCheck,
+      message: 'Состояние системы получено'
+    });
+  } catch (error) {
+    res.status(500).json({
+      result: false,
+      message: error.message
+    });
+  }
+});
+
+app.post('/api/admin/system/cleanup/:type?', async (req, res) => {
+  try {
+    const { type = 'all' } = req.params;
+    
+    console.log(`🔧 Manual cleanup requested: ${type}`);
+    const result = await cleanupService.forceCleanupByType(type);
+    
+    res.json({
+      result: true,
+      message: `Принудительная очистка '${type}' выполнена`,
+      cleanup_result: result
+    });
+  } catch (error) {
+    res.status(500).json({
+      result: false,
+      message: error.message
+    });
+  }
+});
+
 // Главная страница с информацией о системе заказов
 app.get('/', (req, res) => {
   res.json({
@@ -159,7 +228,7 @@ app.get('/', (req, res) => {
     message: 'ESARGO API Server - UberEats Style Food Delivery Platform',
     version: '2.1.0',
     environment: config.NODE_ENV,
-    architecture: 'Service Layer + Meta Security Model + Full Order Management System',
+    architecture: 'Service Layer + Meta Security Model + Full Order Management System + Auto Cleanup',
     
     // 🆕 ПОЛНАЯ ИНФОРМАЦИЯ О СИСТЕМЕ ЗАКАЗОВ
     order_system: {
@@ -171,7 +240,20 @@ app.get('/', (req, res) => {
         'Real-time order tracking',
         'Payment processing (stub)',
         'Rating and review system',
-        'Delivery tracking'
+        'Delivery tracking',
+        'Automatic cleanup of expired data' // ✅ ДОБАВЛЕНО
+      ]
+    },
+    
+    // 🧹 ИНФОРМАЦИЯ ОБ АВТООЧИСТКЕ
+    cleanup_system: {
+      status: 'active',
+      schedule: 'every 30 minutes',
+      deep_cleanup: 'daily at 3:00 AM',
+      targets: [
+        'Expired shopping carts (>24h)',
+        'Pending orders (>30min)',
+        'Old reservation history (>30 days)'
       ]
     },
     
@@ -197,7 +279,11 @@ app.get('/', (req, res) => {
       courier_orders: config.API_PREFIX + '/orders/courier',
       
       // Административные эндпоинты
-      admin: config.API_PREFIX + '/admin'
+      admin: config.API_PREFIX + '/admin',
+      
+      // 🧹 ЭНДПОИНТЫ АВТООЧИСТКИ
+      system_health: '/api/admin/system/health',
+      manual_cleanup: '/api/admin/system/cleanup/:type'
     },
     
     // 🆕 WORKFLOW ЗАКАЗА
@@ -230,6 +316,19 @@ app.get('/', (req, res) => {
 app.use(notFound);
 app.use(errorHandler);
 
+// 🛑 GRACEFUL SHUTDOWN - обработчики сигналов
+process.on('SIGTERM', async () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully...');
+  cleanupService.stopCleanupScheduler();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('🛑 SIGINT received, shutting down gracefully...');
+  cleanupService.stopCleanupScheduler();
+  process.exit(0);
+});
+
 // Запуск сервера
 const PORT = config.PORT || 3000;
 
@@ -239,12 +338,15 @@ app.listen(PORT, () => {
   startupLogger(`🔗 API Base: ${config.API_PREFIX}`);
   startupLogger(`🛒 Shopping cart sessions: enabled`);
   startupLogger(`📦 Order management system: fully operational`);
+  startupLogger(`🧹 Auto-cleanup system: active (every 30 min)`);
   
   if (config.NODE_ENV === 'development') {
     startupLogger(`📖 API Documentation: http://localhost:${PORT}`);
     startupLogger(`🏪 Public catalog: http://localhost:${PORT}${config.API_PREFIX}/public/catalog`);
     startupLogger(`🛒 Cart API: http://localhost:${PORT}${config.API_PREFIX}/cart`);
     startupLogger(`📦 Orders API: http://localhost:${PORT}${config.API_PREFIX}/orders`);
+    startupLogger(`🧹 System health: http://localhost:${PORT}/api/admin/system/health`);
+    startupLogger(`🔧 Manual cleanup: POST http://localhost:${PORT}/api/admin/system/cleanup/all`);
   }
 });
 

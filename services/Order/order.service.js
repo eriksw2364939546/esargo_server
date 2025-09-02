@@ -19,7 +19,7 @@ function getReasonText(reason) {
 }
 
 /**
- * Расчет времени доставки
+ * Расчет времени доставки - ИСПРАВЛЕНО
  */
 function calculateEstimatedDeliveryTime(delivery_address, restaurant_location, restaurant_delivery_info) {
   let baseTime = 30; // минут
@@ -28,15 +28,29 @@ function calculateEstimatedDeliveryTime(delivery_address, restaurant_location, r
     baseTime = restaurant_delivery_info.base_delivery_time;
   }
   
+  // Проверяем наличие координат для расчета расстояния
+  if (!delivery_address || !delivery_address.lat || !delivery_address.lng) {
+    console.warn('⚠️ NO DELIVERY COORDINATES - using base time only');
+    return baseTime;
+  }
+  
   // Добавляем время в зависимости от расстояния
   const distance = calculateDistance(
-    restaurant_location?.coordinates?.[1] || 48.8566,
-    restaurant_location?.coordinates?.[0] || 2.3522,
+    restaurant_location?.coordinates?.[1] || 48.8566, // lat ресторана
+    restaurant_location?.coordinates?.[0] || 2.3522,  // lng ресторана
     delivery_address.lat,
     delivery_address.lng
   );
   
   const extraTime = Math.round(distance * 2); // 2 минуты на км
+  
+  console.log('🕒 DELIVERY TIME CALCULATED:', {
+    base_time: baseTime,
+    distance_km: Math.round(distance * 10) / 10,
+    extra_time: extraTime,
+    total_time: baseTime + extraTime
+  });
+  
   return baseTime + extraTime;
 }
 
@@ -292,6 +306,19 @@ export const createOrderFromCart = async (customerId, orderData) => {
     const { delivery_address, customer_contact, payment_method = 'cash', special_requests = '' } = orderData;
 
     console.log('🆕 CREATE ORDER FROM CART:', { customerId, payment_method });
+
+    // ✅ ВАЛИДАЦИЯ ВХОДНЫХ ДАННЫХ
+    if (!delivery_address || !delivery_address.address) {
+      throw new Error('Адрес доставки обязателен');
+    }
+
+    if (!delivery_address.lat || !delivery_address.lng) {
+      throw new Error('Координаты адреса доставки обязательны');
+    }
+
+    if (!customer_contact || !customer_contact.name || !customer_contact.phone) {
+      throw new Error('Контактная информация (имя и телефон) обязательна');
+    }
 
     // 1. Найти активную корзину
     const cart = await Cart.findActiveCart(customerId).session(session);
