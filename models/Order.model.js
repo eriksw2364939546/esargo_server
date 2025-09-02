@@ -1,4 +1,4 @@
-// models/Order.model.js - ПОЛНАЯ ИСПРАВЛЕННАЯ модель заказов
+// models/Order.model.js - ПОЛНАЯ модель заказов с добавлением валидации доступности
 import mongoose from 'mongoose';
 
 const orderSchema = new mongoose.Schema({
@@ -76,6 +76,56 @@ const orderSchema = new mongoose.Schema({
       type: String,
       trim: true,
       maxlength: 200
+    }
+  }],
+
+  // ДОБАВЛЕННЫЕ ПОЛЯ ДЛЯ ВАЛИДАЦИИ ДОСТУПНОСТИ ТОВАРОВ
+  availability_validation: {
+    validated_at: {
+      type: Date,
+      default: Date.now
+    },
+    unavailable_items: [{
+      product_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: true
+      },
+      title: {
+        type: String,
+        required: true
+      },
+      reason: {
+        type: String,
+        enum: ['product_deactivated', 'out_of_stock', 'time_restricted', 'partner_unavailable'],
+        required: true
+      },
+      detected_at: {
+        type: Date,
+        default: Date.now
+      }
+    }],
+    validation_status: {
+      type: String,
+      enum: ['valid', 'has_issues', 'critical_issues'],
+      default: 'valid'
+    }
+  },
+
+  // ДОБАВЛЕННЫЕ ПОЛЯ: Снимок товаров на момент заказа
+  items_snapshot: [{
+    product_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true
+    },
+    availability_at_order: {
+      is_active: Boolean,
+      is_available: Boolean,
+      stock_quantity: Number,
+      availability_schedule: mongoose.Schema.Types.Mixed
+    },
+    captured_at: {
+      type: Date,
+      default: Date.now
     }
   }],
   
@@ -183,15 +233,43 @@ const orderSchema = new mongoose.Schema({
     index: true
   },
   
-  // История изменений статуса
+  // Временные метки
+  estimated_delivery_time: {
+    type: Date,
+    required: true
+  },
+  actual_delivery_time: {
+    type: Number // в минутах от создания заказа
+  },
+  accepted_at: Date,
+  ready_at: Date,
+  picked_up_at: Date,
+  delivered_at: Date,
+  cancelled_at: Date,
+  
+  // Платежная информация
+  payment_method: {
+    type: String,
+    enum: ['card', 'cash'],
+    required: true
+  },
+  payment_status: {
+    type: String,
+    enum: ['pending', 'processing', 'completed', 'failed', 'refunded'],
+    default: 'pending',
+    index: true
+  },
+  payment_details: {
+    transaction_id: String,
+    payment_processor: String,
+    gateway_response: mongoose.Schema.Types.Mixed
+  },
+  
+  // История статусов
   status_history: [{
     status: {
       type: String,
-      required: true,
-      enum: [
-        'pending', 'accepted', 'preparing', 'ready', 
-        'picked_up', 'on_the_way', 'delivered', 'cancelled'
-      ]
+      required: true
     },
     timestamp: {
       type: Date,
@@ -204,7 +282,6 @@ const orderSchema = new mongoose.Schema({
     },
     user_role: {
       type: String,
-      required: true,
       enum: ['customer', 'partner', 'courier', 'admin']
     },
     notes: {
@@ -214,77 +291,17 @@ const orderSchema = new mongoose.Schema({
     }
   }],
   
-  // Временные метки
-  estimated_delivery_time: {
-    type: Date,
-    required: true,
-    index: true
-  },
-  actual_delivery_time: {
-    type: Number, // в минутах
-    min: 0
-  },
-  
-  // Время выполнения этапов
-  accepted_at: Date,
-  ready_at: Date,
-  picked_up_at: Date,
-  delivered_at: Date,
-  cancelled_at: Date,
-  
-  // Платежная информация
-  payment_method: {
-    type: String,
-    required: true,
-    enum: ['card', 'cash', 'apple_pay', 'google_pay'],
-    default: 'card'
-  },
-  payment_status: {
-    type: String,
-    required: true,
-    enum: ['pending', 'processing', 'completed', 'failed', 'refunded'],
-    default: 'pending',
-    index: true
-  },
-  payment_details: {
-    transaction_id: String,
-    payment_gateway: String,
-    gateway_response: String,
-    processed_at: Date,
-    fee_amount: Number
-  },
-  
-  // Информация о возврате средств
-  refund_info: {
-    refunded_at: Date,
-    refund_amount: Number,
-    refund_transaction_id: String,
-    refund_reason: String,
-    status: {
-      type: String,
-      enum: ['pending', 'completed', 'failed']
-    }
-  },
-  
   // Информация об отмене
-  cancellation_info: {
+  cancellation: {
     reason: {
       type: String,
-      enum: [
-        'customer_request',
-        'partner_unavailable',
-        'courier_unavailable',
-        'payment_failed',
-        'restaurant_closed',
-        'address_unreachable',
-        'admin_action',
-        'other'
-      ]
+      trim: true
     },
     cancelled_by: {
-      type: mongoose.Schema.Types.ObjectId
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
     },
-    cancelled_by_role: {
+    user_role: {
       type: String,
       enum: ['customer', 'partner', 'courier', 'admin']
     },
@@ -363,7 +380,7 @@ orderSchema.index({ 'delivery_address.lat': 1, 'delivery_address.lng': 1 });
 // ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
 /**
- * 📝 Добавление записи в историю статусов
+ * Добавление записи в историю статусов
  */
 orderSchema.methods.addStatusHistory = function(newStatus, updatedBy, userRole, notes = '') {
   this.status_history.push({
@@ -390,7 +407,7 @@ orderSchema.methods.addStatusHistory = function(newStatus, updatedBy, userRole, 
       break;
     case 'delivered':
       this.delivered_at = now;
-      this.calculateActualDeliveryTime();
+      this.actual_delivery_time = Math.round((now - this.createdAt) / (1000 * 60));
       break;
     case 'cancelled':
       this.cancelled_at = now;
@@ -401,91 +418,95 @@ orderSchema.methods.addStatusHistory = function(newStatus, updatedBy, userRole, 
 };
 
 /**
- * ⏱️ Расчет фактического времени доставки
+ * НОВЫЙ МЕТОД: Валидация доступности товаров в заказе
  */
-orderSchema.methods.calculateActualDeliveryTime = function() {
-  if (this.delivered_at && this.createdAt) {
-    this.actual_delivery_time = Math.round(
-      (this.delivered_at - this.createdAt) / (1000 * 60) // в минутах
-    );
+orderSchema.methods.validateItemsAvailability = async function() {
+  const Product = mongoose.model('Product');
+  const unavailableItems = [];
+  
+  for (const orderItem of this.items) {
+    const currentProduct = await Product.findById(orderItem.product_id);
+    
+    if (!currentProduct) {
+      unavailableItems.push({
+        product_id: orderItem.product_id,
+        title: orderItem.title,
+        reason: 'product_deactivated'
+      });
+      continue;
+    }
+
+    // Проверяем базовую доступность
+    if (!currentProduct.is_active || !currentProduct.is_available) {
+      unavailableItems.push({
+        product_id: orderItem.product_id,
+        title: orderItem.title,
+        reason: 'product_deactivated'
+      });
+      continue;
+    }
+
+    // Проверяем складские остатки для магазинов
+    if (currentProduct.category === 'store' && currentProduct.stock_quantity !== undefined) {
+      if (currentProduct.stock_quantity < orderItem.quantity) {
+        unavailableItems.push({
+          product_id: orderItem.product_id,
+          title: orderItem.title,
+          reason: 'out_of_stock'
+        });
+        continue;
+      }
+    }
+
+    // Проверяем временные ограничения
+    if (currentProduct.isAvailableNow && !currentProduct.isAvailableNow()) {
+      unavailableItems.push({
+        product_id: orderItem.product_id,
+        title: orderItem.title,
+        reason: 'time_restricted'
+      });
+    }
   }
+
+  // Обновляем статус валидации
+  this.availability_validation = {
+    validated_at: new Date(),
+    unavailable_items: unavailableItems,
+    validation_status: unavailableItems.length === 0 ? 'valid' : 
+                      unavailableItems.length < this.items.length ? 'has_issues' : 'critical_issues'
+  };
+
+  await this.save();
+  return unavailableItems;
 };
 
 /**
- * ❌ Отмена заказа
+ * Отмена заказа
  */
-orderSchema.methods.cancelOrder = function(reason, cancelledBy, cancelledByRole, details = '') {
-  this.status = 'cancelled';
-  this.cancelled_at = new Date();
-  this.cancellation_info = {
-    reason,
+orderSchema.methods.cancelOrder = function(reason, cancelledBy, userRole, details = '') {
+  this.cancellation = {
+    reason: reason,
     cancelled_by: cancelledBy,
-    cancelled_by_role: cancelledByRole,
-    details
+    user_role: userRole,
+    details: details
   };
   
-  this.addStatusHistory('cancelled', cancelledBy, cancelledByRole, details);
-  
-  return this.save();
+  return this.addStatusHistory('cancelled', cancelledBy, userRole, `Заказ отменен: ${reason}`);
 };
 
 /**
- * 🚴 Назначение курьера
+ * Расчет общей стоимости заказа
  */
-orderSchema.methods.assignCourier = function(courierId) {
-  this.courier_id = courierId;
-  return this.save();
+orderSchema.methods.calculateTotal = function() {
+  this.subtotal = this.items.reduce((sum, item) => sum + item.item_total, 0);
+  this.total_price = this.subtotal + this.delivery_fee + this.service_fee - this.discount_amount + this.tax_amount;
+  return this.total_price;
 };
 
 /**
- * ⭐ Добавление рейтинга партнера
+ * Получить оставшееся время доставки
  */
-orderSchema.methods.ratePartner = function(rating) {
-  if (this.status !== 'delivered') {
-    throw new Error('Можно оценить только доставленный заказ');
-  }
-  
-  this.ratings.partner_rating = rating;
-  this.ratings.rated_at = new Date();
-  
-  return this.save();
-};
-
-/**
- * ⭐ Добавление рейтинга курьера
- */
-orderSchema.methods.rateCourier = function(rating) {
-  if (this.status !== 'delivered') {
-    throw new Error('Можно оценить только доставленный заказ');
-  }
-  
-  this.ratings.courier_rating = rating;
-  this.ratings.rated_at = new Date();
-  
-  return this.save();
-};
-
-/**
- * 🚫 Проверка можно ли отменить заказ
- */
-orderSchema.methods.canBeCancelled = function() {
-  return ['pending', 'accepted', 'preparing'].includes(this.status);
-};
-
-/**
- * ⏰ Проверка просрочен ли заказ
- */
-orderSchema.methods.isOverdue = function() {
-  if (!this.estimated_delivery_time || this.status === 'delivered' || this.status === 'cancelled') {
-    return false;
-  }
-  return new Date() > this.estimated_delivery_time;
-};
-
-/**
- * ⏳ Расчет времени до доставки
- */
-orderSchema.methods.getTimeToDelivery = function() {
+orderSchema.methods.getRemainingDeliveryTime = function() {
   if (!this.estimated_delivery_time || this.status === 'delivered' || this.status === 'cancelled') {
     return null;
   }
@@ -497,7 +518,7 @@ orderSchema.methods.getTimeToDelivery = function() {
 // ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
 /**
- * 🔢 Генерация уникального номера заказа - ИСПРАВЛЕНО
+ * Генерация уникального номера заказа
  */
 orderSchema.statics.generateOrderNumber = async function() {
   const today = new Date();
@@ -522,7 +543,7 @@ orderSchema.statics.generateOrderNumber = async function() {
 };
 
 /**
- * 🔍 Поиск заказов клиента
+ * Поиск заказов клиента
  */
 orderSchema.statics.findByCustomer = function(customerId, status = null) {
   const filter = { customer_id: customerId };
@@ -533,7 +554,7 @@ orderSchema.statics.findByCustomer = function(customerId, status = null) {
 };
 
 /**
- * 🏪 Поиск заказов партнера
+ * Поиск заказов партнера
  */
 orderSchema.statics.findByPartner = function(partnerId, status = null) {
   const filter = { partner_id: partnerId };
@@ -544,7 +565,7 @@ orderSchema.statics.findByPartner = function(partnerId, status = null) {
 };
 
 /**
- * 🚴 Поиск заказов курьера
+ * Поиск заказов курьера
  */
 orderSchema.statics.findByCourier = function(courierId, status = null) {
   const filter = { courier_id: courierId };
@@ -555,7 +576,7 @@ orderSchema.statics.findByCourier = function(courierId, status = null) {
 };
 
 /**
- * 📍 Поиск доступных заказов для курьеров
+ * Поиск доступных заказов для курьеров
  */
 orderSchema.statics.findAvailableOrders = function(lat, lng, radiusKm = 10) {
   const radiusInDegrees = radiusKm / 111; // Примерное преобразование км в градусы
@@ -575,7 +596,7 @@ orderSchema.statics.findAvailableOrders = function(lat, lng, radiusKm = 10) {
 };
 
 /**
- * 📊 Статистика заказов за период
+ * Статистика заказов за период
  */
 orderSchema.statics.getStatsForPeriod = function(startDate, endDate, partnerId = null) {
   const matchFilter = {
@@ -607,14 +628,14 @@ orderSchema.statics.getStatsForPeriod = function(startDate, endDate, partnerId =
 };
 
 /**
- * 🔍 Поиск заказа по номеру
+ * Поиск заказа по номеру
  */
 orderSchema.statics.findByOrderNumber = function(orderNumber) {
   return this.findOne({ order_number: orderNumber });
 };
 
 /**
- * 📈 Получить популярные товары
+ * Получить популярные товары
  */
 orderSchema.statics.getPopularItems = function(partnerId = null, limit = 10) {
   const matchFilter = { status: 'delivered' };
@@ -640,7 +661,7 @@ orderSchema.statics.getPopularItems = function(partnerId = null, limit = 10) {
 };
 
 /**
- * 🕐 Получить заказы по временному интервалу
+ * Получить заказы по временному интервалу
  */
 orderSchema.statics.findByTimeRange = function(startTime, endTime, status = null) {
   const filter = {
@@ -655,12 +676,12 @@ orderSchema.statics.findByTimeRange = function(startTime, endTime, status = null
 };
 
 /**
- * 💰 Расчет выручки за период
+ * Расчет выручки за период
  */
 orderSchema.statics.calculateRevenue = function(startDate, endDate, partnerId = null) {
   const matchFilter = {
-    createdAt: { $gte: startDate, $lte: endDate },
-    status: 'delivered'
+    status: 'delivered',
+    createdAt: { $gte: startDate, $lte: endDate }
   };
   
   if (partnerId) {
@@ -674,86 +695,10 @@ orderSchema.statics.calculateRevenue = function(startDate, endDate, partnerId = 
         _id: null,
         total_revenue: { $sum: '$total_price' },
         total_orders: { $sum: 1 },
-        avg_order_value: { $avg: '$total_price' },
-        total_delivery_fees: { $sum: '$delivery_fee' },
-        total_service_fees: { $sum: '$service_fee' }
+        avg_order_value: { $avg: '$total_price' }
       }
     }
   ]);
 };
 
-// ================ MIDDLEWARE ================
-
-// Pre-save middleware для автоматических действий
-orderSchema.pre('save', function(next) {
-  // Автоматически рассчитываем время доставки при изменении статуса на delivered
-  if (this.isModified('status') && this.status === 'delivered') {
-    this.calculateActualDeliveryTime();
-  }
-  next();
-});
-
-// ================ НАСТРОЙКИ ВИРТУАЛЬНЫХ ПОЛЕЙ ================
-orderSchema.set('toJSON', { virtuals: true });
-orderSchema.set('toObject', { virtuals: true });
-
-// Виртуальное поле для общего количества товаров
-orderSchema.virtual('total_items').get(function() {
-  return this.items.reduce((sum, item) => sum + item.quantity, 0);
-});
-
-// Виртуальное поле для статуса доставки
-orderSchema.virtual('delivery_status').get(function() {
-  const statusMap = {
-    'pending': 'Ожидает подтверждения',
-    'accepted': 'Подтвержден',
-    'preparing': 'Готовится',
-    'ready': 'Готов к выдаче',
-    'picked_up': 'Забран курьером',
-    'on_the_way': 'В пути',
-    'delivered': 'Доставлен',
-    'cancelled': 'Отменен'
-  };
-  
-  return statusMap[this.status] || this.status;
-});
-
-// Виртуальное поле для прогресса заказа (в процентах)
-orderSchema.virtual('progress_percentage').get(function() {
-  const progressMap = {
-    'pending': 10,
-    'accepted': 25,
-    'preparing': 40,
-    'ready': 60,
-    'picked_up': 80,
-    'on_the_way': 90,
-    'delivered': 100,
-    'cancelled': 0
-  };
-  
-  return progressMap[this.status] || 0;
-});
-
-// Виртуальное поле для проверки активности заказа
-orderSchema.virtual('is_active').get(function() {
-  return !['delivered', 'cancelled'].includes(this.status);
-});
-
-// Виртуальное поле для следующего шага
-orderSchema.virtual('next_step').get(function() {
-  const nextStepMap = {
-    'pending': 'Ожидает подтверждения ресторана',
-    'accepted': 'Ресторан готовит заказ',
-    'preparing': 'Заказ готовится',
-    'ready': 'Ищем курьера',
-    'picked_up': 'Курьер направляется к вам',
-    'on_the_way': 'Курьер в пути',
-    'delivered': 'Заказ доставлен',
-    'cancelled': null
-  };
-  
-  return nextStepMap[this.status];
-});
-
-// Экспорт модели
 export default mongoose.model('Order', orderSchema);

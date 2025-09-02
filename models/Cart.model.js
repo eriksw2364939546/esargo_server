@@ -93,26 +93,23 @@ const cartSchema = new mongoose.Schema({
       }
     }],
     
-    // Особые пожелания к товару
+    // Специальные пожелания к товару
     special_requests: {
       type: String,
-      trim: true,
-      maxlength: 200
+      maxlength: 500
     },
     
-    // Стоимость позиции
+    // Ценообразование для этого товара
     item_price: {
       type: Number,
       required: true,
       min: 0
     },
-    
     options_price: {
       type: Number,
       default: 0,
       min: 0
     },
-    
     total_item_price: {
       type: Number,
       required: true,
@@ -125,7 +122,7 @@ const cartSchema = new mongoose.Schema({
     }
   }],
   
-  // Расчет стоимости
+  // Информация о ценах
   pricing: {
     subtotal: {
       type: Number,
@@ -154,33 +151,37 @@ const cartSchema = new mongoose.Schema({
     }
   },
   
-  // Информация о доставке (если рассчитывалась)
+  // Информация о доставке
   delivery_info: {
     address: String,
     lat: Number,
     lng: Number,
     distance_km: Number,
     estimated_delivery_time: Number, // в минутах
+    delivery_fee: Number,
     calculated_at: Date
   },
   
-  // Метаданные
+  // Статус корзины
   status: {
     type: String,
     enum: ['active', 'abandoned', 'converted_to_order'],
-    default: 'active'
+    default: 'active',
+    index: true
   },
   
+  // Время последней активности
   last_activity: {
     type: Date,
     default: Date.now,
     index: true
   },
   
+  // Время истечения корзины (24 часа)
   expires_at: {
     type: Date,
-    default: () => new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 часа
-    index: { expireAfterSeconds: 0 }
+    default: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
+    index: true
   }
 }, {
   timestamps: true
@@ -396,18 +397,19 @@ cartSchema.methods.updateActivity = function() {
 // ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
 /**
- * 🔍 Найти активную корзину пользователя - ИСПРАВЛЕНО
+ * 🔍 Найти активную корзину пользователя - ОКОНЧАТЕЛЬНОЕ ИСПРАВЛЕНИЕ
+ * ПРИОРИТЕТ: customer_id важнее session_id
  */
 cartSchema.statics.findActiveCart = function(customerId, sessionId = null) {
+  // ИСПРАВЛЕНИЕ: Ищем ЛЮБУЮ активную корзину пользователя
+  // Session_id игнорируем, так как он постоянно меняется
   const query = {
     customer_id: customerId,
-    status: 'active'
+    status: 'active',
+    expires_at: { $gt: new Date() }
   };
   
-  if (sessionId) {
-    query.session_id = sessionId;
-  }
-  
+  // Возвращаем самую свежую корзину пользователя
   return this.findOne(query).sort({ last_activity: -1 });
 };
 
