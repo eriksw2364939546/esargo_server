@@ -1,6 +1,7 @@
 // services/System/cleanup.service.js - Сервис автоочистки просроченных данных
 import { Order, Cart, Product } from '../../models/index.js';
 import mongoose from 'mongoose';
+import cron from 'node-cron';
 
 /**
  * 🧹 ОСНОВНАЯ ФУНКЦИЯ АВТООЧИСТКИ
@@ -120,12 +121,42 @@ async function cancelExpiredOrders() {
         }
       }
 
-      // Отменяем заказ
-      await order.cancelOrder(
-        'Автоматическая отмена - превышено время ожидания', 
-        null, 
-        'system', 
-        'Заказ не был подтвержден в течение 30 минут'
+      // Отменяем заказ - ИСПРАВЛЕНО: используем admin ID вместо 'system'
+      const { User } = await import('../../models/index.js');
+      
+      // Находим системного администратора
+      let systemAdmin = await User.findOne({ email: 'admin@admin.com' }).session(session);
+      if (!systemAdmin) {
+        // Если нет админа, используем первого найденного пользователя
+        systemAdmin = await User.findOne({}).session(session);
+      }
+      
+      const adminId = systemAdmin ? systemAdmin._id : new mongoose.Types.ObjectId();
+
+      // Обновляем заказ напрямую через MongoDB для избежания валидации
+      await Order.findByIdAndUpdate(
+        order._id,
+        {
+          $set: {
+            status: 'cancelled',
+            cancelled_at: new Date(),
+            'cancellation.reason': 'Автоматическая отмена - превышено время ожидания',
+            'cancellation.cancelled_by': adminId,
+            'cancellation.user_role': 'admin', // Используем 'admin' instead of 'system'
+            'cancellation.details': 'Заказ не был подтвержден в течение 30 минут',
+            'cancellation.cancelled_at': new Date()
+          },
+          $push: {
+            status_history: {
+              status: 'cancelled',
+              timestamp: new Date(),
+              updated_by: adminId,
+              user_role: 'admin', // Используем 'admin' instead of 'system'
+              comment: 'Автоматическая отмена - превышено время ожидания'
+            }
+          }
+        },
+        { session }
       );
       
       cancelledCount++;
