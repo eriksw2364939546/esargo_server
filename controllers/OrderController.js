@@ -18,6 +18,8 @@ import {
   getOrderStatusOnly
 } from '../services/Order/order.service.js';
 
+import { PartnerProfile, CourierProfile } from '../models/index.js';
+
 // ================ КЛИЕНТСКИЕ КОНТРОЛЛЕРЫ ================
 
 /**
@@ -449,8 +451,7 @@ const acceptOrder = async (req, res) => {
       estimated_preparation_time
     });
 
-    // Находим профиль партнера
-    const { PartnerProfile } = await import('../../models/index.js');
+    // Находим профиль партнера (исправленный импорт)
     const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
     
     if (!partnerProfile) {
@@ -569,8 +570,7 @@ const markOrderReady = async (req, res) => {
       order_id: id
     });
 
-    // Находим профиль партнера
-    const { PartnerProfile } = await import('../../models/index.js');
+    // Находим профиль партнера (убираем динамический импорт)
     const partnerProfile = await PartnerProfile.findOne({ user_id: user._id });
     
     if (!partnerProfile) {
@@ -686,8 +686,7 @@ const acceptDelivery = async (req, res) => {
       order_id: id
     });
 
-    // Находим профиль курьера
-    const { CourierProfile } = await import('../../models/index.js');
+    // Находим профиль курьера (убираем динамический импорт)
     const courierProfile = await CourierProfile.findOne({ user_id: user._id });
     
     if (!courierProfile) {
@@ -744,7 +743,6 @@ const markOrderPickedUp = async (req, res) => {
     });
 
     // Находим профиль курьера
-    const { CourierProfile } = await import('../../models/index.js');
     const courierProfile = await CourierProfile.findOne({ user_id: user._id });
     
     if (!courierProfile) {
@@ -804,8 +802,8 @@ const markOrderDelivered = async (req, res) => {
     });
 
     // Находим профиль курьера
-    const { CourierProfile } = await import('../../models/index.js');
     const courierProfile = await CourierProfile.findOne({ user_id: user._id });
+
     
     if (!courierProfile) {
       return res.status(404).json({

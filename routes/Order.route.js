@@ -28,7 +28,7 @@ import {
 
 import { authenticateCustomer, requireRole as requireCustomerRole } from '../middleware/customerAuth.middleware.js';
 import { checkPartnerToken, requirePartnerProfile } from '../middleware/partnerAuth.middleware.js';
-import { requireApprovedCourier } from '../middleware/courierAuth.middleware.js';
+import { checkCourierToken, requireApprovedCourier } from '../middleware/courierAuth.middleware.js';
 
 const router = express.Router();
 
@@ -140,6 +140,7 @@ router.post('/:id/ready',
  * Query: lat, lng, radius (в км)
  */
 router.get('/courier/available', 
+  checkCourierToken,
   requireApprovedCourier,
   getAvailableOrders
 );
@@ -149,6 +150,7 @@ router.get('/courier/available',
  * Query: status, limit, offset
  */
 router.get('/courier/my', 
+  checkCourierToken,
   requireApprovedCourier,
   getCourierOrders
 );
@@ -157,7 +159,8 @@ router.get('/courier/my',
  * POST /api/orders/:id/take - Взять заказ на доставку
  */
 router.post('/:id/take', 
-  requireApprovedCourier,
+  checkCourierToken,      // ✅ Добавляем проверку токена
+  requireApprovedCourier, // ✅ Затем проверяем статус
   acceptDelivery
 );
 
@@ -165,6 +168,7 @@ router.post('/:id/take',
  * POST /api/orders/:id/pickup - Забрал заказ у партнера
  */
 router.post('/:id/pickup', 
+  checkCourierToken,
   requireApprovedCourier,
   markOrderPickedUp
 );
@@ -174,6 +178,7 @@ router.post('/:id/pickup',
  * Body: { delivery_notes: String }
  */
 router.post('/:id/deliver', 
+  checkCourierToken,
   requireApprovedCourier,
   markOrderDelivered
 );

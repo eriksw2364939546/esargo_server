@@ -1,7 +1,7 @@
 // services/System/cleanup.service.js - Сервис автоочистки просроченных данных
 import { Order, Cart, Product } from '../../models/index.js';
 import mongoose from 'mongoose';
-import cron from 'node-cron';
+
 
 /**
  * 🧹 ОСНОВНАЯ ФУНКЦИЯ АВТООЧИСТКИ
