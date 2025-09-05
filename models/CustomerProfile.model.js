@@ -1,41 +1,49 @@
-// models/CustomerProfile.model.js - УЛУЧШЕННАЯ модель с расширенными адресами для ESARGO
+// models/CustomerProfile.model.js - ОЧИЩЕННАЯ модель только с новой системой адресов ESARGO
 import mongoose from 'mongoose';
 
 const customerProfileSchema = new mongoose.Schema({
   user_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    index: true
+    required: true,
+    index: true,
+    unique: true
   },
   
   first_name: {
-    type: String
+    type: String,
+    trim: true,
+    maxlength: 50
   },
   
   last_name: {
-    type: String
+    type: String,
+    trim: true,
+    maxlength: 50
   },
   
   phone: {
-    type: String
+    type: String,
+    trim: true
   },
   
   avatar_url: {
-    type: String
+    type: String,
+    trim: true
   },
   
-  // ✅ УЛУЧШЕННАЯ СТРУКТУРА: Сохраненные адреса доставки для ESARGO
+  // ✅ ЕДИНСТВЕННАЯ СИСТЕМА АДРЕСОВ: saved_addresses
   saved_addresses: [{
     // Основная информация об адресе
     address: {
       type: String,
       required: true,
       trim: true,
-      minlength: 10,
-      maxlength: 200
+      minlength: 5,
+      maxlength: 300
     },
     
-    // Координаты (обязательные для расчета доставки)
+    // Координаты (обязательные для расчета доставки ESARGO)
     lat: {
       type: Number,
       required: true,
@@ -64,153 +72,143 @@ const customerProfileSchema = new mongoose.Schema({
       default: false
     },
     
-    // ✅ НОВЫЕ ПОЛЯ для детальной доставки
+    // Детальная информация для доставки
     details: {
       // Квартира/офис
       apartment: {
         type: String,
         trim: true,
-        maxlength: 20
+        maxlength: 20,
+        default: ''
       },
       
       // Подъезд
       entrance: {
         type: String,
         trim: true,
-        maxlength: 10
+        maxlength: 10,
+        default: ''
       },
       
       // Домофон
       intercom: {
         type: String,
         trim: true,
-        maxlength: 20
+        maxlength: 20,
+        default: ''
       },
       
       // Этаж
       floor: {
         type: String,
         trim: true,
-        maxlength: 10
+        maxlength: 10,
+        default: ''
       },
       
       // Заметки для курьера
       delivery_notes: {
         type: String,
         trim: true,
-        maxlength: 200
+        maxlength: 200,
+        default: ''
       }
     },
     
-    // ✅ НОВЫЕ ПОЛЯ для системы доставки
+    // Информация о доставке ESARGO
     delivery_info: {
-      // Зона доставки (будет рассчитываться автоматически)
+      // Зона доставки (1: 0-5км, 2: 5-10км)
       zone: {
         type: Number,
-        enum: [1, 2], // Зона 1: 0-5км, Зона 2: 5-10км
-        index: true
+        enum: [1, 2],
+        default: null
       },
       
-      // Примерное расстояние от центра (будет обновляться)
+      // Расстояние от центра Марселя
       estimated_distance_km: {
         type: Number,
         min: 0,
-        max: 10
+        max: 15,
+        default: null
       },
       
-      // Последний раз адрес использовался для заказа
-      last_used_at: {
-        type: Date
-      },
-      
-      // Количество заказов на этот адрес
+      // Количество заказов с этого адреса
       order_count: {
         type: Number,
         default: 0,
         min: 0
+      },
+      
+      // Последнее использование
+      last_used_at: {
+        type: Date,
+        default: null
       }
     },
     
-    // Метаданные
-    created_at: {
-      type: Date,
-      default: Date.now
-    },
-    updated_at: {
-      type: Date,
-      default: Date.now
-    },
-    
-    // Валидация адреса через Google Maps
+    // Валидация адреса
     validation: {
+      // Проверен ли адрес
       is_validated: {
         type: Boolean,
         default: false
       },
+      
+      // Когда был проверен
       validated_at: {
-        type: Date
+        type: Date,
+        default: null
       },
-      formatted_address: {
-        type: String // Отформатированный адрес от Google
-      },
-      place_id: {
-        type: String // Google Places ID для точности
+      
+      // Метод проверки (mock_geocoding, google_maps, manual)
+      validation_method: {
+        type: String,
+        enum: ['mock_geocoding', 'google_maps', 'manual'],
+        default: 'mock_geocoding'
       }
-    }
-  }],
-  
-  // Сохраняем старое поле для совместимости
-  delivery_addresses: [{
-    label: {
-      type: String
-    },
-    address: {
-      type: String
-    },
-    lat: {
-      type: Number
-    },
-    lng: {
-      type: Number
-    },
-    is_default: {
-      type: Boolean,
-      default: false
-    }
-  }],
-  
-  // Избранные партнеры
-  favorites: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'PartnerProfile'
-  }],
-  
-  // ✅ РАСШИРЕННЫЕ НАСТРОЙКИ пользователя
-  settings: {
-    notifications_enabled: {
-      type: Boolean,
-      default: true
-    },
-    preferred_language: {
-      type: String,
-      default: 'fr',
-      enum: ['fr', 'en', 'ru']
-    },
-    marketing_emails: {
-      type: Boolean,
-      default: false
     },
     
-    // ✅ НОВЫЕ НАСТРОЙКИ для доставки
-    delivery_preferences: {
-      // Предпочитаемое время доставки
-      preferred_time_slots: [{
-        type: String,
-        enum: ['morning', 'afternoon', 'evening'] // утро, день, вечер
-      }],
-      
-      // Предупреждать о часах пик
-      notify_peak_hours: {
+    // Временные метки
+    created_at: {
+      type: Date,
+      default: Date.now
+    },
+    
+    updated_at: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  
+  // Настройки пользователя
+  preferences: {
+    // Язык интерфейса
+    language: {
+      type: String,
+      enum: ['ru', 'fr', 'en'],
+      default: 'fr'
+    },
+    
+    // Уведомления
+    notifications: {
+      email: {
+        type: Boolean,
+        default: true
+      },
+      sms: {
+        type: Boolean,
+        default: false
+      },
+      push: {
+        type: Boolean,
+        default: true
+      }
+    },
+    
+    // Настройки адресов
+    address_settings: {
+      // Показывать подсказки адресов
+      show_suggestions: {
         type: Boolean,
         default: true
       },
@@ -229,73 +227,131 @@ const customerProfileSchema = new mongoose.Schema({
     }
   },
   
-  // ✅ РАСШИРЕННАЯ СТАТИСТИКА заказов
+  // Статистика заказов ESARGO
   order_stats: {
     total_orders: {
       type: Number,
-      default: 0
-    },
-    total_spent: {
-      type: Number,
-      default: 0
-    },
-    avg_rating_given: {
-      type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     
-    // ✅ НОВАЯ СТАТИСТИКА по зонам доставки
+    total_spent: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    
+    avg_rating_given: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5
+    },
+    
+    // Статистика по зонам доставки ESARGO
     delivery_stats: {
       zone_1_orders: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
+      
       zone_2_orders: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
+      
       total_delivery_fees_paid: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
+      
       avg_delivery_distance: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
+      
+      // ID любимого адреса (наиболее используемого)
       favorite_address_id: {
-        type: mongoose.Schema.Types.ObjectId
+        type: mongoose.Schema.Types.ObjectId,
+        default: null
       }
     }
   },
   
+  // Активность профиля
   is_active: {
     type: Boolean,
-    default: true
+    default: true,
+    index: true
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  collection: 'customer_profiles'
 });
 
 // ================ ИНДЕКСЫ ДЛЯ ОПТИМИЗАЦИИ ================
+
 customerProfileSchema.index({ user_id: 1 }, { unique: true });
 customerProfileSchema.index({ phone: 1 });
 customerProfileSchema.index({ is_active: 1 });
-customerProfileSchema.index({ 'saved_addresses.delivery_info.zone': 1 }); // ✅ НОВЫЙ ИНДЕКС
-customerProfileSchema.index({ 'saved_addresses.is_default': 1 }); // ✅ НОВЫЙ ИНДЕКС
+
+// ✅ ИНДЕКСЫ ДЛЯ НОВОЙ СИСТЕМЫ АДРЕСОВ
+customerProfileSchema.index({ 'saved_addresses.delivery_info.zone': 1 });
+customerProfileSchema.index({ 'saved_addresses.is_default': 1 });
+customerProfileSchema.index({ 'saved_addresses.validation.is_validated': 1 });
+
+// Составной индекс для быстрого поиска активных профилей с адресами
+customerProfileSchema.index({ 
+  is_active: 1, 
+  'saved_addresses.delivery_info.zone': 1 
+});
+
+// ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
+
+// Полное имя
+customerProfileSchema.virtual('full_name').get(function() {
+  if (this.first_name && this.last_name) {
+    return `${this.first_name} ${this.last_name}`;
+  }
+  return this.first_name || this.last_name || '';
+});
+
+// Количество сохраненных адресов
+customerProfileSchema.virtual('addresses_count').get(function() {
+  return this.saved_addresses?.length || 0;
+});
+
+// Основная зона доставки клиента
+customerProfileSchema.virtual('primary_delivery_zone').get(function() {
+  const defaultAddress = this.getDefaultAddress();
+  return defaultAddress?.delivery_info?.zone || null;
+});
+
+// Статус верификации адресов
+customerProfileSchema.virtual('addresses_verified').get(function() {
+  if (!this.saved_addresses?.length) return false;
+  return this.saved_addresses.every(addr => addr.validation?.is_validated);
+});
 
 // ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
 /**
- * ✅ НОВЫЙ МЕТОД: Получение основного адреса
+ * Получение основного адреса
  */
 customerProfileSchema.methods.getDefaultAddress = function() {
+  if (!this.saved_addresses?.length) return null;
+  
   return this.saved_addresses.find(address => address.is_default) || 
          this.saved_addresses[0] || 
          null;
 };
 
 /**
- * ✅ НОВЫЙ МЕТОД: Добавление нового адреса
+ * Добавление нового адреса (используется в Address Service)
  */
 customerProfileSchema.methods.addAddress = function(addressData) {
   // Проверяем лимит адресов (максимум 5)
@@ -303,7 +359,7 @@ customerProfileSchema.methods.addAddress = function(addressData) {
     throw new Error('Максимальное количество адресов: 5');
   }
   
-  // Если это первый адрес или явно указан как основной
+  // Определяем, будет ли адрес основным
   const isFirstAddress = this.saved_addresses.length === 0;
   const isDefault = isFirstAddress || addressData.is_default;
   
@@ -322,12 +378,14 @@ customerProfileSchema.methods.addAddress = function(addressData) {
     is_default: isDefault,
     details: addressData.details || {},
     delivery_info: {
-      zone: null, // Будет рассчитан позже
-      estimated_distance_km: null,
+      zone: addressData.zone || null,
+      estimated_distance_km: addressData.estimated_distance_km || null,
       order_count: 0
     },
     validation: {
-      is_validated: false
+      is_validated: addressData.is_validated || false,
+      validated_at: addressData.is_validated ? new Date() : null,
+      validation_method: addressData.validation_method || 'mock_geocoding'
     }
   };
   
@@ -336,7 +394,7 @@ customerProfileSchema.methods.addAddress = function(addressData) {
 };
 
 /**
- * ✅ НОВЫЙ МЕТОД: Обновление статистики адреса после заказа
+ * Обновление статистики адреса после заказа
  */
 customerProfileSchema.methods.updateAddressStats = function(addressId, orderData) {
   const address = this.saved_addresses.id(addressId);
@@ -353,11 +411,18 @@ customerProfileSchema.methods.updateAddressStats = function(addressId, orderData
     address.delivery_info.estimated_distance_km = orderData.delivery_distance_km;
   }
   
+  // Помечаем как валидированный при первом заказе
+  if (!address.validation.is_validated) {
+    address.validation.is_validated = true;
+    address.validation.validated_at = new Date();
+    address.validation.validation_method = 'order_validated';
+  }
+  
   return true;
 };
 
 /**
- * ✅ НОВЫЙ МЕТОД: Получение адресов в определенной зоне
+ * Получение адресов в определенной зоне
  */
 customerProfileSchema.methods.getAddressesByZone = function(zone) {
   return this.saved_addresses.filter(address => 
@@ -366,10 +431,10 @@ customerProfileSchema.methods.getAddressesByZone = function(zone) {
 };
 
 /**
- * ✅ НОВЫЙ МЕТОД: Найти ближайший адрес (по количеству использований)
+ * Найти наиболее используемый адрес
  */
 customerProfileSchema.methods.getMostUsedAddress = function() {
-  if (this.saved_addresses.length === 0) return null;
+  if (!this.saved_addresses?.length) return null;
   
   return this.saved_addresses.reduce((mostUsed, current) => {
     const currentCount = current.delivery_info.order_count || 0;
@@ -379,7 +444,7 @@ customerProfileSchema.methods.getMostUsedAddress = function() {
 };
 
 /**
- * ✅ НОВЫЙ МЕТОД: Обновление общей статистики заказов
+ * Обновление общей статистики заказов
  */
 customerProfileSchema.methods.updateOrderStats = function(orderData) {
   this.order_stats.total_orders += 1;
@@ -404,12 +469,37 @@ customerProfileSchema.methods.updateOrderStats = function(orderData) {
     this.order_stats.delivery_stats.avg_delivery_distance = 
       ((currentAvg * (totalOrders - 1)) + orderData.delivery_distance_km) / totalOrders;
   }
+  
+  // Обновляем любимый адрес
+  const mostUsedAddress = this.getMostUsedAddress();
+  if (mostUsedAddress) {
+    this.order_stats.delivery_stats.favorite_address_id = mostUsedAddress._id;
+  }
+};
+
+/**
+ * Установка основного адреса
+ */
+customerProfileSchema.methods.setDefaultAddress = function(addressId) {
+  // Снимаем флаг со всех адресов
+  this.saved_addresses.forEach(addr => {
+    addr.is_default = false;
+  });
+  
+  // Устанавливаем новый основной адрес
+  const targetAddress = this.saved_addresses.id(addressId);
+  if (targetAddress) {
+    targetAddress.is_default = true;
+    return true;
+  }
+  
+  return false;
 };
 
 // ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
 /**
- * ✅ НОВЫЙ МЕТОД: Поиск клиентов по зоне доставки
+ * Поиск клиентов по зоне доставки
  */
 customerProfileSchema.statics.findByDeliveryZone = function(zone) {
   return this.find({
@@ -419,7 +509,7 @@ customerProfileSchema.statics.findByDeliveryZone = function(zone) {
 };
 
 /**
- * ✅ НОВЫЙ МЕТОД: Статистика использования зон доставки
+ * Статистика использования зон доставки
  */
 customerProfileSchema.statics.getZoneUsageStats = function() {
   return this.aggregate([
@@ -437,26 +527,15 @@ customerProfileSchema.statics.getZoneUsageStats = function() {
   ]);
 };
 
-// ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
-
-// Виртуальное поле для полного имени
-customerProfileSchema.virtual('full_name').get(function() {
-  if (this.first_name && this.last_name) {
-    return `${this.first_name} ${this.last_name}`;
-  }
-  return this.first_name || this.last_name || '';
-});
-
-// ✅ НОВОЕ ВИРТУАЛЬНОЕ ПОЛЕ: Количество сохраненных адресов
-customerProfileSchema.virtual('addresses_count').get(function() {
-  return this.saved_addresses.length;
-});
-
-// ✅ НОВОЕ ВИРТУАЛЬНОЕ ПОЛЕ: Основная зона доставки клиента
-customerProfileSchema.virtual('primary_delivery_zone').get(function() {
-  const defaultAddress = this.getDefaultAddress();
-  return defaultAddress ? defaultAddress.delivery_info.zone : null;
-});
+/**
+ * Получение невалидированных адресов
+ */
+customerProfileSchema.statics.findUnvalidatedAddresses = function() {
+  return this.find({
+    'saved_addresses.validation.is_validated': false,
+    is_active: true
+  });
+};
 
 // ================ MIDDLEWARE ================
 
@@ -472,15 +551,41 @@ customerProfileSchema.pre('save', function(next) {
   next();
 });
 
-// Включаем виртуальные поля в JSON
+// Валидация: только один основной адрес
+customerProfileSchema.pre('save', function(next) {
+  const defaultAddresses = this.saved_addresses.filter(addr => addr.is_default);
+  
+  if (defaultAddresses.length > 1) {
+    // Оставляем только первый как основной
+    this.saved_addresses.forEach((addr, index) => {
+      addr.is_default = (index === 0);
+    });
+  }
+  
+  next();
+});
+
+// ================ НАСТРОЙКИ JSON ================
+
 customerProfileSchema.set('toJSON', { 
   virtuals: true,
   transform: function(doc, ret) {
-    // Удаляем поле delivery_addresses из JSON (оставляем только saved_addresses)
-    delete ret.delivery_addresses;
+    // ✅ УБИРАЕМ СТАРЫЕ ПОЛЯ ИЗ JSON ПОЛНОСТЬЮ
+    delete ret.delivery_addresses; // Старое поле (если есть)
+    delete ret.__v;
+    
+    // Добавляем полезную информацию
+    ret.addresses_summary = {
+      total_count: ret.saved_addresses?.length || 0,
+      validated_count: ret.saved_addresses?.filter(a => a.validation?.is_validated).length || 0,
+      default_address_id: ret.saved_addresses?.find(a => a.is_default)?._id || null,
+      zones_used: [...new Set(ret.saved_addresses?.map(a => a.delivery_info?.zone).filter(Boolean))] || []
+    };
+    
     return ret;
   }
 });
+
 customerProfileSchema.set('toObject', { virtuals: true });
 
 export default mongoose.model('CustomerProfile', customerProfileSchema);

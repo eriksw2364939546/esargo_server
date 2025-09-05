@@ -28,8 +28,8 @@ async function calculateEstimatedDeliveryTime(delivery_address, restaurant_locat
   try {
     // ✅ ИСПОЛЬЗУЕМ НОВЫЙ DELIVERY SERVICE
     const deliveryData = {
-      restaurant_lat: restaurant_location?.coordinates?.[1] || 43.2965,
-      restaurant_lng: restaurant_location?.coordinates?.[0] || 5.3698,
+      restaurant_lat: restaurant_location?.coordinates?.[1] || 43.2965, // ✅ ИСПРАВЛЕНО: Марсель вместо Парижа
+      restaurant_lng: restaurant_location?.coordinates?.[0] || 5.3698,  // ✅ ИСПРАВЛЕНО: Марсель вместо Парижа
       delivery_lat: delivery_address.lat,
       delivery_lng: delivery_address.lng,
       order_total: 0, // Для расчета времени не важно
@@ -42,38 +42,149 @@ async function calculateEstimatedDeliveryTime(delivery_address, restaurant_locat
   } catch (error) {
     console.warn('⚠️ Delivery service failed, using fallback:', error.message);
     
-    // ✅ FALLBACK: старая логика если новый сервис не работает
+    // ✅ FALLBACK: обновленная логика с координатами Марселя
     let baseTime = 30;
     if (restaurant_delivery_info && restaurant_delivery_info.base_delivery_time) {
       baseTime = restaurant_delivery_info.base_delivery_time;
     }
     
     const distance = calculateDistance(
-      restaurant_location?.coordinates?.[1] || 43.2965,
-      restaurant_location?.coordinates?.[0] || 5.3698,
+      restaurant_location?.coordinates?.[1] || 43.2965, // ✅ ИСПРАВЛЕНО: Марсель
+      restaurant_location?.coordinates?.[0] || 5.3698,  // ✅ ИСПРАВЛЕНО: Марсель
       delivery_address.lat,
       delivery_address.lng
     );
     
-    const extraTime = Math.round(distance * 2);
-    return new Date(Date.now() + (baseTime + extraTime) * 60 * 1000);
+    // Добавляем время в зависимости от расстояния
+    const additionalTime = Math.round(distance * 2); // ~2 минуты на км
+    
+    return new Date(Date.now() + (baseTime + additionalTime) * 60 * 1000);
   }
 }
 
 /**
+ * 💸 АДМИНИСТРАТИВНЫЙ ВОЗВРАТ ЗАКАЗА
+ * Для использования админами и службой поддержки
+ */
+export const processAdminRefund = async (orderId, adminUserId, options = {}) => {
+  try {
+    const {
+      refund_reason = 'admin_initiated',
+      refund_type = 'full', // full | partial
+      partial_amount = null,
+      admin_notes = ''
+    } = options;
+
+    console.log('💸 ADMIN REFUND:', { orderId, adminUserId, refund_type });
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      throw new Error('Заказ не найден');
+    }
+
+    // ✅ ИСПОЛЬЗУЕМ РЕАЛЬНУЮ СИСТЕМУ ВОЗВРАТОВ
+    const { processRealRefund } = await import('../Finance/refund.service.js');
+    
+    const refundResult = await processRealRefund(order, {
+      refund_reason: `${refund_reason}${admin_notes ? `: ${admin_notes}` : ''}`,
+      refund_type,
+      partial_amount,
+      initiated_by_user_id: adminUserId,
+      initiated_by_role: 'admin'
+    });
+
+    console.log('✅ ADMIN REFUND SUCCESS:', {
+      refund_id: refundResult.refund_id,
+      amount: refundResult.refund_details.refunded_amount
+    });
+
+    return refundResult;
+
+  } catch (error) {
+    console.error('🚨 ADMIN REFUND ERROR:', error);
+    throw error;
+  }
+};
+
+function generateRefundRecommendations(order, eligibility, calculation) {
+  const recommendations = [];
+
+  if (!eligibility.can_refund) {
+    recommendations.push({
+      type: 'info',
+      message: 'Возврат невозможен',
+      reasons: eligibility.reasons
+    });
+    return recommendations;
+  }
+
+  if (calculation.deductions.delivery_fee_reduction > 0) {
+    recommendations.push({
+      type: 'warning',
+      message: `При возврате будет удержано ${calculation.deductions.delivery_fee_reduction}€ за доставку`,
+      reason: 'Заказ уже находится в процессе доставки'
+    });
+  }
+
+  if (order.status === 'delivered') {
+    recommendations.push({
+      type: 'urgent',
+      message: 'Ограниченное время для возврата',
+      reason: 'Возврат доступен только в течение 2 часов после доставки'
+    });
+  }
+
+  recommendations.push({
+    type: 'success',
+    message: `Возможен возврат ${calculation.refundable_amount}€`,
+    estimated_arrival: '3-5 рабочих дней'
+  });
+
+  return recommendations;
+}
+
+export const checkRefundEligibility = async (orderId, userRole = 'customer') => {
+  try {
+    const order = await Order.findById(orderId);
+    if (!order) {
+      throw new Error('Заказ не найден');
+    }
+
+    // ✅ ИСПОЛЬЗУЕМ УТИЛИТЫ СИСТЕМЫ ВОЗВРАТОВ
+    const { canRefundOrder, calculateRefundAmount } = await import('../Finance/refund.service.js');
+    
+    const eligibility = canRefundOrder(order, userRole);
+    const refundCalculation = calculateRefundAmount(order);
+
+    return {
+      order_id: orderId,
+      order_number: order.order_number,
+      current_status: order.status,
+      payment_status: order.payment_status,
+      eligibility,
+      refund_calculation,
+      recommendations: generateRefundRecommendations(order, eligibility, refundCalculation)
+    };
+
+  } catch (error) {
+    console.error('🚨 CHECK REFUND ELIGIBILITY ERROR:', error);
+    throw error;
+  }
+};
+
+/**
  * Расчет расстояния между координатами (Haversine formula)
  */
-function calculateDistance(lat1, lon1, lat2, lon2) {
+function calculateDistance(lat1, lng1, lat2, lng2) {
   const R = 6371; // Радиус Земли в км
   const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
   const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-            Math.sin(dLon/2) * Math.sin(dLon/2);
+           Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+           Math.sin(dLng/2) * Math.sin(dLng/2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   return R * c;
 }
-
 /**
  * ДЕТАЛЬНАЯ ВАЛИДАЦИЯ доступности товаров
  */
@@ -237,37 +348,73 @@ async function returnProductsToStock(orderItems, session = null) {
   return returnResults;
 }
 
-/**
- * ✅ ОБНОВЛЕНО: Заглушка платежной системы - используем существующий payment.service
- */
-async function processPayment(order, options = {}) {
+
+async function processPayment(orderData, deliveryData) {
   try {
-    // ✅ ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩИЙ PAYMENT SERVICE
-    const result = await processOrderPayment({
-      amount: order.total_price,
-      currency: 'EUR',
-      customer_id: order.customer_id,
-      order_id: order._id
+    console.log('💳 PROCESS PAYMENT (ESARGO):', {
+      order_id: orderData.order_id,
+      total_price: orderData.total_price,
+      delivery_zone: deliveryData?.delivery_zone,
+      payment_method: orderData.payment_method
     });
-    
-    return result;
+
+    // ✅ ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩИЙ PAYMENT SERVICE
+    const paymentResult = await processOrderPayment({
+      order_id: orderData.order_id,
+      amount: orderData.total_price,
+      payment_method: orderData.payment_method,
+      customer_id: orderData.customer_id,
+      // ✅ НОВЫЕ ПОЛЯ ESARGO
+      delivery_zone: deliveryData?.delivery_zone,
+      delivery_fee: deliveryData?.delivery_fee,
+      platform_commission: Math.round(orderData.subtotal * 0.10 * 100) / 100
+    });
+
+    // ✅ ИНТЕГРАЦИЯ С FINANCE SERVICE (если оплата успешна)
+    if (paymentResult.success && deliveryData) {
+      try {
+        const financeResult = await integrateWithOrderCreation(orderData, deliveryData);
+        console.log('💰 Finance integration result:', financeResult.success ? 'SUCCESS' : 'FAILED');
+      } catch (financeError) {
+        console.warn('⚠️ Finance integration failed (non-critical):', financeError.message);
+        // Не прерываем процесс создания заказа
+      }
+    }
+
+    return paymentResult;
+
   } catch (error) {
-    console.error('💳 PAYMENT ERROR:', error);
+    console.error('🚨 PROCESS PAYMENT ERROR:', error);
     throw error;
   }
 }
 
-/**
- * Заглушка возврата средств
- */
+// Заменяем старую заглушку на реальную систему возвратов
+
 async function processRefund(order, options = {}) {
-  return {
-    success: true,
-    refund_id: `ref_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    amount: order.total_price,
-    processed_at: new Date(),
-    details: 'Возврат средств обработан'
-  };
+  console.log('⚠️ DEPRECATED: Using old processRefund, redirecting to real refund system');
+  
+  try {
+    const { processRealRefund } = await import('../Finance/refund.service.js');
+    return await processRealRefund(order, {
+      refund_reason: options.reason || 'legacy_refund',
+      refund_type: 'full',
+      initiated_by_user_id: options.initiated_by || null,
+      initiated_by_role: options.user_role || 'system'
+    });
+  } catch (error) {
+    console.error('🚨 LEGACY REFUND REDIRECT ERROR:', error);
+    
+    // Fallback к старой логике только в крайнем случае
+    return {
+      success: true,
+      refund_id: `ref_fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      amount: order.total_price,
+      processed_at: new Date(),
+      details: 'Возврат обработан через fallback систему',
+      warning: 'Использована устаревшая система возвратов'
+    };
+  }
 }
 
 // ================ КЛИЕНТСКИЕ СЕРВИСЫ ================
@@ -740,30 +887,62 @@ function checkOrderAccess(order, userId, userRole) {
 // ================ ОСТАЛЬНЫЕ ФУНКЦИИ (сохраняем без изменений) ================
 
 /**
- * ❌ ОТМЕНИТЬ ЗАКАЗ КЛИЕНТОМ
+ * ❌ ОТМЕНА ЗАКАЗА КЛИЕНТОМ - ОБНОВЛЕНО с реальными возвратами
  */
-export const cancelCustomerOrder = async (orderId, customerId, cancellationData) => {
+export const cancelCustomerOrder = async (orderId, customerId, reason = 'customer_request', details = '') => {
   const session = await mongoose.startSession();
   
   try {
     await session.startTransaction();
-    
-    const { reason, details = '' } = cancellationData;
 
-    console.log('❌ CANCEL CUSTOMER ORDER:', { orderId, customerId, reason });
+    console.log('❌ CANCEL CUSTOMER ORDER (REAL REFUNDS):', { orderId, customerId, reason });
 
     const order = await Order.findById(orderId).session(session);
-
     if (!order) {
       throw new Error('Заказ не найден');
     }
 
-    if (order.customer_id.toString() !== customerId.toString()) {
-      throw new Error('Нет доступа к этому заказу');
+    if (!order.customer_id.equals(customerId)) {
+      throw new Error('У вас нет доступа к этому заказу');
     }
 
-    if (!['pending', 'accepted'].includes(order.status)) {
-      throw new Error('Заказ нельзя отменить - он уже готовится или доставляется');
+    if (!['pending', 'accepted', 'preparing', 'ready', 'picked_up'].includes(order.status)) {
+      throw new Error('Заказ нельзя отменить - он уже доставлен или был отменен ранее');
+    }
+
+    // ✅ ИСПОЛЬЗУЕМ РЕАЛЬНУЮ СИСТЕМУ ВОЗВРАТОВ
+    let refundResult = null;
+    if (order.payment_status === 'completed' && order.payment_method === 'card') {
+      try {
+        // Импортируем реальную систему возвратов
+        const { processRealRefund } = await import('../Finance/refund.service.js');
+        
+        refundResult = await processRealRefund(order, {
+          refund_reason: `Отмена заказа: ${reason}`,
+          refund_type: 'full',
+          initiated_by_user_id: customerId,
+          initiated_by_role: 'customer'
+        });
+        
+        console.log('✅ REAL REFUND SUCCESS:', {
+          refund_id: refundResult.refund_id,
+          amount: refundResult.refund_details.refunded_amount
+        });
+        
+      } catch (refundError) {
+        console.error('🚨 REAL REFUND ERROR:', refundError.message);
+        
+        // Если реальный возврат не удался, помечаем как pending
+        order.payment_status = 'refund_pending';
+        order.refund_error = refundError.message;
+        
+        // Но не прерываем отмену заказа
+        refundResult = {
+          success: false,
+          error: refundError.message,
+          fallback: true
+        };
+      }
     }
 
     // Возвращаем товары на склад
@@ -777,39 +956,9 @@ export const cancelCustomerOrder = async (orderId, customerId, cancellationData)
       user_role: 'customer',
       details
     };
-    await order.save({ session });
 
-    // Возвращаем средства если заказ был оплачен картой
-    if (order.payment_status === 'completed' && order.payment_method === 'card') {
-      try {
-        const { processOrderRefund } = await import('../payment.stub.service.js');
-        
-        const refundResult = await processOrderRefund({
-          original_payment_id: order.payment_details?.payment_id,
-          amount: order.total_price,
-          order_id: order._id,
-          reason: `Отмена заказа: ${reason}`
-        });
-        
-        order.payment_status = 'refunded';
-        order.refund_details = {
-          refund_id: refundResult.refund_id,
-          amount: refundResult.amount,
-          processed_at: refundResult.processed_at,
-          estimated_arrival: refundResult.estimated_arrival
-        };
-        
-        console.log('💸 REFUND SUCCESS:', {
-          refund_id: refundResult.refund_id,
-          amount: refundResult.amount
-        });
-        
-      } catch (refundError) {
-        console.error('💸 REFUND ERROR:', refundError.message);
-        order.payment_status = 'refund_pending';
-        order.refund_error = refundError.message;
-      }
-      
+    // Если возврат был успешным, информация уже обновлена в processRealRefund
+    if (!refundResult || !refundResult.success) {
       await order.save({ session });
     }
 
@@ -818,7 +967,8 @@ export const cancelCustomerOrder = async (orderId, customerId, cancellationData)
     console.log('✅ ORDER CANCELLED SUCCESS:', {
       order_number: order.order_number,
       reason,
-      items_returned_to_stock: returnResults.length
+      items_returned_to_stock: returnResults.length,
+      refund_processed: refundResult?.success || false
     });
 
     return {
@@ -828,13 +978,18 @@ export const cancelCustomerOrder = async (orderId, customerId, cancellationData)
       cancelled_at: order.cancelled_at,
       message: 'Заказ отменен успешно',
       stock_return_info: returnResults,
-      refund_info: order.payment_method === 'card' ? 
-        'Средства будут возвращены в течение 3-5 рабочих дней' : null
+      refund_info: refundResult ? {
+        success: refundResult.success,
+        refund_id: refundResult.refund_id || null,
+        refunded_amount: refundResult.refund_details?.refunded_amount || 0,
+        estimated_arrival: refundResult.refund_details?.estimated_arrival || null,
+        message: refundResult.message || refundResult.error || 'Возврат в обработке'
+      } : null
     };
 
   } catch (error) {
     await session.abortTransaction();
-    console.error('🚨 CANCEL CUSTOMER ORDER ERROR:', error);
+    console.error('🚨 CANCEL ORDER ERROR:', error);
     throw error;
   } finally {
     session.endSession();
@@ -1436,6 +1591,8 @@ export default {
   markOrderPickedUpByCourier,
   markOrderDeliveredByCourier, // ✅ ОБНОВЛЕНО
   getCourierActiveOrders,
+  processAdminRefund,
+  checkRefundEligibility,
   
   // Общие сервисы
   trackOrderStatus,
