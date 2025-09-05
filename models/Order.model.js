@@ -1,4 +1,4 @@
-// models/Order.model.js - ПОЛНАЯ модель заказов с добавлением валидации доступности
+// models/Order.model.js - РАСШИРЕННАЯ модель заказов с полями для системы доставки ESARGO
 import mongoose from 'mongoose';
 
 const orderSchema = new mongoose.Schema({
@@ -161,6 +161,74 @@ const orderSchema = new mongoose.Schema({
     type: Number,
     required: true,
     min: 0
+  },
+
+  // ✅ НОВЫЕ ПОЛЯ ДЛЯ СИСТЕМЫ ДОСТАВКИ ESARGO
+  
+  // Комиссия платформы ESARGO (10% от суммы заказа)
+  platform_commission: {
+    type: Number,
+    required: true,
+    min: 0,
+    default: 0
+  },
+  
+  // Информация о доставке
+  delivery_zone: {
+    type: Number,
+    enum: [1, 2], // Зона 1: 0-5км, Зона 2: 5-10км
+    required: true,
+    index: true
+  },
+  
+  delivery_distance_km: {
+    type: Number,
+    required: true,
+    min: 0,
+    max: 10 // Максимум 10км для доставки
+  },
+  
+  // Доплата за час пик (+1-2€)
+  peak_hour_surcharge: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  
+  // Заработок курьера за доставку
+  courier_earnings: {
+    type: Number,
+    min: 0,
+    default: 0
+  },
+  
+  // Координаты ресторана
+  restaurant_coordinates: {
+    lat: {
+      type: Number,
+      required: true
+    },
+    lng: {
+      type: Number,
+      required: true
+    },
+    address: {
+      type: String,
+      required: true,
+      trim: true
+    }
+  },
+  
+  // Координаты доставки
+  delivery_coordinates: {
+    lat: {
+      type: Number,
+      required: true
+    },
+    lng: {
+      type: Number,
+      required: true
+    }
   },
   
   // Адрес доставки
@@ -366,6 +434,8 @@ orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ payment_status: 1 });
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ estimated_delivery_time: 1 });
+orderSchema.index({ delivery_zone: 1 }); // ✅ НОВЫЙ ИНДЕКС
+orderSchema.index({ delivery_distance_km: 1 }); // ✅ НОВЫЙ ИНДЕКС
 
 // Составной индекс для поиска заказов курьеров
 orderSchema.index({ 
@@ -393,24 +463,25 @@ orderSchema.methods.addStatusHistory = function(newStatus, updatedBy, userRole, 
   
   this.status = newStatus;
   
-  // Обновляем соответствующие временные метки
-  const now = new Date();
-  switch(newStatus) {
+  // Обновляем временные метки в зависимости от статуса
+  switch (newStatus) {
     case 'accepted':
-      this.accepted_at = now;
+      this.accepted_at = new Date();
       break;
     case 'ready':
-      this.ready_at = now;
+      this.ready_at = new Date();
       break;
     case 'picked_up':
-      this.picked_up_at = now;
+      this.picked_up_at = new Date();
       break;
     case 'delivered':
-      this.delivered_at = now;
-      this.actual_delivery_time = Math.round((now - this.createdAt) / (1000 * 60));
+      this.delivered_at = new Date();
+      if (this.createdAt) {
+        this.actual_delivery_time = Math.round((Date.now() - this.createdAt) / (1000 * 60));
+      }
       break;
     case 'cancelled':
-      this.cancelled_at = now;
+      this.cancelled_at = new Date();
       break;
   }
   
@@ -418,101 +489,70 @@ orderSchema.methods.addStatusHistory = function(newStatus, updatedBy, userRole, 
 };
 
 /**
- * НОВЫЙ МЕТОД: Валидация доступности товаров в заказе
+ * ✅ НОВЫЙ МЕТОД: Расчет финансовых показателей заказа
  */
-orderSchema.methods.validateItemsAvailability = async function() {
-  const Product = mongoose.model('Product');
-  const unavailableItems = [];
+orderSchema.methods.calculateFinancials = function() {
+  // Комиссия ESARGO: 10% от суммы товаров (subtotal)
+  this.platform_commission = Math.round(this.subtotal * 0.10 * 100) / 100;
   
-  for (const orderItem of this.items) {
-    const currentProduct = await Product.findById(orderItem.product_id);
-    
-    if (!currentProduct) {
-      unavailableItems.push({
-        product_id: orderItem.product_id,
-        title: orderItem.title,
-        reason: 'product_deactivated'
-      });
-      continue;
-    }
-
-    // Проверяем базовую доступность
-    if (!currentProduct.is_active || !currentProduct.is_available) {
-      unavailableItems.push({
-        product_id: orderItem.product_id,
-        title: orderItem.title,
-        reason: 'product_deactivated'
-      });
-      continue;
-    }
-
-    // Проверяем складские остатки для магазинов
-    if (currentProduct.category === 'store' && currentProduct.stock_quantity !== undefined) {
-      if (currentProduct.stock_quantity < orderItem.quantity) {
-        unavailableItems.push({
-          product_id: orderItem.product_id,
-          title: orderItem.title,
-          reason: 'out_of_stock'
-        });
-        continue;
-      }
-    }
-
-    // Проверяем временные ограничения
-    if (currentProduct.isAvailableNow && !currentProduct.isAvailableNow()) {
-      unavailableItems.push({
-        product_id: orderItem.product_id,
-        title: orderItem.title,
-        reason: 'time_restricted'
-      });
-    }
-  }
-
-  // Обновляем статус валидации
-  this.availability_validation = {
-    validated_at: new Date(),
-    unavailable_items: unavailableItems,
-    validation_status: unavailableItems.length === 0 ? 'valid' : 
-                      unavailableItems.length < this.items.length ? 'has_issues' : 'critical_issues'
-  };
-
-  await this.save();
-  return unavailableItems;
-};
-
-/**
- * Отмена заказа
- */
-orderSchema.methods.cancelOrder = function(reason, cancelledBy, userRole, details = '') {
-  this.cancellation = {
-    reason: reason,
-    cancelled_by: cancelledBy,
-    user_role: userRole,
-    details: details
-  };
-  
-  return this.addStatusHistory('cancelled', cancelledBy, userRole, `Заказ отменен: ${reason}`);
-};
-
-/**
- * Расчет общей стоимости заказа
- */
-orderSchema.methods.calculateTotal = function() {
-  this.subtotal = this.items.reduce((sum, item) => sum + item.item_total, 0);
-  this.total_price = this.subtotal + this.delivery_fee + this.service_fee - this.discount_amount + this.tax_amount;
-  return this.total_price;
-};
-
-/**
- * Получить оставшееся время доставки
- */
-orderSchema.methods.getRemainingDeliveryTime = function() {
-  if (!this.estimated_delivery_time || this.status === 'delivered' || this.status === 'cancelled') {
-    return null;
+  // Заработок курьера зависит от зоны и часа пик
+  let courierBase = 0;
+  if (this.delivery_zone === 1) {
+    courierBase = this.subtotal >= 30 ? 6 : 8; // Зона 1: 6€ или 8€
+  } else if (this.delivery_zone === 2) {
+    courierBase = this.subtotal >= 30 ? 10 : 13; // Зона 2: 10€ или 13€
   }
   
-  const timeLeft = this.estimated_delivery_time - new Date();
-  return Math.max(0, Math.round(timeLeft / (1000 * 60))); // в минутах
+  this.courier_earnings = courierBase + (this.peak_hour_surcharge || 0);
+  
+  return {
+    platform_commission: this.platform_commission,
+    courier_earnings: this.courier_earnings,
+    delivery_fee: this.delivery_fee,
+    total_price: this.total_price
+  };
+};
+
+/**
+ * ✅ НОВЫЙ МЕТОД: Проверка возможности отмены
+ */
+orderSchema.methods.canBeCancelled = function() {
+  const unCancellableStatuses = ['picked_up', 'on_the_way', 'delivered'];
+  return !unCancellableStatuses.includes(this.status);
+};
+
+/**
+ * ✅ НОВЫЙ МЕТОД: Получение времени доставки
+ */
+orderSchema.methods.getDeliveryTime = function() {
+  if (this.actual_delivery_time) {
+    return this.actual_delivery_time;
+  }
+  
+  if (this.estimated_delivery_time) {
+    const estimatedMinutes = Math.round((this.estimated_delivery_time - this.createdAt) / (1000 * 60));
+    return estimatedMinutes;
+  }
+  
+  return null;
+};
+
+/**
+ * Проверка доступа к заказу
+ */
+orderSchema.methods.hasAccessBy = function(userId, userRole) {
+  switch (userRole) {
+    case 'customer':
+      return this.customer_id.toString() === userId.toString();
+    case 'partner':
+      return this.partner_id.toString() === userId.toString();
+    case 'courier':
+      return this.courier_id && this.courier_id.toString() === userId.toString();
+    case 'admin':
+      return true;
+    default:
+      return false;
+  }
 };
 
 // ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
@@ -520,26 +560,10 @@ orderSchema.methods.getRemainingDeliveryTime = function() {
 /**
  * Генерация уникального номера заказа
  */
-orderSchema.statics.generateOrderNumber = async function() {
-  const today = new Date();
-  const year = today.getFullYear().toString().slice(-2);
-  const month = String(today.getMonth() + 1).padStart(2, '0');
-  const day = String(today.getDate()).padStart(2, '0');
-  
-  const prefix = `${year}${month}${day}`;
-  
-  // Находим последний заказ за сегодня
-  const lastOrder = await this.findOne({
-    order_number: new RegExp(`^${prefix}`)
-  }).sort({ order_number: -1 });
-  
-  let sequence = 1;
-  if (lastOrder) {
-    const lastSequence = parseInt(lastOrder.order_number.slice(-4));
-    sequence = lastSequence + 1;
-  }
-  
-  return `${prefix}${String(sequence).padStart(4, '0')}`;
+orderSchema.statics.generateOrderNumber = function() {
+  const timestamp = Date.now().toString().slice(-8);
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `ES${timestamp}${random}`;
 };
 
 /**
@@ -576,23 +600,46 @@ orderSchema.statics.findByCourier = function(courierId, status = null) {
 };
 
 /**
- * Поиск доступных заказов для курьеров
+ * ✅ НОВЫЙ МЕТОД: Поиск доступных заказов для курьеров в определенной зоне
  */
-orderSchema.statics.findAvailableOrders = function(lat, lng, radiusKm = 10) {
-  const radiusInDegrees = radiusKm / 111; // Примерное преобразование км в градусы
-  
+orderSchema.statics.findAvailableOrdersInZone = function(zone, limit = 10) {
   return this.find({
     status: 'ready',
     courier_id: null,
-    'delivery_address.lat': {
-      $gte: lat - radiusInDegrees,
-      $lte: lat + radiusInDegrees
+    delivery_zone: zone
+  })
+  .populate('partner_id', 'business_name phone location')
+  .sort({ createdAt: 1 }) // Сначала старые заказы
+  .limit(limit);
+};
+
+/**
+ * ✅ НОВЫЙ МЕТОД: Статистика по зонам доставки
+ */
+orderSchema.statics.getDeliveryZoneStats = function(dateFrom, dateTo) {
+  return this.aggregate([
+    {
+      $match: {
+        status: 'delivered',
+        createdAt: { $gte: new Date(dateFrom), $lte: new Date(dateTo) }
+      }
     },
-    'delivery_address.lng': {
-      $gte: lng - radiusInDegrees,
-      $lte: lng + radiusInDegrees
-    }
-  }).sort({ createdAt: 1 }); // Сначала старые заказы
+    {
+      $group: {
+        _id: '$delivery_zone',
+        total_orders: { $sum: 1 },
+        total_revenue: { $sum: '$subtotal' },
+        total_delivery_fees: { $sum: '$delivery_fee' },
+        total_platform_commission: { $sum: '$platform_commission' },
+        total_courier_earnings: { $sum: '$courier_earnings' },
+        avg_distance: { $avg: '$delivery_distance_km' },
+        peak_hour_orders: { 
+          $sum: { $cond: [{ $gt: ['$peak_hour_surcharge', 0] }, 1, 0] }
+        }
+      }
+    },
+    { $sort: { '_id': 1 } }
+  ]);
 };
 
 /**
@@ -614,91 +661,29 @@ orderSchema.statics.getStatsForPeriod = function(startDate, endDate, partnerId =
         _id: null,
         total_orders: { $sum: 1 },
         total_revenue: { $sum: '$total_price' },
+        total_platform_commission: { $sum: '$platform_commission' }, // ✅ НОВОЕ ПОЛЕ
         delivered_orders: {
           $sum: { $cond: [{ $eq: ['$status', 'delivered'] }, 1, 0] }
         },
         cancelled_orders: {
           $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] }
         },
-        avg_order_value: { $avg: '$total_price' },
-        avg_delivery_time: { $avg: '$actual_delivery_time' }
+        avg_delivery_time: {
+          $avg: '$actual_delivery_time'
+        },
+        zone_1_orders: { // ✅ НОВОЕ ПОЛЕ
+          $sum: { $cond: [{ $eq: ['$delivery_zone', 1] }, 1, 0] }
+        },
+        zone_2_orders: { // ✅ НОВОЕ ПОЛЕ
+          $sum: { $cond: [{ $eq: ['$delivery_zone', 2] }, 1, 0] }
+        }
       }
     }
   ]);
 };
 
-/**
- * Поиск заказа по номеру
- */
-orderSchema.statics.findByOrderNumber = function(orderNumber) {
-  return this.findOne({ order_number: orderNumber });
-};
-
-/**
- * Получить популярные товары
- */
-orderSchema.statics.getPopularItems = function(partnerId = null, limit = 10) {
-  const matchFilter = { status: 'delivered' };
-  if (partnerId) {
-    matchFilter.partner_id = partnerId;
-  }
-  
-  return this.aggregate([
-    { $match: matchFilter },
-    { $unwind: '$items' },
-    {
-      $group: {
-        _id: '$items.product_id',
-        title: { $first: '$items.title' },
-        total_ordered: { $sum: '$items.quantity' },
-        total_revenue: { $sum: '$items.item_total' },
-        avg_price: { $avg: '$items.price' }
-      }
-    },
-    { $sort: { total_ordered: -1 } },
-    { $limit: limit }
-  ]);
-};
-
-/**
- * Получить заказы по временному интервалу
- */
-orderSchema.statics.findByTimeRange = function(startTime, endTime, status = null) {
-  const filter = {
-    createdAt: { $gte: startTime, $lte: endTime }
-  };
-  
-  if (status) {
-    filter.status = status;
-  }
-  
-  return this.find(filter).sort({ createdAt: -1 });
-};
-
-/**
- * Расчет выручки за период
- */
-orderSchema.statics.calculateRevenue = function(startDate, endDate, partnerId = null) {
-  const matchFilter = {
-    status: 'delivered',
-    createdAt: { $gte: startDate, $lte: endDate }
-  };
-  
-  if (partnerId) {
-    matchFilter.partner_id = partnerId;
-  }
-  
-  return this.aggregate([
-    { $match: matchFilter },
-    {
-      $group: {
-        _id: null,
-        total_revenue: { $sum: '$total_price' },
-        total_orders: { $sum: 1 },
-        avg_order_value: { $avg: '$total_price' }
-      }
-    }
-  ]);
-};
+// Включаем виртуальные поля в JSON
+orderSchema.set('toJSON', { virtuals: true });
+orderSchema.set('toObject', { virtuals: true });
 
 export default mongoose.model('Order', orderSchema);
