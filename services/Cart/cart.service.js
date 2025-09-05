@@ -1,5 +1,6 @@
-// services/Cart/cart.service.js - Сервисы корзины покупок
+// services/Cart/cart.service.js - ОБНОВЛЕННЫЙ сервис корзины с интеграцией ESARGO доставки
 import { Cart, Product, PartnerProfile } from '../../models/index.js';
+import { updateCartDeliveryInfo } from '../Delivery/delivery.service.js'; // ✅ НОВАЯ ИНТЕГРАЦИЯ
 import mongoose from 'mongoose';
 
 /**
@@ -77,7 +78,10 @@ export const addItemToCart = async (customerId, sessionId, itemData) => {
         throw new Error('Нельзя добавлять товары из разных ресторанов в одну корзину. Очистите корзину или завершите текущий заказ.');
       }
     } else {
-      // Создать новую корзину
+      // ✅ ОБНОВЛЕНО: Создать новую корзину с правильными зонами доставки
+      const activeZones = restaurant.getActiveDeliveryZones();
+      const minOrderAmount = activeZones.length > 0 ? activeZones[0].min_order_amount : 30;
+      
       cart = new Cart({
         customer_id: customerId,
         session_id: sessionId,
@@ -85,8 +89,8 @@ export const addItemToCart = async (customerId, sessionId, itemData) => {
         restaurant_info: {
           name: restaurant.business_name,
           category: restaurant.category,
-          delivery_fee: 3.50, // Стандартная стоимость доставки
-          min_order_amount: 15.00 // Минимальная сумма заказа
+          delivery_fee: 0, // ✅ БУДЕТ РАССЧИТАНА ДИНАМИЧЕСКИ
+          min_order_amount: minOrderAmount // ✅ ИЗ НАСТРОЕК РЕСТОРАНА
         }
       });
     }
@@ -113,25 +117,35 @@ export const addItemToCart = async (customerId, sessionId, itemData) => {
       category: product.category
     };
 
-    // 6. Добавить товар в корзину
-    const addResult = await cart.addItem({
-      product_id: product._id,
+    // 6. Рассчитать стоимость позиции
+    const basePrice = product.price;
+    const optionsPrice = validatedOptions.reduce((sum, opt) => sum + (opt.option_price || 0), 0);
+    const itemTotal = (basePrice + optionsPrice) * quantity;
+
+    // 7. Добавить товар в корзину
+    const cartItem = {
+      product_id,
       product_snapshot,
+      title: product.title,
+      price: basePrice,
       quantity,
       selected_options: validatedOptions,
-      special_requests
-    });
+      special_requests: special_requests || '',
+      item_total: itemTotal
+    };
+
+    const isNewItem = await cart.addItem(cartItem);
 
     console.log('✅ Item added to cart:', {
-      cart_id: cart._id,
-      total_items: cart.total_items,
-      subtotal: cart.pricing.subtotal
+      is_new_item: isNewItem,
+      item_total: itemTotal,
+      cart_total: cart.pricing.total_price
     });
 
     return {
       cart,
-      addedItem: cart.items[cart.items.length - 1],
-      isNewItem: true
+      addedItem: cartItem,
+      isNewItem
     };
 
   } catch (error) {
@@ -145,7 +159,9 @@ export const addItemToCart = async (customerId, sessionId, itemData) => {
  */
 export const updateCartItemService = async (customerId, sessionId, itemId, updateData) => {
   try {
-    console.log('✏️ UPDATE CART ITEM:', { customerId, itemId, updateData });
+    const { quantity, selected_options, special_requests } = updateData;
+
+    console.log('✏️ UPDATE CART ITEM:', { customerId, itemId, quantity });
 
     // Найти корзину
     const cart = await Cart.findActiveCart(customerId, sessionId);
@@ -153,24 +169,21 @@ export const updateCartItemService = async (customerId, sessionId, itemId, updat
       throw new Error('Активная корзина не найдена');
     }
 
-    // Найти товар в корзине
-    const item = cart.items.id(itemId);
-    if (!item) {
-      throw new Error('Товар не найден в корзине');
-    }
-
-    // Обновить товар
-    await cart.updateItem(itemId, updateData);
+    const updatedItem = await cart.updateItem(itemId, {
+      quantity: parseInt(quantity),
+      selected_options: selected_options || [],
+      special_requests: special_requests || ''
+    });
 
     console.log('✅ Cart item updated:', {
       item_id: itemId,
-      new_quantity: item.quantity,
-      new_total: item.total_item_price
+      new_quantity: quantity,
+      new_total: updatedItem.item_total
     });
 
     return {
       cart,
-      updatedItem: item
+      updatedItem
     };
 
   } catch (error) {
@@ -180,11 +193,11 @@ export const updateCartItemService = async (customerId, sessionId, itemId, updat
 };
 
 /**
- * ❌ УДАЛИТЬ ТОВАР ИЗ КОРЗИНЫ
+ * 🗑️ УДАЛИТЬ ТОВАР ИЗ КОРЗИНЫ
  */
 export const removeItemFromCart = async (customerId, sessionId, itemId) => {
   try {
-    console.log('❌ REMOVE ITEM FROM CART:', { customerId, itemId });
+    console.log('🗑️ REMOVE ITEM FROM CART:', { customerId, itemId });
 
     // Найти корзину
     const cart = await Cart.findActiveCart(customerId, sessionId);
@@ -192,19 +205,10 @@ export const removeItemFromCart = async (customerId, sessionId, itemId) => {
       throw new Error('Активная корзина не найдена');
     }
 
-    // Найти товар
-    const item = cart.items.id(itemId);
-    if (!item) {
-      throw new Error('Товар не найден в корзине');
-    }
-
-    const removedItem = { ...item.toObject() };
-
-    // Удалить товар
-    await cart.removeItem(itemId);
+    const removedItem = await cart.removeItem(itemId);
 
     console.log('✅ Item removed from cart:', {
-      item_id: itemId,
+      removed_item: removedItem.title,
       remaining_items: cart.items.length
     });
 
@@ -255,13 +259,13 @@ export const clearUserCart = async (customerId, sessionId) => {
 };
 
 /**
- * 🚚 РАССЧИТАТЬ ДОСТАВКУ
+ * ✅ ОБНОВЛЕНО: РАССЧИТАТЬ ДОСТАВКУ с интеграцией Delivery Service
  */
 export const calculateDeliveryForCart = async (customerId, sessionId, deliveryAddress) => {
   try {
     const { lat, lng, address } = deliveryAddress;
 
-    console.log('🚚 CALCULATE DELIVERY:', { customerId, lat, lng });
+    console.log('🚚 CALCULATE DELIVERY (NEW ESARGO SYSTEM):', { customerId, lat, lng });
 
     // Найти корзину
     const cart = await Cart.findActiveCart(customerId, sessionId);
@@ -273,56 +277,154 @@ export const calculateDeliveryForCart = async (customerId, sessionId, deliveryAd
       throw new Error('Корзина пуста');
     }
 
-    // Найти ресторан
-    const restaurant = await PartnerProfile.findById(cart.restaurant_id);
-    if (!restaurant) {
-      throw new Error('Ресторан не найден');
+    // ✅ ИСПОЛЬЗУЕМ НОВЫЙ DELIVERY SERVICE
+    const deliveryCoords = { lat, lng };
+    const result = await updateCartDeliveryInfo(cart, deliveryCoords);
+
+    if (!result.delivery_info.available) {
+      throw new Error('Доставка по данному адресу недоступна');
     }
 
-    // Рассчитать расстояние (упрощенно)
-    const restaurantLat = restaurant.location?.coordinates?.[1] || 48.8566;
-    const restaurantLng = restaurant.location?.coordinates?.[0] || 2.3522;
-
-    const distance = calculateDistance(restaurantLat, restaurantLng, lat, lng);
-
-    // Рассчитать стоимость и время доставки
-    let deliveryFee = 3.50; // Базовая стоимость
-    let estimatedTime = 30; // Базовое время в минутах
-
-    if (distance > 5) {
-      deliveryFee += (distance - 5) * 0.50; // +0.50€ за каждый км свыше 5км
-      estimatedTime += Math.round(distance * 2); // +2 мин за км
-    }
-
-    // Минимальная доставка 2€, максимальная 8€
-    deliveryFee = Math.max(2.00, Math.min(8.00, deliveryFee));
-    deliveryFee = Math.round(deliveryFee * 100) / 100; // Округление до центов
-
-    // Установить информацию о доставке
+    // ✅ ОБНОВЛЯЕМ ИНФОРМАЦИЮ О ДОСТАВКЕ В КОРЗИНЕ
     await cart.setDeliveryInfo({
       address,
       lat,
       lng,
-      distance_km: Math.round(distance * 100) / 100,
-      estimated_delivery_time: estimatedTime,
-      delivery_fee: deliveryFee
+      distance_km: result.delivery_info.distance_km,
+      estimated_delivery_time: result.delivery_info.estimated_minutes,
+      delivery_fee: result.delivery_info.delivery_fee,
+      delivery_zone: result.delivery_info.delivery_zone // ✅ НОВОЕ ПОЛЕ
     });
 
-    console.log('✅ Delivery calculated:', {
-      distance: `${distance.toFixed(1)}km`,
-      fee: `${deliveryFee}€`,
-      time: `${estimatedTime} мин`
+    console.log('✅ Delivery calculated (ESARGO SYSTEM):', {
+      zone: result.delivery_info.delivery_zone,
+      distance: `${result.delivery_info.distance_km}km`,
+      fee: `${result.delivery_info.delivery_fee}€`,
+      time: `${result.delivery_info.estimated_minutes} мин`,
+      large_order: result.delivery_info.is_large_order
     });
 
     return {
-      cart,
-      distance,
-      deliveryFee,
-      estimatedTime
+      cart: result.cart,
+      distance: result.delivery_info.distance_km,
+      deliveryFee: result.delivery_info.delivery_fee,
+      estimatedTime: result.delivery_info.estimated_minutes,
+      // ✅ НОВЫЕ ПОЛЯ ESARGO
+      deliveryZone: result.delivery_info.delivery_zone,
+      isLargeOrder: result.delivery_info.is_large_order,
+      deliverySystem: 'ESARGO_ZONES'
     };
 
   } catch (error) {
     console.error('🚨 CALCULATE DELIVERY Error:', error);
+    throw error;
+  }
+};
+
+/**
+ * ✅ НОВАЯ ФУНКЦИЯ: Проверка зон доставки ресторана
+ */
+export const checkRestaurantDeliveryZones = async (restaurantId) => {
+  try {
+    const restaurant = await PartnerProfile.findById(restaurantId);
+    if (!restaurant) {
+      throw new Error('Ресторан не найден');
+    }
+
+    const activeZones = restaurant.getActiveDeliveryZones();
+    
+    return {
+      restaurant_id: restaurantId,
+      restaurant_name: restaurant.business_name,
+      delivery_zones: activeZones,
+      can_deliver: activeZones.length > 0
+    };
+
+  } catch (error) {
+    console.error('🚨 CHECK DELIVERY ZONES Error:', error);
+    throw error;
+  }
+};
+
+/**
+ * ✅ НОВАЯ ФУНКЦИЯ: Валидация корзины перед заказом
+ */
+export const validateCartForOrder = async (customerId, sessionId, deliveryAddress) => {
+  try {
+    console.log('✅ VALIDATE CART FOR ORDER:', { customerId });
+
+    const cart = await Cart.findActiveCart(customerId, sessionId);
+    if (!cart) {
+      throw new Error('Корзина не найдена');
+    }
+
+    const validationResults = {
+      valid: true,
+      issues: [],
+      cart_summary: {
+        items_count: cart.items.length,
+        subtotal: cart.pricing.subtotal,
+        total_price: cart.pricing.total_price
+      }
+    };
+
+    // 1. Проверка пустоты
+    if (cart.items.length === 0) {
+      validationResults.valid = false;
+      validationResults.issues.push({
+        type: 'empty_cart',
+        message: 'Корзина пуста'
+      });
+      return validationResults;
+    }
+
+    // 2. Проверка минимальной суммы
+    if (!cart.meets_minimum_order) {
+      validationResults.valid = false;
+      validationResults.issues.push({
+        type: 'minimum_order',
+        message: `Минимальная сумма заказа: ${cart.restaurant_info.min_order_amount}€`,
+        required_amount: cart.restaurant_info.min_order_amount,
+        current_amount: cart.pricing.subtotal
+      });
+    }
+
+    // 3. Проверка доступности доставки
+    if (deliveryAddress) {
+      try {
+        const deliveryResult = await calculateDeliveryForCart(customerId, sessionId, deliveryAddress);
+        validationResults.delivery_info = {
+          available: true,
+          zone: deliveryResult.deliveryZone,
+          fee: deliveryResult.deliveryFee,
+          distance: deliveryResult.distance
+        };
+      } catch (deliveryError) {
+        validationResults.valid = false;
+        validationResults.issues.push({
+          type: 'delivery_unavailable',
+          message: deliveryError.message
+        });
+      }
+    }
+
+    // 4. ✅ ПРОВЕРКА ДОСТУПНОСТИ ТОВАРОВ (базовая)
+    for (const item of cart.items) {
+      const product = await Product.findById(item.product_id);
+      if (!product || !product.is_active || !product.is_available) {
+        validationResults.valid = false;
+        validationResults.issues.push({
+          type: 'product_unavailable',
+          message: `Товар "${item.title}" больше недоступен`,
+          product_id: item.product_id
+        });
+      }
+    }
+
+    return validationResults;
+
+  } catch (error) {
+    console.error('🚨 VALIDATE CART Error:', error);
     throw error;
   }
 };
@@ -349,11 +451,11 @@ export const convertCartToOrder = async (customerId, sessionId) => {
       throw new Error(`Минимальная сумма заказа ${cart.restaurant_info.min_order_amount}€`);
     }
 
-    // Проверить что все товары еще доступны
+    // ✅ ПРОВЕРКА ДОСТУПНОСТИ ТОВАРОВ перед конвертацией
     for (const item of cart.items) {
       const product = await Product.findById(item.product_id);
       if (!product || !product.is_available) {
-        throw new Error(`Товар "${item.product_snapshot.title}" больше недоступен`);
+        throw new Error(`Товар "${item.title}" больше недоступен`);
       }
     }
 
@@ -370,24 +472,21 @@ export const convertCartToOrder = async (customerId, sessionId) => {
   }
 };
 
-// ================ УТИЛИТЫ ================
+// ============================================
+// ЭКСПОРТ ВСЕХ ФУНКЦИЙ (СОХРАНЯЕМ СОВМЕСТИМОСТЬ)
+// ============================================
 
-/**
- * Рассчитать расстояние между двумя точками (формула Haversine)
- */
-function calculateDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Радиус Земли в километрах
-  const dLat = deg2rad(lat2 - lat1);
-  const dLon = deg2rad(lon2 - lon1);
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  const d = R * c; // Расстояние в км
-  return d;
-}
-
-function deg2rad(deg) {
-  return deg * (Math.PI/180);
-}
+export default {
+  // Основные функции (совместимость)
+  findOrCreateCart,
+  addItemToCart,
+  updateCartItemService,
+  removeItemFromCart,
+  clearUserCart,
+  calculateDeliveryForCart, // ✅ ОБНОВЛЕНА
+  convertCartToOrder,
+  
+  // ✅ НОВЫЕ ФУНКЦИИ
+  checkRestaurantDeliveryZones,
+  validateCartForOrder
+};
