@@ -1,4 +1,4 @@
-// routes/Customer.route.js (обновленный с middleware)
+// routes/Customer.route.js - Обновленные роуты с полным API управления адресами
 import express from 'express';
 import {
   register,
@@ -6,17 +6,28 @@ import {
   verify,
   getProfile,
   edit,
-  delClient,
-  addAddress,
-  updateAddress,
-  removeAddress
+  delClient
 } from '../controllers/CustomerController.js';
+
+// ✅ НОВЫЙ ИМПОРТ: Контроллер управления адресами
+import {
+  addAddress,
+  getAddresses,
+  getAddressById,
+  updateAddress,
+  removeAddress,
+  setDefaultAddress,
+  getDeliveryZonesInfo,
+  getMockAddresses,
+  validateAddress
+} from '../controllers/AddressController.js';
+
 import { 
   authenticateCustomer, 
   requireRole,
   checkProfileOwnership,
-  validateCustomerRegistration,  // Новый middleware для регистрации
-  validateCustomerUpdate        // Новый middleware для обновления
+  validateCustomerRegistration,
+  validateCustomerUpdate
 } from '../middleware/customerAuth.middleware.js';
 
 const router = express.Router();
@@ -48,6 +59,7 @@ router.get('/health', (req, res) => {
     message: "Customer routes working correctly",
     service_layer: "enabled",
     middleware: "enabled",
+    address_api: "enabled", // ✅ НОВОЕ
     available_endpoints: {
       public: {
         register: "POST /api/customers/register",
@@ -59,10 +71,17 @@ router.get('/health', (req, res) => {
         profile: "GET /api/customers/profile",
         update_profile: "PUT /api/customers/profile/:id",
         delete_profile: "DELETE /api/customers/profile/:id",
+        // ✅ НОВЫЕ ЭНДПОИНТЫ АДРЕСОВ
         addresses: {
+          get_all: "GET /api/customers/addresses",
+          get_by_id: "GET /api/customers/addresses/:addressId",
           add: "POST /api/customers/addresses",
           update: "PUT /api/customers/addresses/:addressId",
-          remove: "DELETE /api/customers/addresses/:addressId"
+          remove: "DELETE /api/customers/addresses/:addressId",
+          set_default: "PATCH /api/customers/addresses/:addressId/default",
+          validate: "POST /api/customers/addresses/validate",
+          delivery_zones: "GET /api/customers/addresses/delivery-zones",
+          mock_data: "GET /api/customers/addresses/mock-data"
         }
       }
     },
@@ -123,13 +142,79 @@ router.delete('/profile/:id',
   delClient
 );
 
-// ================ УПРАВЛЕНИЕ АДРЕСАМИ ДОСТАВКИ ================
+// ================ 📍 УПРАВЛЕНИЕ АДРЕСАМИ ДОСТАВКИ ================
+
+// ✅ УТИЛИТАРНЫЕ РОУТЫ (должны быть ПЕРЕД параметризованными)
+
+/**
+ * GET /api/customers/addresses/delivery-zones - Информация о зонах доставки
+ * Middleware: 
+ * - authenticateCustomer (проверка токена)
+ * - requireRole('customer') (проверка роли)
+ */
+router.get('/addresses/delivery-zones',
+  authenticateCustomer,
+  requireRole('customer'),
+  getDeliveryZonesInfo
+);
+
+/**
+ * GET /api/customers/addresses/mock-data - Тестовые адреса (только для разработки)
+ * Middleware: 
+ * - authenticateCustomer (проверка токена)
+ * - requireRole('customer') (проверка роли)
+ */
+router.get('/addresses/mock-data',
+  authenticateCustomer,
+  requireRole('customer'),
+  getMockAddresses
+);
+
+/**
+ * POST /api/customers/addresses/validate - Валидация адреса без сохранения
+ * Middleware: 
+ * - authenticateCustomer (проверка токена)
+ * - requireRole('customer') (проверка роли)
+ */
+router.post('/addresses/validate',
+  authenticateCustomer,
+  requireRole('customer'),
+  validateAddress
+);
+
+// ✅ ОСНОВНЫЕ CRUD РОУТЫ
+
+/**
+ * GET /api/customers/addresses - Получение всех адресов пользователя
+ * Middleware: 
+ * - authenticateCustomer (проверка токена)
+ * - requireRole('customer') (проверка роли)
+ */
+router.get('/addresses', 
+  authenticateCustomer, 
+  requireRole('customer'), 
+  getAddresses
+);
 
 /**
  * POST /api/customers/addresses - Добавление адреса доставки
  * Middleware: 
  * - authenticateCustomer (проверка токена)
  * - requireRole('customer') (проверка роли)
+ * Body: {
+ *   address: String (required),
+ *   lat?: Number,
+ *   lng?: Number,
+ *   name?: 'Дом' | 'Работа' | 'Родители' | 'Друзья' | 'Другое',
+ *   is_default?: Boolean,
+ *   details?: {
+ *     apartment?: String,
+ *     entrance?: String,
+ *     intercom?: String,
+ *     floor?: String,
+ *     delivery_notes?: String
+ *   }
+ * }
  */
 router.post('/addresses', 
   authenticateCustomer, 
@@ -138,10 +223,34 @@ router.post('/addresses',
 );
 
 /**
+ * GET /api/customers/addresses/:addressId - Получение конкретного адреса
+ * Middleware: 
+ * - authenticateCustomer (проверка токена)
+ * - requireRole('customer') (проверка роли)
+ */
+router.get('/addresses/:addressId',
+  authenticateCustomer,
+  requireRole('customer'),
+  getAddressById
+);
+
+/**
  * PUT /api/customers/addresses/:addressId - Обновление адреса доставки
  * Middleware: 
  * - authenticateCustomer (проверка токена)
  * - requireRole('customer') (проверка роли)
+ * Body: {
+ *   address?: String,
+ *   name?: 'Дом' | 'Работа' | 'Родители' | 'Друзья' | 'Другое',
+ *   is_default?: Boolean,
+ *   details?: {
+ *     apartment?: String,
+ *     entrance?: String,
+ *     intercom?: String,
+ *     floor?: String,
+ *     delivery_notes?: String
+ *   }
+ * }
  */
 router.put('/addresses/:addressId', 
   authenticateCustomer, 
@@ -159,6 +268,18 @@ router.delete('/addresses/:addressId',
   authenticateCustomer, 
   requireRole('customer'), 
   removeAddress
+);
+
+/**
+ * PATCH /api/customers/addresses/:addressId/default - Установка основного адреса
+ * Middleware: 
+ * - authenticateCustomer (проверка токена)
+ * - requireRole('customer') (проверка роли)
+ */
+router.patch('/addresses/:addressId/default',
+  authenticateCustomer,
+  requireRole('customer'),
+  setDefaultAddress
 );
 
 // ================ ДОПОЛНИТЕЛЬНЫЕ ЗАЩИЩЕННЫЕ РОУТЫ ================

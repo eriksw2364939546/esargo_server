@@ -1,61 +1,48 @@
-// services/customer.service.js (обновленный с валидацией)
-import { User, CustomerProfile } from '../models/index.js';
-import Meta from '../models/Meta.model.js';
-import { cryptoString, decryptString } from '../utils/crypto.js';
-import { hashString, hashMeta } from '../utils/hash.js';
+// services/customer.service.js - Очищенный от старых функций управления адресами
+import { CustomerProfile, User } from '../models/index.js';
+import { hashString, validateEmail, validatePhone, encryptString, decryptString } from '../utils/index.js';
+import bcrypt from 'bcrypt';
 import mongoose from 'mongoose';
 
-/**
- * ВАЛИДАЦИЯ ДАННЫХ КЛИЕНТА
- */
+// ================ ВАЛИДАЦИОННЫЕ ФУНКЦИИ ================
 
 /**
- * Валидация данных профиля клиента
- * @param {object} profileData - Данные профиля
- * @param {boolean} isUpdate - Режим обновления (необязательные поля)
+ * Валидация данных для обновления профиля
+ * @param {object} updateData - Данные для обновления
  * @returns {object} - Результат валидации
  */
-const validateCustomerProfileData = (profileData, isUpdate = false) => {
-  const { first_name, last_name, phone, preferred_language } = profileData;
+const validateProfileUpdate = (updateData) => {
   const errors = [];
 
-  // Проверка имени
-  if (!isUpdate || first_name !== undefined) {
-    if (!first_name || typeof first_name !== 'string' || first_name.trim().length === 0) {
-      errors.push('Имя обязательно');
-    } else if (first_name.trim().length < 2) {
+  // Валидация имени
+  if (updateData.first_name !== undefined) {
+    if (!updateData.first_name || updateData.first_name.trim().length === 0) {
+      errors.push('Имя не может быть пустым');
+    } else if (updateData.first_name.trim().length < 2) {
       errors.push('Имя должно содержать минимум 2 символа');
-    } else if (first_name.trim().length > 50) {
-      errors.push('Имя не может быть длиннее 50 символов');
     }
   }
 
-  // Проверка фамилии
-  if (!isUpdate || last_name !== undefined) {
-    if (!last_name || typeof last_name !== 'string' || last_name.trim().length === 0) {
-      errors.push('Фамилия обязательна');
-    } else if (last_name.trim().length < 2) {
+  // Валидация фамилии
+  if (updateData.last_name !== undefined) {
+    if (!updateData.last_name || updateData.last_name.trim().length === 0) {
+      errors.push('Фамилия не может быть пустой');
+    } else if (updateData.last_name.trim().length < 2) {
       errors.push('Фамилия должна содержать минимум 2 символа');
-    } else if (last_name.trim().length > 50) {
-      errors.push('Фамилия не может быть длиннее 50 символов');
     }
   }
 
-  // Проверка телефона (если предоставлен)
-  if (phone !== undefined && phone !== null && phone !== '') {
-    // Французский формат телефона: +33 или 0, затем 9 цифр
-    const phoneRegex = /^(?:(?:\+33|0)[1-9](?:[0-9]{8}))$/;
-    const normalizedPhone = phone.replace(/[\s\-\.]/g, '');
-    
-    if (!phoneRegex.test(normalizedPhone)) {
-      errors.push('Неверный формат телефона (ожидается французский формат: +33XXXXXXXXX или 0XXXXXXXXX)');
+  // Валидация телефона
+  if (updateData.phone !== undefined) {
+    if (!validatePhone(updateData.phone)) {
+      errors.push('Некорректный номер телефона');
     }
   }
 
-  // Проверка языка
-  if (preferred_language !== undefined) {
+  // Валидация языка
+  if (updateData.language !== undefined) {
     const allowedLanguages = ['ru', 'fr', 'en'];
-    if (!allowedLanguages.includes(preferred_language)) {
+    if (!allowedLanguages.includes(updateData.language)) {
       errors.push('Неподдерживаемый язык. Доступны: ru, fr, en');
     }
   }
@@ -66,48 +53,10 @@ const validateCustomerProfileData = (profileData, isUpdate = false) => {
   };
 };
 
-/**
- * Валидация адреса доставки
- * @param {object} addressData - Данные адреса
- * @returns {object} - Результат валидации
- */
-const validateDeliveryAddress = (addressData) => {
-  const { label, address, lat, lng } = addressData;
-  const errors = [];
-
-  // Проверка метки
-  const allowedLabels = ['Дом', 'Работа', 'Другое'];
-  if (!label || !allowedLabels.includes(label)) {
-    errors.push('Метка адреса обязательна. Доступны: Дом, Работа, Другое');
-  }
-
-  // Проверка адреса
-  if (!address || typeof address !== 'string' || address.trim().length === 0) {
-    errors.push('Адрес обязателен');
-  } else if (address.trim().length < 10) {
-    errors.push('Адрес должен содержать минимум 10 символов');
-  }
-
-  // Проверка координат
-  if (typeof lat !== 'number' || lat < -90 || lat > 90) {
-    errors.push('Неверная широта (должна быть числом от -90 до 90)');
-  }
-  if (typeof lng !== 'number' || lng < -180 || lng > 180) {
-    errors.push('Неверная долгота (должна быть числом от -180 до 180)');
-  }
-
-  return {
-    isValid: errors.length === 0,
-    errors
-  };
-};
+// ================ ОСНОВНЫЕ ФУНКЦИИ СЕРВИСА ================
 
 /**
- * ОСНОВНЫЕ ФУНКЦИИ СЕРВИСА
- */
-
-/**
- * Получение профиля клиента (ИСПРАВЛЕНО - скрываем email в сервисе)
+ * Получение профиля клиента
  * @param {string} userId - ID пользователя
  * @returns {object} - Профиль клиента
  */
@@ -131,7 +80,7 @@ export const getCustomerProfile = async (userId) => {
       throw new Error('Профиль клиента не найден');
     }
 
-    // 🔐 РАСШИФРОВЫВАЕМ email для отображения (как в партнерской системе)
+    // 🔐 РАСШИФРОВЫВАЕМ email для отображения
     let displayEmail = '[EMAIL_PROTECTED]';
     try {
       displayEmail = decryptString(user.email);
@@ -148,11 +97,12 @@ export const getCustomerProfile = async (userId) => {
 
     return {
       user: {
-        id: user._id,
-        email: displayEmail, // ✅ Email остается как есть в User модели
+        _id: user._id,
+        email: displayEmail,
         role: user.role,
-        is_email_verified: user.is_email_verified,
-        is_active: user.is_active
+        is_active: user.is_active,
+        created_at: user.created_at,
+        updated_at: user.updated_at
       },
       profile: decryptedProfile
     };
@@ -175,74 +125,42 @@ export const updateCustomerProfile = async (userId, updateData) => {
       throw new Error('Некорректный ID пользователя');
     }
 
+    // ВАЛИДАЦИЯ входных данных
+    const validation = validateProfileUpdate(updateData);
+    if (!validation.isValid) {
+      const error = new Error('Ошибки валидации');
+      error.validationErrors = validation.errors;
+      throw error;
+    }
+
     const user = await User.findById(userId);
     if (!user) {
       throw new Error('Пользователь не найден');
     }
 
-    if (user.role !== 'customer') {
-      throw new Error('Доступ разрешен только для клиентов');
-    }
-
-    // ВАЛИДАЦИЯ данных профиля
-    const validation = validateCustomerProfileData(updateData, true);
-    if (!validation.isValid) {
-      const error = new Error('Ошибки валидации данных');
-      error.validationErrors = validation.errors;
-      throw error;
-    }
-
-    // Подготавливаем данные для обновления User модели
+    // Подготовка данных для обновления
     const userUpdateData = {};
     const profileUpdateData = {};
 
-    // Обработка email (если изменяется)
-    if (updateData.email && updateData.email !== user.email) {
-      const normalizedEmail = updateData.email.toLowerCase().trim();
-      
-      // 🔐 ВАЛИДАЦИЯ email
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(normalizedEmail)) {
-        throw new Error('Неверный формат email');
-      }
-      
-      // Проверяем, не занят ли новый email через Meta
-      const hashedNewEmail = hashMeta(normalizedEmail);
-      const existingMeta = await Meta.findOne({
-        em: hashedNewEmail,
-        role: 'customer',
-        customer: { $ne: userId }
-      });
-
-      if (existingMeta) {
-        throw new Error('Пользователь с таким email уже существует');
+    // БИЗНЕС-ЛОГИКА: Обработка смены пароля
+    if (updateData.current_password && updateData.new_password) {
+      const isCurrentPasswordValid = await bcrypt.compare(updateData.current_password, user.password_hash);
+      if (!isCurrentPasswordValid) {
+        const error = new Error('Текущий пароль неверен');
+        error.validationErrors = ['Текущий пароль неверен'];
+        throw error;
       }
 
-      // 🔐 ЗАШИФРОВЫВАЕМ новый email (как в партнерской системе)
-      userUpdateData.email = cryptoString(normalizedEmail);
-      userUpdateData.is_email_verified = false;
-      
-      // Обновляем Meta запись с новым хешированным email
-      await Meta.findOneAndUpdate(
-        { customer: userId, role: 'customer' },
-        { em: hashedNewEmail }
-      );
+      if (updateData.new_password.length < 6) {
+        const error = new Error('Новый пароль должен содержать минимум 6 символов');
+        error.validationErrors = ['Новый пароль должен содержать минимум 6 символов'];
+        throw error;
+      }
+
+      userUpdateData.password_hash = await hashString(updateData.new_password);
     }
 
-    // Обработка пароля
-    if (updateData.password) {
-      // ВАЛИДАЦИЯ пароля
-      if (updateData.password.length < 6) {
-        throw new Error('Пароль должен содержать минимум 6 символов');
-      }
-      if (updateData.password.length > 128) {
-        throw new Error('Пароль не может быть длиннее 128 символов');
-      }
-      
-      userUpdateData.password_hash = await hashString(updateData.password);
-    }
-
-    // Обработка данных профиля с НОРМАЛИЗАЦИЕЙ
+    // БИЗНЕС-ЛОГИКА: Обработка обычных полей профиля
     if (updateData.first_name !== undefined) {
       profileUpdateData.first_name = updateData.first_name.trim();
     }
@@ -252,30 +170,20 @@ export const updateCustomerProfile = async (userId, updateData) => {
     }
 
     if (updateData.phone !== undefined) {
-      if (updateData.phone) {
-        // Нормализуем и шифруем телефон
-        const normalizedPhone = updateData.phone.replace(/[\s\-\.]/g, '');
-        profileUpdateData.phone = cryptoString(normalizedPhone);
-      } else {
-        profileUpdateData.phone = null;
-      }
+      profileUpdateData.phone = encryptString(updateData.phone);
     }
 
-    // Обработка настроек
-    if (updateData.settings) {
-      const currentProfile = await CustomerProfile.findOne({ user_id: userId });
-      profileUpdateData.settings = {
-        ...currentProfile?.settings?.toObject(),
-        ...updateData.settings
-      };
-      
-      // ВАЛИДАЦИЯ языка в настройках
-      if (updateData.settings.preferred_language) {
-        const allowedLanguages = ['ru', 'fr', 'en'];
-        if (!allowedLanguages.includes(updateData.settings.preferred_language)) {
-          throw new Error('Неподдерживаемый язык. Доступны: ru, fr, en');
-        }
+    if (updateData.avatar_url !== undefined) {
+      profileUpdateData.avatar_url = updateData.avatar_url;
+    }
+
+    // БИЗНЕС-ЛОГИКА: Обновление настроек
+    if (updateData.language !== undefined) {
+      if (!profileUpdateData.preferences) {
+        const currentProfile = await CustomerProfile.findOne({ user_id: userId });
+        profileUpdateData.preferences = currentProfile.preferences || {};
       }
+      profileUpdateData['preferences.language'] = updateData.language;
     }
 
     // Обновляем пользователя
@@ -304,74 +212,12 @@ export const updateCustomerProfile = async (userId, updateData) => {
 };
 
 /**
- * Добавление адреса доставки
+ * Удаление профиля клиента
  * @param {string} userId - ID пользователя
- * @param {object} addressData - Данные адреса
- * @returns {object} - Обновленный профиль
- */
-export const addDeliveryAddress = async (userId, addressData) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      throw new Error('Некорректный ID пользователя');
-    }
-
-    // ВАЛИДАЦИЯ адреса
-    const validation = validateDeliveryAddress(addressData);
-    if (!validation.isValid) {
-      const error = new Error('Ошибки валидации адреса');
-      error.validationErrors = validation.errors;
-      throw error;
-    }
-
-    const profile = await CustomerProfile.findOne({ user_id: userId });
-    if (!profile) {
-      throw new Error('Профиль клиента не найден');
-    }
-
-    // БИЗНЕС-ЛОГИКА: Проверяем лимит адресов
-    if (profile.delivery_addresses.length >= 5) {
-      throw new Error('Максимальное количество адресов: 5');
-    }
-
-    // БИЗНЕС-ЛОГИКА: Если это первый адрес, делаем его основным
-    const isFirstAddress = profile.delivery_addresses.length === 0;
-    const newAddress = {
-      label: addressData.label,
-      address: addressData.address.trim(),
-      lat: addressData.lat,
-      lng: addressData.lng,
-      is_default: isFirstAddress || addressData.is_default || false
-    };
-
-    // БИЗНЕС-ЛОГИКА: Если новый адрес основной, снимаем флаг с остальных
-    if (newAddress.is_default) {
-      profile.delivery_addresses.forEach(addr => {
-        addr.is_default = false;
-      });
-    }
-
-    profile.delivery_addresses.push(newAddress);
-    await profile.save();
-
-    return await getCustomerProfile(userId);
-
-  } catch (error) {
-    console.error('Add delivery address error:', error);
-    throw error;
-  }
-};
-
-/**
- * Удаление профиля клиента (ИСПРАВЛЕНО - полная очистка как у партнеров)
- * @param {string} userId - ID пользователя
- * @returns {object} - Результат удаления
+ * @returns {boolean} - Результат удаления
  */
 export const deleteCustomerProfile = async (userId) => {
-  const session = await mongoose.startSession();
-  
   try {
-    console.log('🔍 DELETE CUSTOMER ACCOUNT:', { userId });
-    
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       throw new Error('Некорректный ID пользователя');
     }
@@ -382,85 +228,113 @@ export const deleteCustomerProfile = async (userId) => {
     }
 
     if (user.role !== 'customer') {
-      throw new Error('Доступ разрешен только для клиентов');
+      throw new Error('Можно удалять только профили клиентов');
     }
 
-    let cleanupInfo = {
-      user_deleted: false,
-      meta_deleted: false,
-      profile_deleted: false,
-      orders_deleted: 0,
-      reviews_deleted: 0,
-      messages_deleted: 0
-    };
+    // БИЗНЕС-ЛОГИКА: Проверяем наличие активных заказов
+    // TODO: Добавить проверку активных заказов когда будет готов Order сервис
+    
+    // Удаляем профиль клиента
+    const deletedProfile = await CustomerProfile.findOneAndDelete({ user_id: userId });
+    if (!deletedProfile) {
+      throw new Error('Профиль клиента не найден');
+    }
 
-    // 🔐 ИСПОЛЬЗУЕМ ТРАНЗАКЦИЮ для атомарного удаления (как у партнеров)
-    await session.withTransaction(async () => {
-      // 1. Удаляем заказы клиента (если есть модель Order)
-      try {
-        const { Order } = await import('../models/index.js');
-        const deleteOrdersResult = await Order.deleteMany({ 
-          customer_id: userId 
-        }, { session });
-        cleanupInfo.orders_deleted = deleteOrdersResult.deletedCount;
-      } catch (error) {
-        console.log('Order model not found or no orders to delete');
-      }
-
-      // 2. Удаляем отзывы клиента (если есть модель Review)
-      try {
-        const { Review } = await import('../models/index.js');
-        const deleteReviewsResult = await Review.deleteMany({ 
-          customer_id: userId 
-        }, { session });
-        cleanupInfo.reviews_deleted = deleteReviewsResult.deletedCount;
-      } catch (error) {
-        console.log('Review model not found or no reviews to delete');
-      }
-
-      // 3. Удаляем сообщения клиента (если есть модель Message)
-      try {
-        const { Message } = await import('../models/index.js');
-        const deleteMessagesResult = await Message.deleteMany({ 
-          customer_id: userId 
-        }, { session });
-        cleanupInfo.messages_deleted = deleteMessagesResult.deletedCount;
-      } catch (error) {
-        console.log('Message model not found or no messages to delete');
-      }
-
-      // 4. Удаляем профиль клиента
-      const profileResult = await CustomerProfile.findOneAndDelete({ 
-        user_id: userId 
-      }, { session });
-      cleanupInfo.profile_deleted = !!profileResult;
-
-      // 5. Удаляем Meta запись (ВАЖНО!)
-      const metaResult = await Meta.findOneAndDelete({ 
-        customer: userId,
-        role: 'customer'
-      }, { session });
-      cleanupInfo.meta_deleted = !!metaResult;
-
-      // 6. Удаляем пользователя
-      const userResult = await User.findByIdAndDelete(userId, { session });
-      cleanupInfo.user_deleted = !!userResult;
+    // Деактивируем пользователя (не удаляем полностью для истории)
+    await User.findByIdAndUpdate(userId, { 
+      is_active: false,
+      email: encryptString(`deleted_${Date.now()}_${user.email}`)
     });
 
-    console.log('✅ CUSTOMER ACCOUNT DELETED:', cleanupInfo);
+    console.log('✅ Customer profile deleted:', { userId });
+    return true;
+
+  } catch (error) {
+    console.error('Delete customer profile error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Проверка существования профиля клиента
+ * @param {string} userId - ID пользователя
+ * @returns {boolean} - Существует ли профиль
+ */
+export const customerProfileExists = async (userId) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return false;
+    }
+
+    const profile = await CustomerProfile.findOne({ user_id: userId });
+    return !!profile;
+
+  } catch (error) {
+    console.error('Check customer profile exists error:', error);
+    return false;
+  }
+};
+
+/**
+ * Получение статистики профиля клиента
+ * @param {string} userId - ID пользователя
+ * @returns {object} - Статистика профиля
+ */
+export const getCustomerStats = async (userId) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      throw new Error('Некорректный ID пользователя');
+    }
+
+    const profile = await CustomerProfile.findOne({ user_id: userId });
+    if (!profile) {
+      throw new Error('Профиль клиента не найден');
+    }
 
     return {
-      deleted_customer: {
-        id: userId,
-        deleted_at: new Date()
+      // ✅ СТАТИСТИКА ПО АДРЕСАМ (новая структура)
+      addresses: {
+        total_count: profile.saved_addresses?.length || 0,
+        has_default: profile.saved_addresses?.some(addr => addr.is_default) || false,
+        zones_used: [...new Set(profile.saved_addresses?.map(addr => addr.delivery_info?.zone).filter(Boolean))] || [],
+        most_used_zone: profile.saved_addresses?.reduce((acc, addr) => {
+          const zone = addr.delivery_info?.zone;
+          if (zone) acc[zone] = (acc[zone] || 0) + (addr.delivery_info?.order_count || 0);
+          return acc;
+        }, {})
       },
-      cleanup_info: cleanupInfo
+      
+      // ✅ СТАТИСТИКА ПО ЗАКАЗАМ
+      orders: profile.order_stats || {
+        total_orders: 0,
+        total_spent: 0,
+        avg_rating_given: 0
+      },
+      
+      // ✅ АКТИВНОСТЬ ПРОФИЛЯ
+      profile_activity: {
+        is_active: profile.is_active,
+        created_at: profile.created_at,
+        last_updated: profile.updated_at,
+        days_since_registration: Math.floor((Date.now() - profile.created_at) / (1000 * 60 * 60 * 24))
+      }
     };
 
   } catch (error) {
-    console.error('🚨 DELETE CUSTOMER ACCOUNT ERROR:', error);
+    console.error('Get customer stats error:', error);
     throw error;
-  } finally {
-    await session.endSession();
   }
 };
+
+// ================ ЭКСПОРТ ================
+
+export default {
+  getCustomerProfile,
+  updateCustomerProfile,
+  deleteCustomerProfile,
+  customerProfileExists,
+  getCustomerStats
+};
+
+// ✅ УДАЛЕНЫ СТАРЫЕ ФУНКЦИИ: addDeliveryAddress и связанные с delivery_addresses
+// Теперь все управление адресами в services/Address/address.service.js

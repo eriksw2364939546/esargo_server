@@ -1,4 +1,4 @@
-// controllers/CustomerController.js (обновленный)
+// controllers/CustomerController.js - Очищенный от старых функций управления адресами
 import { 
   createCustomerAccount, 
   loginCustomer, 
@@ -7,8 +7,7 @@ import {
 import { 
   getCustomerProfile, 
   updateCustomerProfile, 
-  deleteCustomerProfile,
-  addDeliveryAddress
+  deleteCustomerProfile
 } from '../services/customer.service.js';
 import { generateCustomerToken } from '../services/token.service.js';
 
@@ -80,33 +79,55 @@ export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Базовая валидация
     if (!email || !password) {
       return res.status(400).json({
         result: false,
-        message: "Email и пароль обязательны"
+        message: "Email и пароль обязательны для заполнения"
       });
     }
 
     // Авторизация через сервис
-    const loginResult = await loginCustomer({ email, password });
+    const loginResult = await loginCustomer(email, password);
+    
+    if (!loginResult.isValid) {
+      return res.status(401).json({
+        result: false,
+        message: "Неверный email или пароль"
+      });
+    }
+
+    // Генерируем токен
+    const token = generateCustomerToken({
+      user_id: loginResult.customer._id,
+      _id: loginResult.customer._id,
+      email: loginResult.customer.email,
+      role: loginResult.customer.role
+    }, '30d');
 
     res.status(200).json({
       result: true,
-      message: "Вход выполнен успешно",
-      user: loginResult.user,
-      token: loginResult.token
+      message: "Авторизация успешна",
+      user: {
+        id: loginResult.customer._id,
+        email: loginResult.customer.email,
+        role: loginResult.customer.role,
+        profile: {
+          first_name: loginResult.customer.profile.first_name,
+          last_name: loginResult.customer.profile.last_name,
+          full_name: loginResult.customer.profile.full_name,
+          phone: loginResult.customer.profile.phone,
+          avatar_url: loginResult.customer.profile.avatar_url
+        }
+      },
+      token
     });
 
   } catch (error) {
     console.error('Login error:', error);
-    
-    // Используем статус код из ошибки если он есть
-    const statusCode = error.statusCode || 500;
-    
-    res.status(statusCode).json({
+    res.status(500).json({
       result: false,
-      message: error.message || "Ошибка при входе"
+      message: "Ошибка при авторизации",
+      error: error.message
     });
   }
 };
@@ -123,33 +144,35 @@ export const verify = async (req, res) => {
       });
     }
 
-    // Получаем полную информацию о пользователе через сервис
-    const userWithProfile = await getUserById(user._id);
-
-    if (!userWithProfile) {
-      return res.status(404).json({
-        result: false,
-        message: "Пользователь не найден"
-      });
-    }
+    // Получаем полную информацию о профиле
+    const customerProfile = await getCustomerProfile(user._id);
 
     res.status(200).json({
       result: true,
-      message: "Пользователь верифицирован",
+      message: "Токен действителен",
       user: {
-        id: userWithProfile._id,
-        email: userWithProfile.email,
-        role: userWithProfile.role,
-        is_email_verified: userWithProfile.is_email_verified,
-        profile: userWithProfile.profile
+        id: customerProfile.user._id,
+        email: customerProfile.user.email,
+        role: customerProfile.user.role,
+        profile: {
+          first_name: customerProfile.profile.first_name,
+          last_name: customerProfile.profile.last_name,
+          full_name: customerProfile.profile.full_name,
+          phone: customerProfile.profile.phone,
+          avatar_url: customerProfile.profile.avatar_url,
+          // ✅ НОВЫЕ ПОЛЯ: Количество сохраненных адресов
+          saved_addresses_count: customerProfile.profile.saved_addresses?.length || 0,
+          has_default_address: customerProfile.profile.saved_addresses?.some(addr => addr.is_default) || false
+        }
       }
     });
 
   } catch (error) {
-    console.error('Verify error:', error);
+    console.error('Verify token error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка при верификации"
+      message: "Ошибка при верификации токена",
+      error: error.message
     });
   }
 };
@@ -167,13 +190,21 @@ export const getProfile = async (req, res) => {
     }
 
     // Получаем профиль через сервис
-    const profileData = await getCustomerProfile(user._id);
+    const customerProfile = await getCustomerProfile(user._id);
 
     res.status(200).json({
       result: true,
       message: "Профиль получен успешно",
-      user: profileData.user,
-      profile: profileData.profile
+      user: customerProfile.user,
+      profile: {
+        ...customerProfile.profile,
+        // ✅ ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ОБ АДРЕСАХ
+        addresses_summary: {
+          total_count: customerProfile.profile.saved_addresses?.length || 0,
+          default_address: customerProfile.profile.saved_addresses?.find(addr => addr.is_default) || null,
+          zones_used: [...new Set(customerProfile.profile.saved_addresses?.map(addr => addr.delivery_info?.zone).filter(Boolean))] || []
+        }
+      }
     });
 
   } catch (error) {
@@ -198,14 +229,38 @@ export const edit = async (req, res) => {
       });
     }
 
+    // Фильтруем данные для обновления (исключаем адреса)
+    const allowedFields = ['first_name', 'last_name', 'phone', 'avatar_url', 'language', 'current_password', 'new_password'];
+    const filteredUpdateData = {};
+    
+    allowedFields.forEach(field => {
+      if (updateData[field] !== undefined) {
+        filteredUpdateData[field] = updateData[field];
+      }
+    });
+
+    if (Object.keys(filteredUpdateData).length === 0) {
+      return res.status(400).json({
+        result: false,
+        message: "Нет данных для обновления"
+      });
+    }
+
     // Обновляем профиль через сервис (валидация внутри сервиса)
-    const updatedProfile = await updateCustomerProfile(user._id, updateData);
+    const updatedProfile = await updateCustomerProfile(user._id, filteredUpdateData);
 
     res.status(200).json({
       result: true,
       message: "Профиль обновлен успешно",
       user: updatedProfile.user,
-      profile: updatedProfile.profile
+      profile: {
+        ...updatedProfile.profile,
+        // ✅ СОХРАНЯЕМ ИНФОРМАЦИЮ ОБ АДРЕСАХ
+        addresses_summary: {
+          total_count: updatedProfile.profile.saved_addresses?.length || 0,
+          has_default_address: updatedProfile.profile.saved_addresses?.some(addr => addr.is_default) || false
+        }
+      }
     });
 
   } catch (error) {
@@ -256,107 +311,25 @@ export const delClient = async (req, res) => {
   }
 };
 
-// ===== УПРАВЛЕНИЕ АДРЕСАМИ ДОСТАВКИ =====
+// ================ ЭКСПОРТ ================
 
-/**
- * Добавление нового адреса доставки
- */
-export const addAddress = async (req, res) => {
-  try {
-    const { user } = req; // Из middleware аутентификации
-    const { label, address, lat, lng, is_default } = req.body;
-
-    if (!user) {
-      return res.status(404).json({
-        result: false,
-        message: "Пользователь не определен!"
-      });
-    }
-
-    // Базовая валидация
-    if (!label || !address || typeof lat !== 'number' || typeof lng !== 'number') {
-      return res.status(400).json({
-        result: false,
-        message: "Обязательные поля: label, address, lat, lng"
-      });
-    }
-
-    const addressData = { label, address, lat, lng, is_default };
-    
-    // Добавляем адрес через сервис (валидация внутри сервиса)
-    const updatedProfile = await addDeliveryAddress(user._id, addressData);
-
-    res.status(201).json({
-      result: true,
-      message: "Адрес добавлен успешно",
-      profile: updatedProfile.profile
-    });
-
-  } catch (error) {
-    console.error('Add address error:', error);
-    
-    // Обработка ошибок валидации
-    if (error.validationErrors) {
-      return res.status(400).json({
-        result: false,
-        message: "Ошибки валидации адреса",
-        errors: error.validationErrors
-      });
-    }
-    
-    res.status(500).json({
-      result: false,
-      message: error.message || "Ошибка при добавлении адреса"
-    });
-  }
+export {
+  register,
+  login,
+  verify,
+  getProfile,
+  edit,
+  delClient
 };
 
-/**
- * Обновление адреса доставки
- */
-export const updateAddress = async (req, res) => {
-  try {
-    const { user } = req;
-    const { addressId } = req.params;
-    const updateData = req.body;
+// ✅ УДАЛЕНЫ СТАРЫЕ ФУНКЦИИ: addAddress, updateAddress, removeAddress
+// Теперь управление адресами полностью в AddressController.js
 
-    // TODO: Реализовать обновление адреса в сервисе
-    res.status(200).json({
-      result: true,
-      message: "Обновление адреса в разработке",
-      addressId,
-      updateData
-    });
-
-  } catch (error) {
-    console.error('Update address error:', error);
-    res.status(500).json({
-      result: false,
-      message: "Ошибка при обновлении адреса"
-    });
-  }
-};
-
-/**
- * Удаление адреса доставки
- */
-export const removeAddress = async (req, res) => {
-  try {
-    const { user } = req;
-    const { addressId } = req.params;
-
-    // TODO: Реализовать удаление адреса в сервисе
-    res.status(200).json({
-      result: true,
-      message: "Удаление адреса в разработке",
-      addressId
-    });
-
-  } catch (error) {
-    console.error('Remove address error:', error);
-    res.status(500).json({
-      result: false,
-      message: "Ошибка при удалении адреса"
-    });
-  }
+export default {
+  register,
+  login,
+  verify,
+  getProfile,
+  edit,
+  delClient
 };
