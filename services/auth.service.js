@@ -1,4 +1,4 @@
-// services/auth.service.js - ИСПРАВЛЕННЫЙ без дублирования
+// services/auth.service.js - ИСПРАВЛЕННЫЙ с добавлением getUserById
 import { User, CustomerProfile } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
 import generatePassword from '../utils/generatePassword.js';
@@ -166,6 +166,65 @@ export const authenticateCustomer = async (email, password) => {
   }
 };
 
+// ✅ ДОБАВЛЯЕМ НЕДОСТАЮЩУЮ ФУНКЦИЮ getUserById для middleware
+export const getUserById = async (userId) => {
+  try {
+    const user = await User.findById(userId);
+    if (!user) {
+      return null;
+    }
+
+    // Если это клиент, получаем также профиль
+    if (user.role === 'customer') {
+      const profile = await CustomerProfile.findOne({ user_id: user._id });
+      
+      // Расшифровываем данные для middleware
+      let displayPhone = null;
+      let displayEmail = null;
+      
+      try {
+        displayEmail = user.email ? decryptString(user.email) : null;
+        displayPhone = profile?.phone ? decryptString(profile.phone) : null;
+      } catch (error) {
+        console.warn('Could not decrypt user data in getUserById');
+      }
+
+      return {
+        _id: user._id,
+        email: displayEmail,
+        role: user.role,
+        is_active: user.is_active,
+        profile: profile ? {
+          first_name: profile.first_name,
+          last_name: profile.last_name,
+          full_name: profile.full_name,
+          phone: displayPhone,
+          avatar_url: profile.avatar_url
+        } : null
+      };
+    }
+
+    // Для других ролей возвращаем базовые данные
+    let displayEmail = null;
+    try {
+      displayEmail = user.email ? decryptString(user.email) : null;
+    } catch (error) {
+      console.warn('Could not decrypt email in getUserById');
+    }
+
+    return {
+      _id: user._id,
+      email: displayEmail,
+      role: user.role,
+      is_active: user.is_active
+    };
+
+  } catch (error) {
+    console.error('Get user by ID error:', error);
+    throw error;
+  }
+};
+
 export const findCustomerByEmail = async (email) => {
   try {
     const normalizedEmail = email.toLowerCase().trim();
@@ -198,5 +257,6 @@ export const findCustomerByEmail = async (email) => {
 export default {
   createCustomerAccount,
   authenticateCustomer,
+  getUserById,
   findCustomerByEmail
 };
