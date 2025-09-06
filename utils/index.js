@@ -10,7 +10,8 @@ export {
 
 // Экспортируем функции шифрования
 export { 
-  cryptoString, 
+  cryptoString,
+  cryptoString as encryptString, 
   decryptString, 
   isEncrypted 
 } from './crypto.js';
@@ -126,6 +127,3 @@ export const calculateDistance = (lat1, lng1, lat2, lng2) => {
   return R * c;
 };
 
-// Алиасы для обратной совместимости
-export const encryptString = cryptoString;
-export const decryptString = decryptString;

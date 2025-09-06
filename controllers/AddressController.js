@@ -5,28 +5,23 @@ import {
   deleteCustomerAddress,
   getCustomerAddresses,
   getCustomerAddressById,
-  setDefaultAddress as setDefaultAddressService, // ✅ ПЕРЕИМЕНОВАНО во избежание конфликта
+  setDefaultAddress as setDefaultAddressService,
   getDeliveryZones,
   generateMockAddresses
 } from '../services/Address/address.service.js';
 
 // ================ CRUD ОПЕРАЦИИ ================
 
-/**
- * 📍 ДОБАВЛЕНИЕ НОВОГО АДРЕСА
- * POST /api/customers/addresses
- */
 export const addAddress = async (req, res) => {
   try {
     const { user } = req;
     const addressData = req.body;
 
-    console.log('📍 ADD ADDRESS Controller:', { 
+    console.log('ADD ADDRESS Controller:', { 
       userId: user._id, 
       address: addressData.address 
     });
 
-    // Базовая валидация обязательных полей
     if (!addressData.address || addressData.address.trim().length === 0) {
       return res.status(400).json({
         result: false,
@@ -35,7 +30,7 @@ export const addAddress = async (req, res) => {
     }
 
     if (!addressData.name) {
-      addressData.name = 'Дом'; // Значение по умолчанию
+      addressData.name = 'Дом';
     }
 
     const result = await addCustomerAddress(user._id, addressData);
@@ -48,9 +43,8 @@ export const addAddress = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('🚨 ADD ADDRESS Controller Error:', error);
+    console.error('ADD ADDRESS Controller Error:', error);
 
-    // Обработка ошибок валидации
     if (error.validationErrors) {
       return res.status(400).json({
         result: false,
@@ -59,7 +53,6 @@ export const addAddress = async (req, res) => {
       });
     }
 
-    // Определение статус кода
     const statusCode = error.message.includes('не найден') ? 404 :
                       error.message.includes('Максимальное количество') ? 422 :
                       error.message.includes('за пределами зон') ? 422 : 500;
@@ -71,15 +64,10 @@ export const addAddress = async (req, res) => {
   }
 };
 
-/**
- * 📋 ПОЛУЧЕНИЕ ВСЕХ АДРЕСОВ ПОЛЬЗОВАТЕЛЯ
- * GET /api/customers/addresses
- */
 export const getAddresses = async (req, res) => {
   try {
     const { user } = req;
-
-    console.log('📋 GET ADDRESSES Controller:', { userId: user._id });
+    console.log('GET ADDRESSES Controller:', { userId: user._id });
 
     const result = await getCustomerAddresses(user._id);
 
@@ -92,7 +80,7 @@ export const getAddresses = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('🚨 GET ADDRESSES Controller Error:', error);
+    console.error('GET ADDRESSES Controller Error:', error);
 
     const statusCode = error.message.includes('не найден') ? 404 : 500;
 
@@ -103,16 +91,12 @@ export const getAddresses = async (req, res) => {
   }
 };
 
-/**
- * 🎯 ПОЛУЧЕНИЕ КОНКРЕТНОГО АДРЕСА
- * GET /api/customers/addresses/:addressId
- */
 export const getAddressById = async (req, res) => {
   try {
     const { user } = req;
     const { addressId } = req.params;
 
-    console.log('🎯 GET ADDRESS BY ID Controller:', { 
+    console.log('GET ADDRESS BY ID Controller:', { 
       userId: user._id, 
       addressId 
     });
@@ -133,7 +117,7 @@ export const getAddressById = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('🚨 GET ADDRESS BY ID Controller Error:', error);
+    console.error('GET ADDRESS BY ID Controller Error:', error);
 
     const statusCode = error.message.includes('не найден') ? 404 :
                       error.message.includes('Некорректные ID') ? 400 : 500;
@@ -145,17 +129,13 @@ export const getAddressById = async (req, res) => {
   }
 };
 
-/**
- * ✏️ ОБНОВЛЕНИЕ АДРЕСА
- * PUT /api/customers/addresses/:addressId
- */
 export const updateAddress = async (req, res) => {
   try {
     const { user } = req;
     const { addressId } = req.params;
     const updateData = req.body;
 
-    console.log('✏️ UPDATE ADDRESS Controller:', { 
+    console.log('UPDATE ADDRESS Controller:', { 
       userId: user._id, 
       addressId,
       updateFields: Object.keys(updateData)
@@ -184,9 +164,8 @@ export const updateAddress = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('🚨 UPDATE ADDRESS Controller Error:', error);
+    console.error('UPDATE ADDRESS Controller Error:', error);
 
-    // Обработка ошибок валидации
     if (error.validationErrors) {
       return res.status(400).json({
         result: false,
@@ -205,16 +184,12 @@ export const updateAddress = async (req, res) => {
   }
 };
 
-/**
- * 🗑️ УДАЛЕНИЕ АДРЕСА
- * DELETE /api/customers/addresses/:addressId
- */
 export const removeAddress = async (req, res) => {
   try {
     const { user } = req;
     const { addressId } = req.params;
 
-    console.log('🗑️ DELETE ADDRESS Controller:', { 
+    console.log('DELETE ADDRESS Controller:', { 
       userId: user._id, 
       addressId 
     });
@@ -235,7 +210,7 @@ export const removeAddress = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('🚨 DELETE ADDRESS Controller Error:', error);
+    console.error('DELETE ADDRESS Controller Error:', error);
 
     const statusCode = error.message.includes('не найден') ? 404 :
                       error.message.includes('Некорректные ID') ? 400 : 500;
@@ -247,16 +222,12 @@ export const removeAddress = async (req, res) => {
   }
 };
 
-/**
- * 🏠 УСТАНОВКА ОСНОВНОГО АДРЕСА
- * PATCH /api/customers/addresses/:addressId/default
- */
-export const setDefaultAddressController = async (req, res) => {
+export const setDefaultAddress = async (req, res) => {
   try {
     const { user } = req;
     const { addressId } = req.params;
 
-    console.log('🏠 SET DEFAULT ADDRESS Controller:', { 
+    console.log('SET DEFAULT ADDRESS Controller:', { 
       userId: user._id, 
       addressId 
     });
@@ -277,7 +248,7 @@ export const setDefaultAddressController = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('🚨 SET DEFAULT ADDRESS Controller Error:', error);
+    console.error('SET DEFAULT ADDRESS Controller Error:', error);
 
     const statusCode = error.message.includes('не найден') ? 404 :
                       error.message.includes('Некорректные ID') ? 400 : 500;
@@ -291,13 +262,9 @@ export const setDefaultAddressController = async (req, res) => {
 
 // ================ УТИЛИТАРНЫЕ ЭНДПОИНТЫ ================
 
-/**
- * 🗺️ ПОЛУЧЕНИЕ ИНФОРМАЦИИ О ЗОНАХ ДОСТАВКИ
- * GET /api/customers/addresses/delivery-zones
- */
 export const getDeliveryZonesInfo = async (req, res) => {
   try {
-    console.log('🗺️ GET DELIVERY ZONES INFO Controller');
+    console.log('GET DELIVERY ZONES INFO Controller');
 
     const zonesInfo = getDeliveryZones();
 
@@ -308,7 +275,7 @@ export const getDeliveryZonesInfo = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('🚨 GET DELIVERY ZONES Controller Error:', error);
+    console.error('GET DELIVERY ZONES Controller Error:', error);
     res.status(500).json({
       result: false,
       message: 'Ошибка при получении информации о зонах доставки'
@@ -316,15 +283,10 @@ export const getDeliveryZonesInfo = async (req, res) => {
   }
 };
 
-/**
- * 🧪 ГЕНЕРАЦИЯ ТЕСТОВЫХ АДРЕСОВ (только для разработки)
- * GET /api/customers/addresses/mock-data
- */
 export const getMockAddresses = async (req, res) => {
   try {
-    console.log('🧪 GET MOCK ADDRESSES Controller');
+    console.log('GET MOCK ADDRESSES Controller');
 
-    // Проверяем, что это режим разработки
     if (process.env.NODE_ENV === 'production') {
       return res.status(403).json({
         result: false,
@@ -342,7 +304,7 @@ export const getMockAddresses = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('🚨 GET MOCK ADDRESSES Controller Error:', error);
+    console.error('GET MOCK ADDRESSES Controller Error:', error);
     res.status(500).json({
       result: false,
       message: 'Ошибка при генерации тестовых данных'
@@ -350,15 +312,11 @@ export const getMockAddresses = async (req, res) => {
   }
 };
 
-/**
- * 🔍 ВАЛИДАЦИЯ АДРЕСА БЕЗ СОХРАНЕНИЯ
- * POST /api/customers/addresses/validate
- */
 export const validateAddress = async (req, res) => {
   try {
     const { address, lat, lng } = req.body;
 
-    console.log('🔍 VALIDATE ADDRESS Controller:', { address });
+    console.log('VALIDATE ADDRESS Controller:', { address });
 
     if (!address || address.trim().length < 5) {
       return res.status(400).json({
@@ -367,13 +325,11 @@ export const validateAddress = async (req, res) => {
       });
     }
 
-    // Импортируем функции из сервиса
     const { mockGeocodeAddress, determineDeliveryZone } = await import('../services/Address/address.service.js');
 
     let validationResult;
 
     if (lat && lng) {
-      // Если координаты переданы, проверяем их
       const zone = determineDeliveryZone(lat, lng);
       validationResult = {
         success: true,
@@ -383,7 +339,6 @@ export const validateAddress = async (req, res) => {
         formatted_address: address
       };
     } else {
-      // Используем mock геокодирование
       validationResult = mockGeocodeAddress(address);
       validationResult.is_deliverable = validationResult.zone !== null;
     }
@@ -395,7 +350,7 @@ export const validateAddress = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('🚨 VALIDATE ADDRESS Controller Error:', error);
+    console.error('VALIDATE ADDRESS Controller Error:', error);
     res.status(500).json({
       result: false,
       message: 'Ошибка при валидации адреса'
@@ -403,18 +358,15 @@ export const validateAddress = async (req, res) => {
   }
 };
 
-// ================ ЭКСПОРТ КОНТРОЛЛЕРОВ ================
+// ================ ЭКСПОРТ ================
 
-
-
-// Экспорт по умолчанию для совместимости
 export default {
   addAddress,
   getAddresses,
   getAddressById,
   updateAddress,
   removeAddress,
-  setDefaultAddress: setDefaultAddressController, // ✅ ИСПОЛЬЗОВАНИЕ ПРАВИЛЬНОГО ИМЕНИ
+  setDefaultAddress,
   getDeliveryZonesInfo,
   getMockAddresses,
   validateAddress
