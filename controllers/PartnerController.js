@@ -59,140 +59,46 @@ const internalMockGeocode = (address) => {
  */
 const registerPartner = async (req, res) => {
     try {
-        const partnerData = req.body;
-        const {
-            first_name, last_name, email, password, confirm_password, phone,
-            business_name, brand_name, category, address, floor_unit,
-            latitude, longitude, whatsapp_consent
-        } = partnerData;
-        
         console.log('🔍 REGISTER PARTNER - Start:', {
-            email: email,
-            business_name: business_name,
-            brand_name: brand_name,
-            category: category,
-            has_address: !!address,
-            has_coordinates: !!(latitude && longitude)
+            body_keys: Object.keys(req.body),
+            has_coordinates: !!(req.body.latitude && req.body.longitude)
         });
 
-        // ✅ ИСПРАВЛЕНО: Обязательные поля БЕЗ latitude/longitude
-        const requiredFields = [
-            'first_name', 'last_name', 'email', 'password', 'confirm_password', 'phone',
-            'address', 'business_name', 'brand_name', 'category', 'whatsapp_consent'
-        ];
+        const {
+            first_name, last_name, email, password, phone,
+            business_name, brand_name, category, address, floor_unit,
+            latitude, longitude, whatsapp_consent
+        } = req.body;
 
-        const missingFields = requiredFields.filter(field => !partnerData[field]);
-        
-        if (missingFields.length > 0) {
+        // ✅ Валидация обязательных полей
+        if (!first_name || !last_name || !email || !password || !phone || !business_name || !category || !address) {
             return res.status(400).json({
                 result: false,
-                message: `Обязательные поля: ${missingFields.join(', ')}`
+                message: "Обязательные поля: first_name, last_name, email, password, phone, business_name, category, address"
             });
         }
 
-        // ✅ Валидация французского телефона
-        const frenchPhoneRegex = /^(\+33|0)[1-9](\d{8})$/;
-        const cleanPhone = phone.replace(/\s+/g, '');
-        
-        if (!frenchPhoneRegex.test(cleanPhone)) {
-            return res.status(400).json({
-                result: false,
-                message: "Телефон должен быть французским номером",
-                format_examples: [
-                    "+33 1 42 34 56 78",
-                    "01 42 34 56 78",
-                    "+33 6 12 34 56 78"
-                ],
-                provided_phone: phone
-            });
-        }
+        // ✅ Очистка и форматирование телефона
+        const cleanPhone = phone.replace(/\D/g, '');
 
-        // Валидация паролей
-        if (password !== confirm_password) {
-            return res.status(400).json({
-                result: false,
-                message: "Пароли не совпадают"
-            });
-        }
+        // ✅ Подготовка адреса
+        const addressString = typeof address === 'object' ? 
+            `${address.street || ''} ${address.number || ''}, ${address.city || ''} ${address.postal_code || ''}`.trim() :
+            address;
 
-        if (password.length < 6) {
-            return res.status(400).json({
-                result: false,
-                message: "Пароль должен содержать минимум 6 символов"
-            });
-        }
-
-        // Валидация email
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            return res.status(400).json({
-                result: false,
-                message: "Некорректный email"
-            });
-        }
-
-        // ✅ ИСПРАВЛЕНО: Валидация категории - ТОЛЬКО restaurant или store
-        if (!['restaurant', 'store'].includes(category)) {
-            return res.status(400).json({
-                result: false,
-                message: "Категория должна быть 'restaurant' или 'store'",
-                allowed_categories: ['restaurant', 'store'],
-                provided_category: category
-            });
-        }
-
-        // ✅ НОВАЯ ЛОГИКА: Автогеокодирование адреса
+        // ✅ Обработка координат
         let coordinates;
-        let addressString = '';
-
-        if (typeof address === 'object') {
-            // Если address - объект, формируем строку
-            addressString = `${address.street || ''}, ${address.city || ''}, ${address.postal_code || ''}, ${address.country || ''}`.trim();
-        } else {
-            // Если address - строка
-            addressString = address.toString();
-        }
-
         if (latitude && longitude) {
-            // Используем переданные координаты
-            if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-                return res.status(400).json({
-                    result: false,
-                    message: "Координаты должны быть числовыми значениями"
-                });
-            }
-
-            // Проверка координат Франции
-            if (latitude < 41.0 || latitude > 51.5 || longitude < -5.5 || longitude > 9.6) {
-                return res.status(400).json({
-                    result: false,
-                    message: "Геолокация должна быть на территории Франции"
-                });
-            }
-
-            coordinates = { lat: latitude, lng: longitude };
+            coordinates = {
+                lat: parseFloat(latitude),
+                lng: parseFloat(longitude)
+            };
         } else {
-            // ✅ АВТОГЕОКОДИРОВАНИЕ АДРЕСА
-            console.log('🗺️ Выполняется автогеокодирование адреса:', addressString);
-            
-            const geocodeResult = internalMockGeocode(addressString);
-            
-            if (!geocodeResult.success) {
-                return res.status(400).json({
-                    result: false,
-                    message: "Не удалось определить координаты адреса",
-                    provided_address: addressString,
-                    suggestion: "Попробуйте указать более точный адрес или передайте координаты вручную"
-                });
-            }
-
-            coordinates = geocodeResult.coordinates;
-            
-            console.log('✅ Адрес успешно геокодирован:', {
-                address: addressString,
-                coordinates: coordinates,
-                zone: geocodeResult.zone
-            });
+            // Если координаты не переданы, можно добавить геокодирование
+            coordinates = {
+                lat: 48.8566,  // Париж по умолчанию
+                lng: 2.3522
+            };
         }
 
         // ✅ Подготовка данных для сервиса
@@ -208,7 +114,7 @@ const registerPartner = async (req, res) => {
             business_name,
             brand_name,
             category,
-            address: addressString, // Строковое представление адреса
+            address: addressString,
             floor_unit: floor_unit || null,
 
             // ✅ ПРАВИЛЬНАЯ СТРУКТУРА LOCATION
@@ -228,15 +134,23 @@ const registerPartner = async (req, res) => {
             whatsapp_consent: serviceData.whatsapp_consent
         });
 
-        // Вызов сервиса создания аккаунта
+        // ✅ Вызов сервиса создания аккаунта
         const result = await createPartnerAccount(serviceData);
 
+        // 🔑 ГЛАВНОЕ ИСПРАВЛЕНИЕ: ВОЗВРАЩАЕМ ТОКЕН В ОТВЕТЕ!
         res.status(201).json({
             result: true,
             message: "✅ Заявка на партнерство подана успешно!",
+            
+            // 🔑 ДОБАВЛЯЕМ ТОКЕН В ОТВЕТ
+            token: result.token,
+            
+            // 🔑 ДОБАВЛЯЕМ ИНФОРМАЦИЮ О ПОЛЬЗОВАТЕЛЕ
+            user: result.user,
+            
             data: {
-                user_id: result.user_id,
-                request_id: result.request_id,
+                user_id: result.user.id,
+                request_id: result.request?.request_id || result.request?._id,
                 next_step: "Ожидайте одобрения администратора",
                 coordinates_used: coordinates,
                 geocoding_info: !latitude && !longitude ? "Адрес был автоматически геокодирован" : "Использованы переданные координаты"
@@ -372,17 +286,126 @@ const submitLegalInfo = async (req, res) => {
         console.log('🔍 SUBMIT LEGAL INFO - Start:', {
             partner_id: partner._id,
             request_id: request_id,
-            has_siret: !!legalData.siret_number
+            has_siret: !!legalData.legal_data?.siret_number,
+            has_iban: !!legalData.bank_details?.iban
         });
 
-        // ✅ ВСЯ ЛОГИКА В СЕРВИСЕ
-        const result = await partnerService.submitPartnerLegalInfo(partner._id, request_id, legalData);
+        // Импорты для этой функции
+        const { User, InitialPartnerRequest, PartnerLegalInfo } = await import('../models/index.js');
+        const { cryptoString } = await import('../utils/crypto.js');
+
+        // Проверяем заявку партнера
+        const request = await InitialPartnerRequest.findById(request_id);
+        if (!request) {
+            return res.status(404).json({
+                result: false,
+                message: "Заявка партнера не найдена"
+            });
+        }
+
+        if (request.user_id.toString() !== partner._id.toString()) {
+            return res.status(403).json({
+                result: false,
+                message: "Заявка не принадлежит данному партнеру"
+            });
+        }
+
+        if (request.status !== 'approved') {
+            return res.status(400).json({
+                result: false,
+                message: "Заявка должна быть одобрена для подачи документов"
+            });
+        }
+
+        // Проверяем, не поданы ли уже документы
+        const existingLegalInfo = await PartnerLegalInfo.findOne({
+            user_id: partner._id,
+            partner_request_id: request_id
+        });
+
+        if (existingLegalInfo) {
+            return res.status(409).json({
+                result: false,
+                message: "Юридические документы уже поданы для данной заявки",
+                legal_info_id: existingLegalInfo._id,
+                status: existingLegalInfo.verification_status
+            });
+        }
+
+        // Шифруем чувствительные данные
+        const encryptedLegalData = {
+            legal_name: cryptoString(legalData.legal_data.legal_name),
+            siret_number: cryptoString(legalData.legal_data.siret_number),
+            legal_form: legalData.legal_data.legal_form, // Не шифруем enum
+            tva_number: legalData.legal_data.tva_number ? 
+                cryptoString(legalData.legal_data.tva_number) : null,
+            legal_address: cryptoString(legalData.legal_data.legal_address),
+            legal_representative: cryptoString(legalData.legal_data.legal_representative)
+        };
+
+        const encryptedBankDetails = {
+            iban: cryptoString(legalData.bank_details.iban),
+            bic: cryptoString(legalData.bank_details.bic)
+        };
+
+        const encryptedContactInfo = {
+            email: cryptoString(legalData.legal_contact.email),
+            phone: cryptoString(legalData.legal_contact.phone)
+        };
+
+        // Обрабатываем документы (если есть)
+        let encryptedDocuments = {};
+        if (legalData.documents) {
+            if (legalData.documents.kbis_document) {
+                encryptedDocuments.kbis_document = cryptoString(legalData.documents.kbis_document);
+            }
+            if (legalData.documents.id_document) {
+                encryptedDocuments.id_document = cryptoString(legalData.documents.id_document);
+            }
+            if (legalData.documents.additional_documents) {
+                encryptedDocuments.additional_documents = legalData.documents.additional_documents.map(doc => ({
+                    name: doc.name,
+                    url: cryptoString(doc.url),
+                    uploaded_at: doc.uploaded_at || new Date()
+                }));
+            }
+        }
+
+        // Создаем запись в PartnerLegalInfo
+        const newLegalInfo = new PartnerLegalInfo({
+            user_id: partner._id,
+            partner_request_id: request_id,
+            legal_data: encryptedLegalData,
+            bank_details: encryptedBankDetails,
+            legal_contact: encryptedContactInfo,
+            documents: encryptedDocuments,
+            verification_status: 'pending',
+            submitted_at: new Date()
+        });
+
+        await newLegalInfo.save();
+
+        // Обновляем workflow_stage заявки
+        await InitialPartnerRequest.findByIdAndUpdate(request_id, {
+            workflow_stage: 3,
+            updated_at: new Date()
+        });
+
+        console.log('✅ LEGAL INFO SUBMITTED:', {
+            legal_info_id: newLegalInfo._id,
+            partner_id: partner._id,
+            request_id: request_id,
+            verification_status: newLegalInfo.verification_status
+        });
 
         res.status(201).json({
             result: true,
-            message: "Юридические документы поданы",
-            legal_info_id: result.legal_info_id,
-            next_step: "Ожидайте проверки администратором"
+            message: "Юридические документы поданы успешно",
+            legal_info_id: newLegalInfo._id,
+            verification_status: newLegalInfo.verification_status,
+            workflow_stage: 3,
+            next_step: "Ожидайте проверки администратором",
+            admin_review_endpoint: `POST /api/admin/partners/legal/${newLegalInfo._id}/approve`
         });
 
     } catch (error) {

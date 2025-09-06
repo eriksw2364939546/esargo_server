@@ -297,6 +297,7 @@ const getNextAction = (request, legal, profile) => {
     };
 };
 
+
 /**
  * Проверка прав доступа партнера к ресурсу
  * @param {string} partnerId - ID партнера
