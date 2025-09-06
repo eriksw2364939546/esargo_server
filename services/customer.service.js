@@ -1,7 +1,7 @@
-// services/customer.service.js - Очищенный от старых функций управления адресами
+// services/customer.service.js - Исправлен импорт bcryptjs
 import { CustomerProfile, User } from '../models/index.js';
 import { hashString, validateEmail, validatePhone, encryptString, decryptString } from '../utils/index.js';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs'; // ✅ ИСПРАВЛЕНО: bcryptjs вместо bcrypt
 import mongoose from 'mongoose';
 
 // ================ ВАЛИДАЦИОННЫЕ ФУНКЦИИ ================
@@ -157,53 +157,51 @@ export const updateCustomerProfile = async (userId, updateData) => {
         throw error;
       }
 
-      userUpdateData.password_hash = await hashString(updateData.new_password);
+      // Хешируем новый пароль
+      const hashedNewPassword = await hashString(updateData.new_password);
+      userUpdateData.password_hash = hashedNewPassword;
     }
 
-    // БИЗНЕС-ЛОГИКА: Обработка обычных полей профиля
+    // Подготовка данных профиля
     if (updateData.first_name !== undefined) {
       profileUpdateData.first_name = updateData.first_name.trim();
     }
-
+    
     if (updateData.last_name !== undefined) {
       profileUpdateData.last_name = updateData.last_name.trim();
     }
-
+    
     if (updateData.phone !== undefined) {
-      profileUpdateData.phone = encryptString(updateData.phone);
+      profileUpdateData.phone = updateData.phone ? encryptString(updateData.phone.replace(/\s/g, '')) : null;
     }
 
     if (updateData.avatar_url !== undefined) {
       profileUpdateData.avatar_url = updateData.avatar_url;
     }
 
-    // БИЗНЕС-ЛОГИКА: Обновление настроек
-    if (updateData.language !== undefined) {
-      if (!profileUpdateData.preferences) {
-        const currentProfile = await CustomerProfile.findOne({ user_id: userId });
-        profileUpdateData.preferences = currentProfile.preferences || {};
-      }
-      profileUpdateData['preferences.language'] = updateData.language;
-    }
-
-    // Обновляем пользователя
+    // Обновляем пользователя (если есть изменения)
     if (Object.keys(userUpdateData).length > 0) {
       await User.findByIdAndUpdate(userId, userUpdateData);
     }
 
-    // Обновляем профиль
-    const updatedProfile = await CustomerProfile.findOneAndUpdate(
-      { user_id: userId },
-      profileUpdateData,
-      { new: true, runValidators: false }
-    );
-
-    if (!updatedProfile) {
-      throw new Error('Профиль не найден для обновления');
+    // Обновляем профиль (если есть изменения)
+    let updatedProfile;
+    if (Object.keys(profileUpdateData).length > 0) {
+      updatedProfile = await CustomerProfile.findOneAndUpdate(
+        { user_id: userId },
+        profileUpdateData,
+        { new: true }
+      );
+    } else {
+      updatedProfile = await CustomerProfile.findOne({ user_id: userId });
     }
 
-    // Возвращаем обновленные данные
-    return await getCustomerProfile(userId);
+    if (!updatedProfile) {
+      throw new Error('Профиль клиента не найден');
+    }
+
+    // Возвращаем обновленный профиль
+    return getCustomerProfile(userId);
 
   } catch (error) {
     console.error('Update customer profile error:', error);
@@ -214,7 +212,7 @@ export const updateCustomerProfile = async (userId, updateData) => {
 /**
  * Удаление профиля клиента
  * @param {string} userId - ID пользователя
- * @returns {boolean} - Результат удаления
+ * @returns {object} - Результат удаления
  */
 export const deleteCustomerProfile = async (userId) => {
   try {
@@ -228,26 +226,22 @@ export const deleteCustomerProfile = async (userId) => {
     }
 
     if (user.role !== 'customer') {
-      throw new Error('Можно удалять только профили клиентов');
+      throw new Error('Можно удалить только профиль клиента');
     }
 
-    // БИЗНЕС-ЛОГИКА: Проверяем наличие активных заказов
-    // TODO: Добавить проверку активных заказов когда будет готов Order сервис
+    // Удаляем профиль
+    await CustomerProfile.findOneAndDelete({ user_id: userId });
     
-    // Удаляем профиль клиента
-    const deletedProfile = await CustomerProfile.findOneAndDelete({ user_id: userId });
-    if (!deletedProfile) {
-      throw new Error('Профиль клиента не найден');
-    }
-
-    // Деактивируем пользователя (не удаляем полностью для истории)
+    // Деактивируем пользователя (не удаляем для сохранения истории)
     await User.findByIdAndUpdate(userId, { 
       is_active: false,
-      email: encryptString(`deleted_${Date.now()}_${user.email}`)
+      deleted_at: new Date()
     });
 
-    console.log('✅ Customer profile deleted:', { userId });
-    return true;
+    return {
+      success: true,
+      message: 'Профиль клиента успешно удален'
+    };
 
   } catch (error) {
     console.error('Delete customer profile error:', error);
@@ -335,6 +329,3 @@ export default {
   customerProfileExists,
   getCustomerStats
 };
-
-// ✅ УДАЛЕНЫ СТАРЫЕ ФУНКЦИИ: addDeliveryAddress и связанные с delivery_addresses
-// Теперь все управление адресами в services/Address/address.service.js
