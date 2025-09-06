@@ -1,8 +1,8 @@
-// models/Order.model.js - РАСШИРЕННАЯ модель заказов с полями для системы доставки ESARGO
+// models/Order.model.js - ПОЛНАЯ МОДЕЛЬ ЗАКАЗОВ ESARGO с расширенными полями
 import mongoose from 'mongoose';
 
 const orderSchema = new mongoose.Schema({
-  // Уникальный номер заказа
+  // Основная информация
   order_number: {
     type: String,
     required: true,
@@ -10,19 +10,21 @@ const orderSchema = new mongoose.Schema({
     index: true
   },
   
-  // Ссылки на участников заказа
+  // Связи с пользователями
   customer_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true,
     index: true
   },
+  
   partner_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'PartnerProfile',
     required: true,
     index: true
   },
+  
   courier_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'CourierProfile',
@@ -51,21 +53,10 @@ const orderSchema = new mongoose.Schema({
       required: true,
       min: 1
     },
-    // Выбранные опции (добавки, размер и т.д.)
     selected_options: [{
-      group_name: {
-        type: String,
-        required: true
-      },
-      option_name: {
-        type: String,
-        required: true
-      },
-      option_price: {
-        type: Number,
-        required: true,
-        min: 0
-      }
+      group_name: String,
+      option_name: String,
+      option_price: { type: Number, default: 0 }
     }],
     item_total: {
       type: Number,
@@ -75,97 +66,38 @@ const orderSchema = new mongoose.Schema({
     special_requests: {
       type: String,
       trim: true,
-      maxlength: 200
-    }
-  }],
-
-  // ДОБАВЛЕННЫЕ ПОЛЯ ДЛЯ ВАЛИДАЦИИ ДОСТУПНОСТИ ТОВАРОВ
-  availability_validation: {
-    validated_at: {
-      type: Date,
-      default: Date.now
-    },
-    unavailable_items: [{
-      product_id: {
-        type: mongoose.Schema.Types.ObjectId,
-        required: true
-      },
-      title: {
-        type: String,
-        required: true
-      },
-      reason: {
-        type: String,
-        enum: ['product_deactivated', 'out_of_stock', 'time_restricted', 'partner_unavailable'],
-        required: true
-      },
-      detected_at: {
-        type: Date,
-        default: Date.now
-      }
-    }],
-    validation_status: {
-      type: String,
-      enum: ['valid', 'has_issues', 'critical_issues'],
-      default: 'valid'
-    }
-  },
-
-  // ДОБАВЛЕННЫЕ ПОЛЯ: Снимок товаров на момент заказа
-  items_snapshot: [{
-    product_id: {
-      type: mongoose.Schema.Types.ObjectId,
-      required: true
-    },
-    availability_at_order: {
-      is_active: Boolean,
-      is_available: Boolean,
-      stock_quantity: Number,
-      availability_schedule: mongoose.Schema.Types.Mixed
-    },
-    captured_at: {
-      type: Date,
-      default: Date.now
+      maxlength: 300
     }
   }],
   
-  // Стоимость заказа
+  // ✅ ФИНАНСОВАЯ ИНФОРМАЦИЯ ESARGO (РАСШИРЕННАЯ)
   subtotal: {
     type: Number,
     required: true,
     min: 0
   },
+  
   delivery_fee: {
     type: Number,
     required: true,
     min: 0,
     default: 0
   },
+  
   service_fee: {
     type: Number,
-    required: true,
     min: 0,
     default: 0
   },
-  discount_amount: {
-    type: Number,
-    min: 0,
-    default: 0
-  },
-  tax_amount: {
-    type: Number,
-    min: 0,
-    default: 0
-  },
+  
   total_price: {
     type: Number,
     required: true,
-    min: 0
+    min: 0,
+    default: 0
   },
-
-  // ✅ НОВЫЕ ПОЛЯ ДЛЯ СИСТЕМЫ ДОСТАВКИ ESARGO
   
-  // Комиссия платформы ESARGO (10% от суммы заказа)
+  // ✅ НОВЫЕ ПОЛЯ ДЛЯ СИСТЕМЫ ДОСТАВКИ ESARGO
   platform_commission: {
     type: Number,
     required: true,
@@ -301,39 +233,7 @@ const orderSchema = new mongoose.Schema({
     index: true
   },
   
-  // Временные метки
-  estimated_delivery_time: {
-    type: Date,
-    required: true
-  },
-  actual_delivery_time: {
-    type: Number // в минутах от создания заказа
-  },
-  accepted_at: Date,
-  ready_at: Date,
-  picked_up_at: Date,
-  delivered_at: Date,
-  cancelled_at: Date,
-  
-  // Платежная информация
-  payment_method: {
-    type: String,
-    enum: ['card', 'cash'],
-    required: true
-  },
-  payment_status: {
-    type: String,
-    enum: ['pending', 'processing', 'completed', 'failed', 'refunded'],
-    default: 'pending',
-    index: true
-  },
-  payment_details: {
-    transaction_id: String,
-    payment_processor: String,
-    gateway_response: mongoose.Schema.Types.Mixed
-  },
-  
-  // История статусов
+  // История изменения статусов
   status_history: [{
     status: {
       type: String,
@@ -341,12 +241,11 @@ const orderSchema = new mongoose.Schema({
     },
     timestamp: {
       type: Date,
-      required: true,
       default: Date.now
     },
     updated_by: {
       type: mongoose.Schema.Types.ObjectId,
-      required: true
+      refPath: 'status_history.user_role'
     },
     user_role: {
       type: String,
@@ -354,40 +253,66 @@ const orderSchema = new mongoose.Schema({
     },
     notes: {
       type: String,
-      trim: true,
-      maxlength: 500
+      trim: true
     }
   }],
   
-  // Информация об отмене
-  cancellation: {
-    reason: {
-      type: String,
-      trim: true
-    },
-    cancelled_by: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    user_role: {
-      type: String,
-      enum: ['customer', 'partner', 'courier', 'admin']
-    },
-    details: {
-      type: String,
-      trim: true,
-      maxlength: 500
-    }
+  // Платежная информация
+  payment_method: {
+    type: String,
+    enum: ['card', 'cash', 'paypal'],
+    required: true
   },
   
-  // Особые запросы от клиента
+  payment_status: {
+    type: String,
+    enum: ['pending', 'completed', 'failed', 'refunded'],
+    default: 'pending',
+    index: true
+  },
+  
+  // Временные метки
+  estimated_delivery_time: {
+    type: Date
+  },
+  
+  actual_delivery_time: {
+    type: Number // в минутах
+  },
+  
+  accepted_at: {
+    type: Date
+  },
+  
+  ready_at: {
+    type: Date
+  },
+  
+  picked_up_at: {
+    type: Date
+  },
+  
+  delivered_at: {
+    type: Date
+  },
+  
+  cancelled_at: {
+    type: Date
+  },
+  
+  // Дополнительная информация
   special_requests: {
     type: String,
     trim: true,
     maxlength: 500
   },
   
-  // Система рейтингов
+  cancellation_reason: {
+    type: String,
+    trim: true
+  },
+  
+  // Рейтинги
   ratings: {
     partner_rating: {
       type: Number,
@@ -407,19 +332,6 @@ const orderSchema = new mongoose.Schema({
     rated_at: {
       type: Date
     }
-  },
-  
-  // Метаданные
-  source: {
-    type: String,
-    enum: ['web', 'mobile_app'],
-    default: 'web'
-  },
-  user_agent: {
-    type: String
-  },
-  ip_address: {
-    type: String
   }
 }, {
   timestamps: true
@@ -567,61 +479,14 @@ orderSchema.statics.generateOrderNumber = function() {
 };
 
 /**
- * Поиск заказов клиента
- */
-orderSchema.statics.findByCustomer = function(customerId, status = null) {
-  const filter = { customer_id: customerId };
-  if (status) {
-    filter.status = status;
-  }
-  return this.find(filter).sort({ createdAt: -1 });
-};
-
-/**
- * Поиск заказов партнера
- */
-orderSchema.statics.findByPartner = function(partnerId, status = null) {
-  const filter = { partner_id: partnerId };
-  if (status) {
-    filter.status = status;
-  }
-  return this.find(filter).sort({ createdAt: -1 });
-};
-
-/**
- * Поиск заказов курьера
- */
-orderSchema.statics.findByCourier = function(courierId, status = null) {
-  const filter = { courier_id: courierId };
-  if (status) {
-    filter.status = status;
-  }
-  return this.find(filter).sort({ createdAt: -1 });
-};
-
-/**
- * ✅ НОВЫЙ МЕТОД: Поиск доступных заказов для курьеров в определенной зоне
- */
-orderSchema.statics.findAvailableOrdersInZone = function(zone, limit = 10) {
-  return this.find({
-    status: 'ready',
-    courier_id: null,
-    delivery_zone: zone
-  })
-  .populate('partner_id', 'business_name phone location')
-  .sort({ createdAt: 1 }) // Сначала старые заказы
-  .limit(limit);
-};
-
-/**
  * ✅ НОВЫЙ МЕТОД: Статистика по зонам доставки
  */
-orderSchema.statics.getDeliveryZoneStats = function(dateFrom, dateTo) {
+orderSchema.statics.getDeliveryZoneStats = function(startDate, endDate) {
   return this.aggregate([
     {
       $match: {
-        status: 'delivered',
-        createdAt: { $gte: new Date(dateFrom), $lte: new Date(dateTo) }
+        createdAt: { $gte: startDate, $lte: endDate },
+        status: { $ne: 'cancelled' }
       }
     },
     {

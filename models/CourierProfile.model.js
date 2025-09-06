@@ -1,4 +1,4 @@
-// models/CourierProfile.model.js - РАСШИРЕННАЯ МОДЕЛЬ С УЛУЧШЕННЫМИ EARNINGS
+// models/CourierProfile.model.js - ПОЛНАЯ МОДЕЛЬ КУРЬЕРА ESARGO
 import mongoose from 'mongoose';
 
 const courierProfileSchema = new mongoose.Schema({
@@ -10,7 +10,7 @@ const courierProfileSchema = new mongoose.Schema({
     index: true
   },
   
-  // ПЕРСОНАЛЬНАЯ ИНФОРМАЦИЯ
+  // ОСНОВНАЯ ИНФОРМАЦИЯ
   first_name: {
     type: String,
     required: true,
@@ -31,78 +31,32 @@ const courierProfileSchema = new mongoose.Schema({
     trim: true
   },
   
-  avatar_url: {
-    type: String
+  email: {
+    type: String,
+    required: true,
+    trim: true
   },
   
-  // ИНФОРМАЦИЯ О ТРАНСПОРТЕ
-  vehicle_info: {
-    type: {
-      type: String,
-      required: true,
-      enum: ['bicycle', 'scooter', 'motorcycle', 'car'],
-      index: true
-    },
-    brand: {
-      type: String,
-      trim: true,
-      maxlength: 50
-    },
-    model: {
-      type: String,
-      trim: true,
-      maxlength: 50
-    },
-    license_plate: {
-      type: String,
-      trim: true,
-      maxlength: 20
-    },
-    color: {
-      type: String,
-      trim: true,
-      maxlength: 30
-    }
+  profile_image_url: {
+    type: String,
+    trim: true
   },
   
-  // ДОКУМЕНТЫ
-  documents: {
-    identity_verified: {
-      type: Boolean,
-      default: false
-    },
-    license_verified: {
-      type: Boolean,
-      default: false
-    },
-    insurance_verified: {
-      type: Boolean,
-      default: false
-    },
-    background_check: {
-      type: Boolean,
-      default: false
-    }
-  },
-  
-  // ГЕОЛОКАЦИЯ
+  // ГЕОЛОКАЦИЯ (GeoJSON)
   location: {
     type: {
       type: String,
       enum: ['Point'],
-      default: 'Point'
+      required: true
     },
     coordinates: {
-      type: [Number], // [longitude, latitude]
-      default: [0, 0]
-    },
-    last_updated: {
-      type: Date,
-      default: Date.now
+      type: [Number],
+      required: true,
+      index: '2dsphere'
     }
   },
   
-  // СТАТУСЫ РАБОТЫ
+  // СТАТУСЫ КУРЬЕРА
   is_available: {
     type: Boolean,
     default: false,
@@ -115,14 +69,12 @@ const courierProfileSchema = new mongoose.Schema({
     index: true
   },
   
-  work_radius: {
-    type: Number,
-    default: 5, // км
-    min: 1,
-    max: 15
+  is_active: {
+    type: Boolean,
+    default: true,
+    index: true
   },
   
-  // СТАТУСЫ ОДОБРЕНИЯ
   application_status: {
     type: String,
     enum: ['pending', 'under_review', 'approved', 'rejected'],
@@ -491,135 +443,49 @@ courierProfileSchema.methods.updateLocation = function(lat, lng) {
   this.location = {
     type: 'Point',
     coordinates: [lng, lat], // [longitude, latitude] - порядок важен для MongoDB!
-    last_updated: new Date()
   };
   this.last_activity = new Date();
   
   return this.save();
 };
 
-// Метод для переключения статуса доступности (On-e/Off-e)
-courierProfileSchema.methods.toggleAvailability = function() {
-  this.is_available = !this.is_available;
-  this.last_activity = new Date();
-  
-  // Если выключил доступность, то и онлайн статус тоже
-  if (!this.is_available) {
-    this.is_online = false;
-  }
-  
-  return this.save();
-};
-
-// Метод для установки онлайн статуса
-courierProfileSchema.methods.setOnlineStatus = function(isOnline) {
-  this.is_online = isOnline;
-  this.last_activity = new Date();
-  
-  // Если вышел из онлайна, то и доступность отключается
-  if (!isOnline) {
-    this.is_available = false;
-  }
-  
-  return this.save();
-};
-
-// Метод для одобрения курьера
-courierProfileSchema.methods.approve = function(adminId) {
-  this.is_approved = true;
-  this.application_status = 'approved';
-  this.approved_by = adminId;
-  this.approved_at = new Date();
-  this.rejection_reason = undefined;
-  
-  return this.save();
-};
-
-// Метод для отклонения курьера
-courierProfileSchema.methods.reject = function(reason) {
-  this.is_approved = false;
-  this.application_status = 'rejected';
-  this.rejection_reason = reason;
-  this.approved_by = undefined;
-  this.approved_at = undefined;
-  
-  return this.save();
-};
-
-// Метод для блокировки курьера
-courierProfileSchema.methods.block = function(reason, duration) {
-  this.is_blocked = true;
-  this.blocked_reason = reason;
-  this.is_available = false;
-  this.is_online = false;
-  
-  if (duration) {
-    this.blocked_until = new Date(Date.now() + duration);
-  }
-  
-  return this.save();
-};
-
-// Метод для разблокировки курьера
-courierProfileSchema.methods.unblock = function() {
-  this.is_blocked = false;
-  this.blocked_reason = undefined;
-  this.blocked_until = undefined;
-  
-  return this.save();
+// Метод проверки доступности
+courierProfileSchema.methods.isAvailableForDelivery = function() {
+  return this.is_available && 
+         this.is_online && 
+         this.is_approved && 
+         this.is_active && 
+         !this.is_blocked;
 };
 
 // Метод для обновления рейтинга
 courierProfileSchema.methods.updateRating = function(newRating) {
   const totalRatings = this.ratings.total_ratings;
-  const currentAvg = this.ratings.avg_rating;
+  const currentAvgRating = this.ratings.avg_rating;
   
-  this.ratings.total_ratings = totalRatings + 1;
-  this.ratings.avg_rating = ((currentAvg * totalRatings) + newRating) / this.ratings.total_ratings;
+  this.ratings.total_ratings += 1;
+  this.ratings.avg_rating = ((currentAvgRating * totalRatings) + newRating) / this.ratings.total_ratings;
   
   return this.save();
 };
 
 // ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
-// ✅ НОВЫЙ МЕТОД: Найти курьеров для определенной зоны
-courierProfileSchema.statics.findAvailableForZone = function(zone, lat, lng, radiusKm = 5) {
-  return this.find({
-    is_available: true,
-    is_approved: true,
-    is_online: true,
-    is_blocked: false,
-    $or: [
-      { 'work_preferences.preferred_zones': { $size: 0 } }, // Работает везде
-      { 'work_preferences.preferred_zones': zone } // Предпочитает эту зону
-    ],
-    location: {
-      $near: {
-        $geometry: {
-          type: 'Point',
-          coordinates: [lng, lat]
-        },
-        $maxDistance: radiusKm * 1000
-      }
-    }
-  }).sort({ 'ratings.avg_rating': -1 });
-};
-
-// ✅ НОВЫЙ МЕТОД: Статистика заработков курьеров по зонам
-courierProfileSchema.statics.getZoneEarningsStats = function(dateFrom, dateTo) {
+// ✅ НОВЫЙ МЕТОД: Статистика заработка всех курьеров
+courierProfileSchema.statics.getEarningsStats = function() {
   return this.aggregate([
     {
       $match: {
         is_approved: true,
-        'earnings.last_earnings_update': { 
-          $gte: new Date(dateFrom), 
-          $lte: new Date(dateTo) 
-        }
+        'earnings.completed_orders': { $gt: 0 }
       }
     },
     {
       $group: {
         _id: null,
+        total_couriers: { $sum: 1 },
+        total_earnings: { $sum: '$earnings.total_earned' },
+        total_deliveries: { $sum: '$earnings.completed_orders' },
         total_zone_1_deliveries: { $sum: '$earnings.zone_stats.zone_1_deliveries' },
         total_zone_1_earnings: { $sum: '$earnings.zone_stats.zone_1_earnings' },
         total_zone_2_deliveries: { $sum: '$earnings.zone_stats.zone_2_deliveries' },
