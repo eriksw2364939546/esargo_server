@@ -1,20 +1,13 @@
-// services/customer.service.js - Исправлен импорт bcryptjs
+// services/customer.service.js - ИСПРАВЛЕННЫЙ сервис без дублирования
 import { CustomerProfile, User } from '../models/index.js';
-import { hashString, validateEmail, validatePhone, encryptString, decryptString } from '../utils/index.js';
-import bcrypt from 'bcryptjs'; // ✅ ИСПРАВЛЕНО: bcryptjs вместо bcrypt
+import { hashString, validateEmail, validatePhone, cryptoString, decryptString } from '../utils/index.js';
+import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 
-// ================ ВАЛИДАЦИОННЫЕ ФУНКЦИИ ================
-
-/**
- * Валидация данных для обновления профиля
- * @param {object} updateData - Данные для обновления
- * @returns {object} - Результат валидации
- */
+// ВАЛИДАЦИОННЫЕ ФУНКЦИИ
 const validateProfileUpdate = (updateData) => {
   const errors = [];
 
-  // Валидация имени
   if (updateData.first_name !== undefined) {
     if (!updateData.first_name || updateData.first_name.trim().length === 0) {
       errors.push('Имя не может быть пустым');
@@ -23,7 +16,6 @@ const validateProfileUpdate = (updateData) => {
     }
   }
 
-  // Валидация фамилии
   if (updateData.last_name !== undefined) {
     if (!updateData.last_name || updateData.last_name.trim().length === 0) {
       errors.push('Фамилия не может быть пустой');
@@ -32,14 +24,12 @@ const validateProfileUpdate = (updateData) => {
     }
   }
 
-  // Валидация телефона
   if (updateData.phone !== undefined) {
     if (!validatePhone(updateData.phone)) {
       errors.push('Некорректный номер телефона');
     }
   }
 
-  // Валидация языка
   if (updateData.language !== undefined) {
     const allowedLanguages = ['ru', 'fr', 'en'];
     if (!allowedLanguages.includes(updateData.language)) {
@@ -53,13 +43,8 @@ const validateProfileUpdate = (updateData) => {
   };
 };
 
-// ================ ОСНОВНЫЕ ФУНКЦИИ СЕРВИСА ================
+// ОСНОВНЫЕ ФУНКЦИИ СЕРВИСА
 
-/**
- * Получение профиля клиента
- * @param {string} userId - ID пользователя
- * @returns {object} - Профиль клиента
- */
 export const getCustomerProfile = async (userId) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(userId)) {
@@ -80,7 +65,7 @@ export const getCustomerProfile = async (userId) => {
       throw new Error('Профиль клиента не найден');
     }
 
-    // 🔐 РАСШИФРОВЫВАЕМ email для отображения
+    // Расшифровываем email для отображения
     let displayEmail = '[EMAIL_PROTECTED]';
     try {
       displayEmail = decryptString(user.email);
@@ -92,17 +77,20 @@ export const getCustomerProfile = async (userId) => {
     // Расшифровываем чувствительные данные для отображения
     const decryptedProfile = {
       ...profile.toObject(),
-      phone: profile.phone ? decryptString(profile.phone) : null
+      phone: profile.phone ? (() => {
+        try {
+          return decryptString(profile.phone);
+        } catch (error) {
+          console.warn('Could not decrypt phone for profile display');
+          return '[PHONE_DECRYPT_ERROR]';
+        }
+      })() : null
     };
 
     return {
       user: {
-        _id: user._id,
-        email: displayEmail,
-        role: user.role,
-        is_active: user.is_active,
-        created_at: user.created_at,
-        updated_at: user.updated_at
+        ...user.toObject(),
+        email: displayEmail
       },
       profile: decryptedProfile
     };
@@ -113,19 +101,13 @@ export const getCustomerProfile = async (userId) => {
   }
 };
 
-/**
- * Обновление профиля клиента
- * @param {string} userId - ID пользователя
- * @param {object} updateData - Данные для обновления
- * @returns {object} - Обновленный профиль
- */
 export const updateCustomerProfile = async (userId, updateData) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       throw new Error('Некорректный ID пользователя');
     }
 
-    // ВАЛИДАЦИЯ входных данных
+    // Валидация данных
     const validation = validateProfileUpdate(updateData);
     if (!validation.isValid) {
       const error = new Error('Ошибки валидации');
@@ -138,70 +120,58 @@ export const updateCustomerProfile = async (userId, updateData) => {
       throw new Error('Пользователь не найден');
     }
 
-    // Подготовка данных для обновления
-    const userUpdateData = {};
-    const profileUpdateData = {};
-
-    // БИЗНЕС-ЛОГИКА: Обработка смены пароля
-    if (updateData.current_password && updateData.new_password) {
-      const isCurrentPasswordValid = await bcrypt.compare(updateData.current_password, user.password_hash);
-      if (!isCurrentPasswordValid) {
-        const error = new Error('Текущий пароль неверен');
-        error.validationErrors = ['Текущий пароль неверен'];
-        throw error;
-      }
-
-      if (updateData.new_password.length < 6) {
-        const error = new Error('Новый пароль должен содержать минимум 6 символов');
-        error.validationErrors = ['Новый пароль должен содержать минимум 6 символов'];
-        throw error;
-      }
-
-      // Хешируем новый пароль
-      const hashedNewPassword = await hashString(updateData.new_password);
-      userUpdateData.password_hash = hashedNewPassword;
+    if (user.role !== 'customer') {
+      throw new Error('Доступ разрешен только для клиентов');
     }
 
-    // Подготовка данных профиля
-    if (updateData.first_name !== undefined) {
-      profileUpdateData.first_name = updateData.first_name.trim();
-    }
-    
-    if (updateData.last_name !== undefined) {
-      profileUpdateData.last_name = updateData.last_name.trim();
-    }
-    
-    if (updateData.phone !== undefined) {
-      profileUpdateData.phone = updateData.phone ? encryptString(updateData.phone.replace(/\s/g, '')) : null;
-    }
-
-    if (updateData.avatar_url !== undefined) {
-      profileUpdateData.avatar_url = updateData.avatar_url;
-    }
-
-    // Обновляем пользователя (если есть изменения)
-    if (Object.keys(userUpdateData).length > 0) {
-      await User.findByIdAndUpdate(userId, userUpdateData);
-    }
-
-    // Обновляем профиль (если есть изменения)
-    let updatedProfile;
-    if (Object.keys(profileUpdateData).length > 0) {
-      updatedProfile = await CustomerProfile.findOneAndUpdate(
-        { user_id: userId },
-        profileUpdateData,
-        { new: true }
-      );
-    } else {
-      updatedProfile = await CustomerProfile.findOne({ user_id: userId });
-    }
-
-    if (!updatedProfile) {
+    const profile = await CustomerProfile.findOne({ user_id: userId });
+    if (!profile) {
       throw new Error('Профиль клиента не найден');
     }
 
-    // Возвращаем обновленный профиль
-    return getCustomerProfile(userId);
+    // Обработка смены пароля
+    if (updateData.current_password && updateData.new_password) {
+      const isValidPassword = await bcrypt.compare(updateData.current_password, user.password_hash);
+      if (!isValidPassword) {
+        throw new Error('Неверный текущий пароль');
+      }
+
+      if (updateData.new_password.length < 6) {
+        throw new Error('Новый пароль должен содержать минимум 6 символов');
+      }
+
+      const hashedNewPassword = await hashString(updateData.new_password);
+      user.password_hash = hashedNewPassword;
+      await user.save();
+    }
+
+    // Обновление данных профиля
+    const allowedFields = ['first_name', 'last_name', 'phone', 'avatar_url', 'language'];
+    const profileUpdates = {};
+
+    allowedFields.forEach(field => {
+      if (updateData[field] !== undefined) {
+        if (field === 'phone' && updateData[field]) {
+          // Шифруем телефон перед сохранением
+          profileUpdates[field] = cryptoString(updateData[field].replace(/\s/g, ''));
+        } else if (field === 'language') {
+          profileUpdates['preferences.language'] = updateData[field];
+        } else {
+          profileUpdates[field] = updateData[field];
+        }
+      }
+    });
+
+    if (Object.keys(profileUpdates).length > 0) {
+      await CustomerProfile.findOneAndUpdate(
+        { user_id: userId },
+        { $set: profileUpdates },
+        { new: true, runValidators: true }
+      );
+    }
+
+    // Получаем обновленный профиль
+    return await getCustomerProfile(userId);
 
   } catch (error) {
     console.error('Update customer profile error:', error);
@@ -209,11 +179,6 @@ export const updateCustomerProfile = async (userId, updateData) => {
   }
 };
 
-/**
- * Удаление профиля клиента
- * @param {string} userId - ID пользователя
- * @returns {object} - Результат удаления
- */
 export const deleteCustomerProfile = async (userId) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(userId)) {
@@ -226,21 +191,29 @@ export const deleteCustomerProfile = async (userId) => {
     }
 
     if (user.role !== 'customer') {
-      throw new Error('Можно удалить только профиль клиента');
+      throw new Error('Доступ разрешен только для клиентов');
     }
 
-    // Удаляем профиль
-    await CustomerProfile.findOneAndDelete({ user_id: userId });
-    
-    // Деактивируем пользователя (не удаляем для сохранения истории)
-    await User.findByIdAndUpdate(userId, { 
-      is_active: false,
-      deleted_at: new Date()
-    });
+    // Деактивируем профиль вместо полного удаления
+    await CustomerProfile.findOneAndUpdate(
+      { user_id: userId },
+      { 
+        $set: { 
+          is_active: false,
+          deleted_at: new Date()
+        }
+      }
+    );
 
+    // Деактивируем пользователя
+    user.is_active = false;
+    await user.save();
+
+    console.log(`Customer profile deactivated: ${userId}`);
+    
     return {
       success: true,
-      message: 'Профиль клиента успешно удален'
+      message: 'Профиль клиента деактивирован'
     };
 
   } catch (error) {
@@ -249,18 +222,17 @@ export const deleteCustomerProfile = async (userId) => {
   }
 };
 
-/**
- * Проверка существования профиля клиента
- * @param {string} userId - ID пользователя
- * @returns {boolean} - Существует ли профиль
- */
 export const customerProfileExists = async (userId) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return false;
     }
 
-    const profile = await CustomerProfile.findOne({ user_id: userId });
+    const profile = await CustomerProfile.findOne({ 
+      user_id: userId,
+      is_active: true 
+    });
+
     return !!profile;
 
   } catch (error) {
@@ -269,11 +241,6 @@ export const customerProfileExists = async (userId) => {
   }
 };
 
-/**
- * Получение статистики профиля клиента
- * @param {string} userId - ID пользователя
- * @returns {object} - Статистика профиля
- */
 export const getCustomerStats = async (userId) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(userId)) {
@@ -286,7 +253,6 @@ export const getCustomerStats = async (userId) => {
     }
 
     return {
-      // ✅ СТАТИСТИКА ПО АДРЕСАМ (новая структура)
       addresses: {
         total_count: profile.saved_addresses?.length || 0,
         has_default: profile.saved_addresses?.some(addr => addr.is_default) || false,
@@ -297,20 +263,16 @@ export const getCustomerStats = async (userId) => {
           return acc;
         }, {})
       },
-      
-      // ✅ СТАТИСТИКА ПО ЗАКАЗАМ
       orders: profile.order_stats || {
         total_orders: 0,
         total_spent: 0,
         avg_rating_given: 0
       },
-      
-      // ✅ АКТИВНОСТЬ ПРОФИЛЯ
       profile_activity: {
         is_active: profile.is_active,
-        created_at: profile.created_at,
-        last_updated: profile.updated_at,
-        days_since_registration: Math.floor((Date.now() - profile.created_at) / (1000 * 60 * 60 * 24))
+        created_at: profile.createdAt,
+        last_updated: profile.updatedAt,
+        days_since_registration: Math.floor((Date.now() - profile.createdAt) / (1000 * 60 * 60 * 24))
       }
     };
 
@@ -319,8 +281,6 @@ export const getCustomerStats = async (userId) => {
     throw error;
   }
 };
-
-// ================ ЭКСПОРТ ================
 
 export default {
   getCustomerProfile,

@@ -1,80 +1,67 @@
-// controllers/CustomerController.js - Очищенный от старых функций управления адресами
-import { 
-  createCustomerAccount, 
-  loginCustomer, 
-  getUserById 
+// controllers/CustomerController.js - ИСПРАВЛЕННЫЙ контроллер
+import {
+  createCustomerAccount,
+  authenticateCustomer
 } from '../services/auth.service.js';
-import { 
-  getCustomerProfile, 
-  updateCustomerProfile, 
+
+import {
+  getCustomerProfile,
+  updateCustomerProfile,
   deleteCustomerProfile
 } from '../services/customer.service.js';
+
 import { generateCustomerToken } from '../services/token.service.js';
 
-// ===== РЕГИСТРАЦИЯ =====
+// РЕГИСТРАЦИЯ КЛИЕНТА
 export const register = async (req, res) => {
   try {
-    const { first_name, last_name, email, phone, password } = req.body;
+    const customerData = req.body;
 
-    // Данные уже прошли валидацию в middleware
-    const customerData = { first_name, last_name, email, phone, password };
-    
-    // Создание аккаунта через сервис
-    const newCustomerData = await createCustomerAccount(customerData);
-    
-    // Если клиент уже существует
-    if (!newCustomerData.isNewCustomer) {
+    console.log('Customer registration attempt:', {
+      email: customerData.email,
+      has_password: !!customerData.password
+    });
+
+    const result = await createCustomerAccount(customerData);
+
+    if (!result.isNewCustomer) {
       return res.status(409).json({
         result: false,
-        message: "Пользователь с таким email уже существует"
+        message: "Клиент с таким email уже существует"
       });
     }
 
-    // Генерируем токен для нового клиента
-    const token = generateCustomerToken({
-      user_id: newCustomerData.customer._id,
-      _id: newCustomerData.customer._id,
-      email: newCustomerData.customer.email,
-      role: newCustomerData.customer.role
-    }, '30d');
-
-    res.status(201).json({
+    const response = {
       result: true,
-      message: "Регистрация выполнена успешно",
+      message: "Регистрация прошла успешно",
       user: {
-        id: newCustomerData.customer._id,
-        email: newCustomerData.customer.email,
-        role: newCustomerData.customer.role,
-        profile: {
-          first_name: newCustomerData.customer.profile.first_name,
-          last_name: newCustomerData.customer.profile.last_name,
-          full_name: newCustomerData.customer.profile.full_name
-        }
-      },
-      token
-    });
+        id: result.customer._id,
+        email: result.customer.email,
+        role: result.customer.role,
+        profile: result.customer.profile
+      }
+    };
+
+    if (result.generatedPassword) {
+      response.generated_password = result.generatedPassword;
+      response.message += ". Временный пароль создан автоматически.";
+    }
+
+    res.status(201).json(response);
 
   } catch (error) {
     console.error('Registration error:', error);
     
-    // Обработка ошибок валидации
-    if (error.validationErrors) {
-      return res.status(400).json({
-        result: false,
-        message: "Ошибки валидации",
-        errors: error.validationErrors
-      });
-    }
+    const statusCode = error.message.includes('обязательны') ? 400 : 500;
     
-    res.status(500).json({
+    res.status(statusCode).json({
       result: false,
-      message: "Ошибка при регистрации",
-      error: error.message
+      message: error.message || "Ошибка при регистрации"
     });
   }
 };
 
-// ===== АВТОРИЗАЦИЯ =====
+// АВТОРИЗАЦИЯ КЛИЕНТА
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -82,14 +69,15 @@ export const login = async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({
         result: false,
-        message: "Email и пароль обязательны для заполнения"
+        message: "Email и пароль обязательны"
       });
     }
 
-    // Авторизация через сервис
-    const loginResult = await loginCustomer(email, password);
-    
-    if (!loginResult.isValid) {
+    console.log('Customer login attempt:', { email });
+
+    const loginResult = await authenticateCustomer(email, password);
+
+    if (!loginResult || !loginResult.customer) {
       return res.status(401).json({
         result: false,
         message: "Неверный email или пароль"
@@ -111,13 +99,7 @@ export const login = async (req, res) => {
         id: loginResult.customer._id,
         email: loginResult.customer.email,
         role: loginResult.customer.role,
-        profile: {
-          first_name: loginResult.customer.profile.first_name,
-          last_name: loginResult.customer.profile.last_name,
-          full_name: loginResult.customer.profile.full_name,
-          phone: loginResult.customer.profile.phone,
-          avatar_url: loginResult.customer.profile.avatar_url
-        }
+        profile: loginResult.customer.profile
       },
       token
     });
@@ -132,10 +114,10 @@ export const login = async (req, res) => {
   }
 };
 
-// ===== ВЕРИФИКАЦИЯ ТОКЕНА =====
+// ВЕРИФИКАЦИЯ ТОКЕНА
 export const verify = async (req, res) => {
   try {
-    const { user } = req; // Из middleware аутентификации
+    const { user } = req;
 
     if (!user) {
       return res.status(404).json({
@@ -144,7 +126,6 @@ export const verify = async (req, res) => {
       });
     }
 
-    // Получаем полную информацию о профиле
     const customerProfile = await getCustomerProfile(user._id);
 
     res.status(200).json({
@@ -160,7 +141,6 @@ export const verify = async (req, res) => {
           full_name: customerProfile.profile.full_name,
           phone: customerProfile.profile.phone,
           avatar_url: customerProfile.profile.avatar_url,
-          // ✅ НОВЫЕ ПОЛЯ: Количество сохраненных адресов
           saved_addresses_count: customerProfile.profile.saved_addresses?.length || 0,
           has_default_address: customerProfile.profile.saved_addresses?.some(addr => addr.is_default) || false
         }
@@ -177,10 +157,10 @@ export const verify = async (req, res) => {
   }
 };
 
-// ===== ПОЛУЧЕНИЕ ПРОФИЛЯ =====
+// ПОЛУЧЕНИЕ ПРОФИЛЯ
 export const getProfile = async (req, res) => {
   try {
-    const { user } = req; // Из middleware аутентификации
+    const { user } = req;
 
     if (!user) {
       return res.status(404).json({
@@ -189,22 +169,13 @@ export const getProfile = async (req, res) => {
       });
     }
 
-    // Получаем профиль через сервис
     const customerProfile = await getCustomerProfile(user._id);
 
     res.status(200).json({
       result: true,
-      message: "Профиль получен успешно",
+      message: "Профиль получен",
       user: customerProfile.user,
-      profile: {
-        ...customerProfile.profile,
-        // ✅ ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ ОБ АДРЕСАХ
-        addresses_summary: {
-          total_count: customerProfile.profile.saved_addresses?.length || 0,
-          default_address: customerProfile.profile.saved_addresses?.find(addr => addr.is_default) || null,
-          zones_used: [...new Set(customerProfile.profile.saved_addresses?.map(addr => addr.delivery_info?.zone).filter(Boolean))] || []
-        }
-      }
+      profile: customerProfile.profile
     });
 
   } catch (error) {
@@ -216,10 +187,10 @@ export const getProfile = async (req, res) => {
   }
 };
 
-// ===== ОБНОВЛЕНИЕ ПРОФИЛЯ =====
+// ОБНОВЛЕНИЕ ПРОФИЛЯ
 export const edit = async (req, res) => {
   try {
-    const { user } = req; // Из middleware аутентификации
+    const { user } = req;
     const updateData = req.body;
 
     if (!user) {
@@ -229,7 +200,14 @@ export const edit = async (req, res) => {
       });
     }
 
-    // Фильтруем данные для обновления (исключаем адреса)
+    // Исключаем адреса из обновления профиля
+    if (updateData.saved_addresses) {
+      return res.status(400).json({
+        result: false,
+        message: "Управление адресами через отдельное API: /api/customers/addresses"
+      });
+    }
+
     const allowedFields = ['first_name', 'last_name', 'phone', 'avatar_url', 'language', 'current_password', 'new_password'];
     const filteredUpdateData = {};
     
@@ -246,7 +224,6 @@ export const edit = async (req, res) => {
       });
     }
 
-    // Обновляем профиль через сервис (валидация внутри сервиса)
     const updatedProfile = await updateCustomerProfile(user._id, filteredUpdateData);
 
     res.status(200).json({
@@ -255,7 +232,6 @@ export const edit = async (req, res) => {
       user: updatedProfile.user,
       profile: {
         ...updatedProfile.profile,
-        // ✅ СОХРАНЯЕМ ИНФОРМАЦИЮ ОБ АДРЕСАХ
         addresses_summary: {
           total_count: updatedProfile.profile.saved_addresses?.length || 0,
           has_default_address: updatedProfile.profile.saved_addresses?.some(addr => addr.is_default) || false
@@ -266,7 +242,6 @@ export const edit = async (req, res) => {
   } catch (error) {
     console.error('Update profile error:', error);
     
-    // Обработка ошибок валидации
     if (error.validationErrors) {
       return res.status(400).json({
         result: false,
@@ -282,10 +257,10 @@ export const edit = async (req, res) => {
   }
 };
 
-// ===== УДАЛЕНИЕ ПРОФИЛЯ =====
+// УДАЛЕНИЕ ПРОФИЛЯ
 export const delClient = async (req, res) => {
   try {
-    const { user } = req; // Из middleware аутентификации
+    const { user } = req;
 
     if (!user) {
       return res.status(404).json({
@@ -294,7 +269,6 @@ export const delClient = async (req, res) => {
       });
     }
 
-    // Удаляем профиль через сервис
     await deleteCustomerProfile(user._id);
 
     res.status(200).json({
@@ -310,13 +284,6 @@ export const delClient = async (req, res) => {
     });
   }
 };
-
-// ================ ЭКСПОРТ ================
-
-
-
-// ✅ УДАЛЕНЫ СТАРЫЕ ФУНКЦИИ: addAddress, updateAddress, removeAddress
-// Теперь управление адресами полностью в AddressController.js
 
 export default {
   register,
