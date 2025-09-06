@@ -1,11 +1,11 @@
-// controllers/AddressController.js - Контроллер управления адресами ESARGO
+// controllers/AddressController.js - ИСПРАВЛЕННЫЙ контроллер управления адресами
 import {
   addCustomerAddress,
   updateCustomerAddress,
   deleteCustomerAddress,
   getCustomerAddresses,
   getCustomerAddressById,
-  setDefaultAddress,
+  setDefaultAddress as setDefaultAddressService, // ✅ ПЕРЕИМЕНОВАНО во избежание конфликта
   getDeliveryZones,
   generateMockAddresses
 } from '../services/Address/address.service.js';
@@ -15,20 +15,6 @@ import {
 /**
  * 📍 ДОБАВЛЕНИЕ НОВОГО АДРЕСА
  * POST /api/customers/addresses
- * Body: {
- *   address: String,
- *   lat?: Number,
- *   lng?: Number,
- *   name: 'Дом' | 'Работа' | 'Родители' | 'Друзья' | 'Другое',
- *   is_default?: Boolean,
- *   details?: {
- *     apartment?: String,
- *     entrance?: String,
- *     intercom?: String,
- *     floor?: String,
- *     delivery_notes?: String
- *   }
- * }
  */
 export const addAddress = async (req, res) => {
   try {
@@ -162,18 +148,6 @@ export const getAddressById = async (req, res) => {
 /**
  * ✏️ ОБНОВЛЕНИЕ АДРЕСА
  * PUT /api/customers/addresses/:addressId
- * Body: {
- *   address?: String,
- *   name?: 'Дом' | 'Работа' | 'Родители' | 'Друзья' | 'Другое',
- *   is_default?: Boolean,
- *   details?: {
- *     apartment?: String,
- *     entrance?: String,
- *     intercom?: String,
- *     floor?: String,
- *     delivery_notes?: String
- *   }
- * }
  */
 export const updateAddress = async (req, res) => {
   try {
@@ -277,7 +251,7 @@ export const removeAddress = async (req, res) => {
  * 🏠 УСТАНОВКА ОСНОВНОГО АДРЕСА
  * PATCH /api/customers/addresses/:addressId/default
  */
-export const setDefaultAddress = async (req, res) => {
+export const setDefaultAddressController = async (req, res) => {
   try {
     const { user } = req;
     const { addressId } = req.params;
@@ -294,7 +268,7 @@ export const setDefaultAddress = async (req, res) => {
       });
     }
 
-    const result = await setDefaultAddress(user._id, addressId);
+    const result = await setDefaultAddressService(user._id, addressId);
 
     res.status(200).json({
       result: true,
@@ -379,11 +353,6 @@ export const getMockAddresses = async (req, res) => {
 /**
  * 🔍 ВАЛИДАЦИЯ АДРЕСА БЕЗ СОХРАНЕНИЯ
  * POST /api/customers/addresses/validate
- * Body: {
- *   address: String,
- *   lat?: Number,
- *   lng?: Number
- * }
  */
 export const validateAddress = async (req, res) => {
   try {
@@ -436,20 +405,7 @@ export const validateAddress = async (req, res) => {
 
 // ================ ЭКСПОРТ КОНТРОЛЛЕРОВ ================
 
-export {
-  // Основные CRUD операции
-  addAddress,
-  getAddresses,
-  getAddressById,
-  updateAddress,
-  removeAddress,
-  setDefaultAddress,
-  
-  // Утилитарные функции
-  getDeliveryZonesInfo,
-  getMockAddresses,
-  validateAddress
-};
+
 
 // Экспорт по умолчанию для совместимости
 export default {
@@ -458,7 +414,7 @@ export default {
   getAddressById,
   updateAddress,
   removeAddress,
-  setDefaultAddress,
+  setDefaultAddress: setDefaultAddressController, // ✅ ИСПОЛЬЗОВАНИЕ ПРАВИЛЬНОГО ИМЕНИ
   getDeliveryZonesInfo,
   getMockAddresses,
   validateAddress

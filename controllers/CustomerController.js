@@ -313,14 +313,7 @@ export const delClient = async (req, res) => {
 
 // ================ ЭКСПОРТ ================
 
-export {
-  register,
-  login,
-  verify,
-  getProfile,
-  edit,
-  delClient
-};
+
 
 // ✅ УДАЛЕНЫ СТАРЫЕ ФУНКЦИИ: addAddress, updateAddress, removeAddress
 // Теперь управление адресами полностью в AddressController.js
