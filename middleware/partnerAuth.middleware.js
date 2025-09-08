@@ -1,4 +1,4 @@
-// middleware/partnerAuth.middleware.js - ИСПРАВЛЕННЫЙ БЕЗ ДУБЛИРОВАНИЯ
+// middleware/partnerAuth.middleware.js - ИСПРАВЛЕННЫЙ С ПОДТВЕРЖДЕНИЕМ ПАРОЛЯ
 import jwt from "jsonwebtoken";
 import { User, InitialPartnerRequest, PartnerProfile, PartnerLegalInfo } from '../models/index.js';
 import Meta from '../models/Meta.model.js';
@@ -6,7 +6,7 @@ import { verifyPartnerToken } from '../services/Partner/partner.auth.service.js'
 import { validateFrenchPhone, validateSiret, validateFrenchIban, validateFrenchTva } from '../utils/validation.utils.js';
 
 /**
- * ================== ВАЛИДАЦИЯ ДАННЫХ РЕГИСТРАЦИИ ==================
+ * ================== ВАЛИДАЦИЯ ДАННЫХ РЕГИСТРАЦИИ ПАРТНЕРА ==================
  */
 const validatePartnerRegistrationData = (req, res, next) => {
     try {
@@ -15,11 +15,13 @@ const validatePartnerRegistrationData = (req, res, next) => {
         console.log('🔍 VALIDATE PARTNER DATA - Start:', {
             has_phone: !!data.phone,
             has_brand_name: !!data.brand_name,
+            has_password: !!data.password,
+            has_confirm_password: !!data.confirm_password,
             whatsapp_consent: data.whatsapp_consent
         });
 
         // Проверка обязательных полей
-        const requiredFields = ['first_name', 'last_name', 'email', 'password', 'phone', 'business_name', 'category', 'address'];
+        const requiredFields = ['first_name', 'last_name', 'email', 'password', 'confirm_password', 'phone', 'business_name', 'category', 'address'];
         const missingFields = requiredFields.filter(field => !data[field]);
         
         if (missingFields.length > 0) {
@@ -55,6 +57,28 @@ const validatePartnerRegistrationData = (req, res, next) => {
             });
         }
 
+        if (data.password.length > 128) {
+            return res.status(400).json({
+                result: false,
+                message: "Пароль не может быть длиннее 128 символов"
+            });
+        }
+
+        // ✅ ПРОВЕРКА ПОДТВЕРЖДЕНИЯ ПАРОЛЯ
+        if (!data.confirm_password || data.confirm_password.trim().length === 0) {
+            return res.status(400).json({
+                result: false,
+                message: "Подтверждение пароля обязательно"
+            });
+        }
+
+        if (data.password !== data.confirm_password) {
+            return res.status(400).json({
+                result: false,
+                message: "Пароли не совпадают"
+            });
+        }
+
         // Валидация категории
         const allowedCategories = [
             'restaurant', 'cafe', 'bakery', 'grocery', 'pharmacy', 
@@ -68,6 +92,15 @@ const validatePartnerRegistrationData = (req, res, next) => {
                 allowed_categories: allowedCategories
             });
         }
+
+        // ✅ НОРМАЛИЗАЦИЯ ДАННЫХ
+        req.body.first_name = data.first_name.trim();
+        req.body.last_name = data.last_name.trim();
+        req.body.email = data.email.toLowerCase().trim();
+        req.body.phone = data.phone.replace(/\s/g, '');
+        
+        // ✅ УБИРАЕМ confirm_password из req.body перед передачей в контроллер
+        delete req.body.confirm_password;
 
         console.log('✅ PARTNER REGISTRATION DATA VALIDATION PASSED');
         next();
@@ -102,14 +135,36 @@ const validateLegalInfoData = (req, res, next) => {
             });
         }
 
-        // Проверка обязательных полей
-        const requiredLegalFields = ['business_name', 'siret_number', 'legal_address', 'legal_representative'];
+        // Проверка обязательных полей в legal_data
+        const requiredLegalFields = ['legal_name', 'siret_number', 'legal_address', 'legal_representative'];
         const missingLegalFields = requiredLegalFields.filter(field => !data.legal_data[field]);
         
         if (missingLegalFields.length > 0) {
             return res.status(400).json({
                 result: false,
                 message: `Обязательные юридические поля: ${missingLegalFields.join(', ')}`
+            });
+        }
+
+        // Проверка обязательных полей в bank_details
+        const requiredBankFields = ['iban', 'bic'];
+        const missingBankFields = requiredBankFields.filter(field => !data.bank_details[field]);
+        
+        if (missingBankFields.length > 0) {
+            return res.status(400).json({
+                result: false,
+                message: `Обязательные банковские поля: ${missingBankFields.join(', ')}`
+            });
+        }
+
+        // Проверка обязательных полей в legal_contact
+        const requiredContactFields = ['email', 'phone'];
+        const missingContactFields = requiredContactFields.filter(field => !data.legal_contact[field]);
+        
+        if (missingContactFields.length > 0) {
+            return res.status(400).json({
+                result: false,
+                message: `Обязательные контактные поля юр.лица: ${missingContactFields.join(', ')}`
             });
         }
 
@@ -149,11 +204,26 @@ const validateLegalInfoData = (req, res, next) => {
             });
         }
 
-        // Валидация телефона юр. лица (если указан)
-        if (data.legal_contact.phone && !validateFrenchPhone(data.legal_contact.phone)) {
+        // Валидация телефона юр. лица
+        if (!validateFrenchPhone(data.legal_contact.phone)) {
             return res.status(400).json({
                 result: false,
                 message: "Телефон юр. лица должен быть французским"
+            });
+        }
+
+        // Валидация формы юридического лица
+        const allowedLegalForms = [
+            'Auto-entrepreneur', 'SASU', 'SARL', 'SAS', 'EURL', 
+            'SA', 'SNC', 'SCI', 'SELARL', 'Micro-entreprise', 
+            'EI', 'EIRL', 'Autre'
+        ];
+        
+        if (data.legal_data.legal_form && !allowedLegalForms.includes(data.legal_data.legal_form)) {
+            return res.status(400).json({
+                result: false,
+                message: "Недопустимая форма юридического лица",
+                allowed_forms: allowedLegalForms
             });
         }
 

@@ -1,4 +1,4 @@
-// controllers/PartnerController.js - ИСПРАВЛЕННЫЙ СТРОГО ПО АРХИТЕКТУРЕ
+// controllers/PartnerController.js - ИСПРАВЛЕННЫЙ С АВТОГЕОКОДИРОВАНИЕМ
 import { createPartnerAccount, loginPartner, checkPartnerExists } from '../services/Partner/partner.auth.service.js';
 import * as partnerService from '../services/Partner/partner.service.js';
 import { submitPartnerLegalInfo } from '../services/Partner/partner.legal.service.js';
@@ -14,17 +14,18 @@ import { submitPartnerLegalInfo } from '../services/Partner/partner.legal.servic
 const registerPartner = async (req, res) => {
     try {
         console.log('🔍 REGISTER PARTNER - Start:', {
-            body_keys: Object.keys(req.body)
+            body_keys: Object.keys(req.body),
+            has_address: !!req.body.address
         });
 
         // Принимаем данные из запроса
         const {
             first_name, last_name, email, password, phone,
             business_name, brand_name, category, address, floor_unit,
-            latitude, longitude, whatsapp_consent
+            whatsapp_consent
         } = req.body;
 
-        // Проверяем обязательные поля
+        // Проверяем обязательные поля (БЕЗ координат!)
         if (!first_name || !last_name || !email || !password || !phone || 
             !business_name || !category || !address) {
             return res.status(400).json({
@@ -33,7 +34,7 @@ const registerPartner = async (req, res) => {
             });
         }
 
-        // Передаем данные в сервис
+        // ✅ ПЕРЕДАЕМ ТОЛЬКО АДРЕС - координаты будут получены автоматически
         const result = await createPartnerAccount({
             first_name,
             last_name,
@@ -43,9 +44,8 @@ const registerPartner = async (req, res) => {
             business_name,
             brand_name,
             category,
-            address,
+            address, // ✅ Только адрес, геокодирование в сервисе
             floor_unit,
-            location: latitude && longitude ? { lat: latitude, lng: longitude } : null,
             whatsapp_consent
         });
 
@@ -58,6 +58,7 @@ const registerPartner = async (req, res) => {
             data: {
                 user_id: result.user.id,
                 request_id: result.request._id,
+                coordinates: result.coordinates, // ✅ Возвращаем полученные координаты
                 next_step: "Ожидайте одобрения администратора"
             }
         });
@@ -66,7 +67,8 @@ const registerPartner = async (req, res) => {
         console.error('🚨 REGISTER PARTNER - Error:', error);
         
         const statusCode = error.message.includes('уже существует') ? 409 :
-                          error.message.includes('Обязательные поля') ? 400 : 500;
+                          error.message.includes('Обязательные поля') ? 400 :
+                          error.message.includes('геокодирование') ? 422 : 500;
 
         res.status(statusCode).json({
             result: false,

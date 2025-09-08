@@ -15,7 +15,7 @@ const createPartnerAccount = async (data) => {
     const {
         first_name, last_name, email, password, phone,
         business_name, brand_name, category, address, floor_unit,
-        location, whatsapp_consent
+        whatsapp_consent
     } = data;
 
     const session = await mongoose.startSession();
@@ -36,20 +36,16 @@ const createPartnerAccount = async (data) => {
                 throw new Error('Партнер с таким email уже существует');
             }
 
-            // Геокодирование адреса через утилиту
-            let coordinates = null;
-            if (location?.lat && location?.lng) {
-                coordinates = {
-                    lat: parseFloat(location.lat),
-                    lng: parseFloat(location.lng),
-                    zone: location.lat > 43.3 ? 2 : 1
-                };
-            } else {
-                const geocodeResult = mockGeocode(address);
-                if (geocodeResult.success) {
-                    coordinates = geocodeResult.coordinates;
-                }
+            // ✅ АВТОМАТИЧЕСКОЕ ГЕОКОДИРОВАНИЕ АДРЕСА
+            console.log('🗺️ GEOCODING ADDRESS:', address);
+            const geocodeResult = mockGeocode(address);
+            
+            if (!geocodeResult.success) {
+                throw new Error('Ошибка геокодирования адреса: ' + geocodeResult.error);
             }
+
+            const coordinates = geocodeResult.coordinates;
+            console.log('✅ GEOCODING SUCCESS:', coordinates);
 
             // Создаем пользователя
             const newUser = new User({
@@ -91,14 +87,17 @@ const createPartnerAccount = async (data) => {
                 category: category,
                 address: cryptoString(address),
                 floor_unit: floor_unit ? cryptoString(floor_unit) : null,
-                location: coordinates || null,
-                delivery_zones: coordinates ? [{
+                location: {
+                    type: 'Point',
+                    coordinates: [coordinates.lng, coordinates.lat] // GeoJSON: [longitude, latitude]
+                },
+                delivery_zones: [{
                     zone_number: coordinates.zone,
                     max_distance_km: coordinates.zone === 1 ? 5 : 10,
                     delivery_fee: coordinates.zone === 1 ? 2.99 : 4.99,
                     min_order_amount: 30,
                     is_active: true
-                }] : []
+                }]
             };
 
             // Создаем заявку партнера
@@ -131,7 +130,8 @@ const createPartnerAccount = async (data) => {
                     id: newUser._id,
                     role: 'partner'
                 },
-                request: savedRequest
+                request: savedRequest,
+                coordinates: coordinates // ✅ ВОЗВРАЩАЕМ КООРДИНАТЫ
             };
         });
 
