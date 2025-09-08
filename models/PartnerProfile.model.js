@@ -1,4 +1,4 @@
-// models/PartnerProfile.model.js - РАСШИРЕННАЯ МОДЕЛЬ С EARNINGS И DELIVERY ZONES
+// models/PartnerProfile.model.js - ПОЛНАЯ МОДЕЛЬ С SUBMISSION_INFO И ВСЕМИ ПОЛЯМИ
 import mongoose from 'mongoose';
 
 const partnerProfileSchema = new mongoose.Schema({
@@ -37,7 +37,7 @@ const partnerProfileSchema = new mongoose.Schema({
     maxlength: 500
   },
   
-  // 🔐 ЗАШИФРОВАННЫЕ ДАННЫЕ
+  // ЗАШИФРОВАННЫЕ ДАННЫЕ
   address: {
     type: String,
     required: true
@@ -82,7 +82,14 @@ const partnerProfileSchema = new mongoose.Schema({
     trim: true
   },
   
-  // 🎨 МЕДИА
+  // СВЯЗЬ С ЮРИДИЧЕСКОЙ ИНФОРМАЦИЕЙ
+  legal_info_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'PartnerLegalInfo',
+    index: true
+  },
+  
+  // МЕДИА
   cover_image_url: {
     type: String
   },
@@ -101,13 +108,54 @@ const partnerProfileSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true, maxlength: 50 },
     slug: { type: String, required: true, trim: true },
     description: { type: String, trim: true, maxlength: 200 },
-    display_order: { type: Number, default: 0 },
+    image_url: { type: String, default: '' },
+    sort_order: { type: Number, default: 0 },
     is_active: { type: Boolean, default: true },
+    products_count: { type: Number, default: 0 },
     created_at: { type: Date, default: Date.now },
     updated_at: { type: Date, default: Date.now }
   }],
   
-  // ✅ СИСТЕМА ЗАРАБОТКА ESARGO
+  // РАБОЧИЕ ЧАСЫ
+  working_hours: {
+    monday: {
+      is_open: { type: Boolean, default: true },
+      open_time: { type: String, default: "09:00" },
+      close_time: { type: String, default: "21:00" }
+    },
+    tuesday: {
+      is_open: { type: Boolean, default: true },
+      open_time: { type: String, default: "09:00" },
+      close_time: { type: String, default: "21:00" }
+    },
+    wednesday: {
+      is_open: { type: Boolean, default: true },
+      open_time: { type: String, default: "09:00" },
+      close_time: { type: String, default: "21:00" }
+    },
+    thursday: {
+      is_open: { type: Boolean, default: true },
+      open_time: { type: String, default: "09:00" },
+      close_time: { type: String, default: "21:00" }
+    },
+    friday: {
+      is_open: { type: Boolean, default: true },
+      open_time: { type: String, default: "09:00" },
+      close_time: { type: String, default: "21:00" }
+    },
+    saturday: {
+      is_open: { type: Boolean, default: true },
+      open_time: { type: String, default: "09:00" },
+      close_time: { type: String, default: "21:00" }
+    },
+    sunday: {
+      is_open: { type: Boolean, default: false },
+      open_time: { type: String, default: "09:00" },
+      close_time: { type: String, default: "21:00" }
+    }
+  },
+  
+  // СИСТЕМА ЗАРАБОТКА ESARGO
   earnings: {
     total_earned: {
       type: Number,
@@ -156,7 +204,7 @@ const partnerProfileSchema = new mongoose.Schema({
     }
   },
   
-  // ✅ НОВЫЕ ПОЛЯ: ЗОНЫ ДОСТАВКИ ESARGO
+  // ЗОНЫ ДОСТАВКИ ESARGO
   available_delivery_zones: [{
     zone_number: {
       type: Number,
@@ -187,8 +235,8 @@ const partnerProfileSchema = new mongoose.Schema({
   // РЕЙТИНГИ
   ratings: {
     avg_rating: { type: Number, default: 0, min: 0, max: 5 },
-    total_ratings: { type: Number, default: 0 },
-    rating_distribution: {
+    total_reviews: { type: Number, default: 0 },
+    rating_breakdown: {
       five_star: { type: Number, default: 0 },
       four_star: { type: Number, default: 0 },
       three_star: { type: Number, default: 0 },
@@ -210,9 +258,47 @@ const partnerProfileSchema = new mongoose.Schema({
     last_stats_update: { type: Date }
   },
   
+  // ИНФОРМАЦИЯ О ПОДАЧЕ НА ПРОВЕРКУ
+  submission_info: {
+    submitted_for_review_at: {
+      type: Date
+    },
+    submission_notes: {
+      type: String,
+      trim: true,
+      maxlength: 500
+    },
+    submitted_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    admin_review_notes: {
+      type: String,
+      trim: true,
+      maxlength: 1000
+    },
+    last_reviewed_at: {
+      type: Date
+    },
+    reviewed_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AdminUser'
+    }
+  },
+  
   // СТАТУСЫ
-  content_status: { type: String, enum: ['awaiting_content', 'content_added', 'pending_review', 'approved', 'rejected'], default: 'awaiting_content', index: true },
-  approval_status: { type: String, enum: ['awaiting_approval', 'approved', 'rejected'], default: 'awaiting_approval', index: true },
+  content_status: { 
+    type: String, 
+    enum: ['awaiting_content', 'content_added', 'pending_review', 'approved', 'rejected'], 
+    default: 'awaiting_content', 
+    index: true 
+  },
+  approval_status: { 
+    type: String, 
+    enum: ['awaiting_approval', 'approved', 'rejected'], 
+    default: 'awaiting_approval', 
+    index: true 
+  },
   is_approved: { type: Boolean, default: false, index: true },
   is_active: { type: Boolean, default: true, index: true },
   is_public: { type: Boolean, default: false, index: true },
@@ -225,29 +311,27 @@ const partnerProfileSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// ================ ИНДЕКСЫ ================
+// ИНДЕКСЫ
 partnerProfileSchema.index({ user_id: 1 });
 partnerProfileSchema.index({ category: 1, is_public: 1, is_approved: 1 });
 partnerProfileSchema.index({ location: '2dsphere' });
 partnerProfileSchema.index({ 'ratings.avg_rating': -1 });
 partnerProfileSchema.index({ is_approved: 1, is_active: 1, is_public: 1 });
-partnerProfileSchema.index({ 'available_delivery_zones.zone_number': 1 }); // ✅ НОВЫЙ ИНДЕКС
+partnerProfileSchema.index({ 'available_delivery_zones.zone_number': 1 });
+partnerProfileSchema.index({ content_status: 1, approval_status: 1 });
 
-// ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
+// ВИРТУАЛЬНЫЕ ПОЛЯ
 partnerProfileSchema.virtual('total_gallery_count').get(function() {
   return this.gallery.length;
 });
 
 partnerProfileSchema.virtual('active_zones_count').get(function() {
-  return this.available_delivery_zones.filter(zone => zone.is_active);
+  return this.available_delivery_zones.filter(zone => zone.is_active).length;
 });
 
-// ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
+// МЕТОДЫ ЭКЗЕМПЛЯРА
 
-// ✅ НОВЫЕ МЕТОДЫ ДЛЯ EARNINGS
-/**
- * Обновление заработка партнера
- */
+// Методы для earnings
 partnerProfileSchema.methods.updateEarnings = function(orderData) {
   const orderTotal = orderData.subtotal || 0;
   const commissionRate = 0.10; // 10% комиссия ESARGO
@@ -268,41 +352,26 @@ partnerProfileSchema.methods.updateEarnings = function(orderData) {
   return this.save();
 };
 
-/**
- * Сброс недельного заработка (вызывается каждую неделю)
- */
 partnerProfileSchema.methods.resetWeeklyEarnings = function() {
   this.earnings.weekly_earned = 0;
   return this.save();
 };
 
-/**
- * Сброс месячного заработка (вызывается каждый месяц)
- */
 partnerProfileSchema.methods.resetMonthlyEarnings = function() {
   this.earnings.monthly_earned = 0;
   return this.save();
 };
 
-/**
- * Сброс дневного заработка (вызывается каждый день)
- */
 partnerProfileSchema.methods.resetDailyEarnings = function() {
   this.earnings.daily_earned = 0;
   return this.save();
 };
 
-// ✅ НОВЫЕ МЕТОДЫ ДЛЯ DELIVERY ZONES
-/**
- * Получение зон доставки партнера
- */
+// Методы для delivery zones
 partnerProfileSchema.methods.getActiveDeliveryZones = function() {
   return this.available_delivery_zones.filter(zone => zone.is_active);
 };
 
-/**
- * Проверка может ли партнер доставлять в зону
- */
 partnerProfileSchema.methods.canDeliverToZone = function(zoneNumber) {
   const zone = this.available_delivery_zones.find(z => 
     z.zone_number === zoneNumber && z.is_active
@@ -310,9 +379,6 @@ partnerProfileSchema.methods.canDeliverToZone = function(zoneNumber) {
   return !!zone;
 };
 
-/**
- * Получение стоимости доставки для зоны
- */
 partnerProfileSchema.methods.getDeliveryFeeForZone = function(zoneNumber, orderTotal = 0) {
   const zone = this.available_delivery_zones.find(z => 
     z.zone_number === zoneNumber && z.is_active
@@ -325,33 +391,27 @@ partnerProfileSchema.methods.getDeliveryFeeForZone = function(zoneNumber, orderT
     zone.delivery_fee : zone.delivery_fee + 2; // Доплата за малый заказ
 };
 
-// СУЩЕСТВУЮЩИЕ МЕТОДЫ (сохраняем)
-
-/**
- * Обновление рейтинга партнера
- */
+// Обновление рейтинга
 partnerProfileSchema.methods.updateRating = function(newRating) {
-  const currentTotal = this.ratings.total_ratings;
+  const currentTotal = this.ratings.total_reviews;
   const currentAvg = this.ratings.avg_rating;
   
-  this.ratings.total_ratings += 1;
-  this.ratings.avg_rating = ((currentAvg * currentTotal) + newRating) / this.ratings.total_ratings;
+  this.ratings.total_reviews += 1;
+  this.ratings.avg_rating = ((currentAvg * currentTotal) + newRating) / this.ratings.total_reviews;
   
   // Обновляем распределение рейтингов
   switch (newRating) {
-    case 5: this.ratings.rating_distribution.five_star += 1; break;
-    case 4: this.ratings.rating_distribution.four_star += 1; break;
-    case 3: this.ratings.rating_distribution.three_star += 1; break;
-    case 2: this.ratings.rating_distribution.two_star += 1; break;
-    case 1: this.ratings.rating_distribution.one_star += 1; break;
+    case 5: this.ratings.rating_breakdown.five_star += 1; break;
+    case 4: this.ratings.rating_breakdown.four_star += 1; break;
+    case 3: this.ratings.rating_breakdown.three_star += 1; break;
+    case 2: this.ratings.rating_breakdown.two_star += 1; break;
+    case 1: this.ratings.rating_breakdown.one_star += 1; break;
   }
   
   return this.save();
 };
 
-/**
- * Обновление статистики продуктов
- */
+// Обновление статистики продуктов
 partnerProfileSchema.methods.updateProductStats = async function() {
   const Product = mongoose.model('Product');
   
@@ -381,18 +441,14 @@ partnerProfileSchema.methods.updateProductStats = async function() {
   return this.save();
 };
 
-/**
- * Проверка может ли партнер принимать заказы
- */
+// Проверка может ли партнер принимать заказы
 partnerProfileSchema.methods.canAcceptOrders = function() {
   return this.is_approved && this.is_active && this.is_public && this.is_currently_open;
 };
 
-// ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
+// СТАТИЧЕСКИЕ МЕТОДЫ
 
-/**
- * ✅ НОВЫЙ МЕТОД: Поиск партнеров по зоне доставки
- */
+// Поиск партнеров по зоне доставки
 partnerProfileSchema.statics.findByDeliveryZone = function(zoneNumber) {
   return this.find({
     'available_delivery_zones.zone_number': zoneNumber,
@@ -403,9 +459,7 @@ partnerProfileSchema.statics.findByDeliveryZone = function(zoneNumber) {
   });
 };
 
-/**
- * ✅ НОВЫЙ МЕТОД: Статистика earnings по партнерам
- */
+// Статистика earnings по партнерам
 partnerProfileSchema.statics.getEarningsStats = function(dateFrom, dateTo) {
   return this.aggregate([
     {
@@ -431,9 +485,7 @@ partnerProfileSchema.statics.getEarningsStats = function(dateFrom, dateTo) {
   ]);
 };
 
-/**
- * Поиск партнеров поблизости
- */
+// Поиск партнеров поблизости
 partnerProfileSchema.statics.findNearby = function(lat, lng, radiusKm = 10, category = null) {
   const matchConditions = {
     location: {
@@ -454,15 +506,13 @@ partnerProfileSchema.statics.findNearby = function(lat, lng, radiusKm = 10, cate
   return this.find(matchConditions).sort({ 'ratings.avg_rating': -1 });
 };
 
-/**
- * Поиск популярных партнеров
- */
+// Поиск популярных партнеров
 partnerProfileSchema.statics.findPopular = function(limit = 10, category = null) {
   const matchConditions = {
     is_approved: true,
     is_active: true,
     is_public: true,
-    'ratings.total_ratings': { $gte: 5 }
+    'ratings.total_reviews': { $gte: 5 }
   };
   
   if (category) {
@@ -470,11 +520,11 @@ partnerProfileSchema.statics.findPopular = function(limit = 10, category = null)
   }
   
   return this.find(matchConditions)
-    .sort({ 'ratings.avg_rating': -1, 'ratings.total_ratings': -1 })
+    .sort({ 'ratings.avg_rating': -1, 'ratings.total_reviews': -1 })
     .limit(limit);
 };
 
-// ================ НАСТРОЙКИ JSON ================
+// НАСТРОЙКИ JSON
 partnerProfileSchema.set('toJSON', { 
   virtuals: true,
   transform: function(doc, ret) {
@@ -484,10 +534,13 @@ partnerProfileSchema.set('toJSON', {
     delete ret.email;
     delete ret.owner_name;
     delete ret.owner_surname;
+    delete ret.__v;
     return ret;
   }
 });
 
 partnerProfileSchema.set('toObject', { virtuals: true });
 
-export default mongoose.model('PartnerProfile', partnerProfileSchema);
+// БЕЗОПАСНАЯ РЕГИСТРАЦИЯ МОДЕЛИ
+const PartnerProfile = mongoose.models.PartnerProfile || mongoose.model('PartnerProfile', partnerProfileSchema);
+export default PartnerProfile;

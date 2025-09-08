@@ -1,7 +1,9 @@
 // controllers/PartnerController.js - ИСПРАВЛЕННЫЙ С АВТОГЕОКОДИРОВАНИЕМ
 import { createPartnerAccount, loginPartner, checkPartnerExists } from '../services/Partner/partner.auth.service.js';
 import * as partnerService from '../services/Partner/partner.service.js';
+import { validateProfileContent } from '../services/Partner/partner.service.js';
 import { submitPartnerLegalInfo } from '../services/Partner/partner.legal.service.js';
+import PartnerProfile from '../models/PartnerProfile.model.js';
 
 /**
  * ================== КОНТРОЛЛЕРЫ РАБОТАЮТ ТОЛЬКО С REQ/RES ==================

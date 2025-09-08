@@ -57,6 +57,79 @@ export const getPartnerFullInfo = async (partnerId) => {
     }
 };
 
+export const validateProfileContent = async (profile) => {
+    try {
+        const requirements = [];
+        const recommendations = [];
+        let is_ready = true;
+
+        // Проверяем обязательные элементы
+        if (profile.menu_categories.length === 0) {
+            requirements.push("Добавьте минимум 1 категорию меню");
+            is_ready = false;
+        }
+
+        // Подсчитываем продукты
+        const Product = (await import('../../models/Product.model.js')).default;
+        const productsCount = await Product.countDocuments({ 
+            partner_id: profile._id,
+            is_active: true 
+        });
+
+        if (productsCount === 0) {
+            requirements.push("Добавьте минимум 1 активный продукт");
+            is_ready = false;
+        }
+
+        // Рекомендации для улучшения
+        if (!profile.description || profile.description.length < 50) {
+            recommendations.push("Добавьте подробное описание заведения (минимум 50 символов)");
+        }
+
+        if (!profile.cover_image_url) {
+            recommendations.push("Добавьте обложку заведения");
+        }
+
+        if (profile.gallery.length === 0) {
+            recommendations.push("Добавьте фотографии в галерею");
+        }
+
+        if (profile.menu_categories.length < 3) {
+            recommendations.push("Рекомендуется создать минимум 3 категории меню");
+        }
+
+        if (productsCount < 5) {
+            recommendations.push("Рекомендуется добавить минимум 5 продуктов");
+        }
+
+        // Проверяем рабочие часы
+        const hasWorkingHours = Object.values(profile.working_hours).some(day => day.is_open);
+        if (!hasWorkingHours) {
+            requirements.push("Укажите рабочие часы заведения");
+            is_ready = false;
+        }
+
+        return {
+            is_ready,
+            missing_requirements: requirements,
+            recommendations,
+            summary: {
+                categories_count: profile.menu_categories.length,
+                products_count: productsCount,
+                has_description: !!profile.description,
+                has_cover_image: !!profile.cover_image_url,
+                gallery_images: profile.gallery.length,
+                working_hours_set: hasWorkingHours
+            }
+        };
+
+    } catch (error) {
+        console.error('🚨 VALIDATE PROFILE CONTENT ERROR:', error);
+        throw error;
+    }
+};
+
+
 /**
  * ================== ПОЛУЧЕНИЕ СТАТУСА ДАШБОРДА ==================
  */
