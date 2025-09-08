@@ -152,7 +152,7 @@ const getPartnerMenuCategories = async (partnerId) => {
 
 /**
  * Добавление новой категории меню
- * ✅ УБРАНА ВАЛИДАЦИЯ - ТОЛЬКО БИЗНЕС-ЛОГИКА
+ * ✅ ИСПРАВЛЕНО: Прямое добавление в массив menu_categories
  * @param {string} partnerId - ID пользователя партнера
  * @param {object} categoryData - Данные категории
  * @returns {object} - Добавленная категория
@@ -177,25 +177,67 @@ const addMenuCategoryService = async (partnerId, categoryData) => {
             throw new Error('Профиль партнера не найден');
         }
 
-        // ✅ ТОЛЬКО БИЗНЕС-ЛОГИКА: добавляем категорию через метод модели
-        await partner.addMenuCategory({
+        // Проверяем, не существует ли уже категория с таким именем
+        const existingCategory = partner.menu_categories.find(
+            cat => cat.name.toLowerCase() === categoryData.name.toLowerCase().trim()
+        );
+
+        if (existingCategory) {
+            throw new Error(`Категория "${categoryData.name}" уже существует`);
+        }
+
+        // ✅ ИСПРАВЛЕНО: Создаем slug из названия
+        const createSlug = (name) => {
+            return name.toLowerCase()
+                .replace(/\s+/g, '-')           // пробелы в дефисы
+                .replace(/[^\w\-]+/g, '')       // удаляем спецсимволы
+                .replace(/\-\-+/g, '-')         // удаляем двойные дефисы
+                .replace(/^-+/, '')             // удаляем дефисы в начале
+                .replace(/-+$/, '');            // удаляем дефисы в конце
+        };
+
+        // ✅ ИСПРАВЛЕНО: Прямое добавление в массив menu_categories
+        const newCategory = {
             name: categoryData.name.trim(),
+            slug: createSlug(categoryData.name.trim()),
             description: categoryData.description?.trim() || '',
             image_url: categoryData.image_url || '',
             sort_order: categoryData.sort_order !== undefined ? 
-                categoryData.sort_order : partner.menu_categories.length
-        });
+                categoryData.sort_order : partner.menu_categories.length,
+            is_active: true,
+            products_count: 0,
+            created_at: new Date(),
+            updated_at: new Date()
+        };
 
+        // Добавляем в массив
+        partner.menu_categories.push(newCategory);
+        
+        // Сохраняем партнера
+        await partner.save();
+
+        // Получаем добавленную категорию (последний элемент)
         const addedCategory = partner.menu_categories[partner.menu_categories.length - 1];
 
         console.log('✅ CATEGORY ADDED:', {
             category_id: addedCategory._id,
             category_name: addedCategory.name,
+            category_slug: addedCategory.slug,
             total_categories: partner.menu_categories.length
         });
 
         return {
-            category: addedCategory,
+            category: {
+                id: addedCategory._id,
+                name: addedCategory.name,
+                slug: addedCategory.slug,
+                description: addedCategory.description,
+                image_url: addedCategory.image_url,
+                sort_order: addedCategory.sort_order,
+                is_active: addedCategory.is_active,
+                products_count: addedCategory.products_count,
+                created_at: addedCategory.created_at
+            },
             total_categories: partner.menu_categories.length
         };
 
