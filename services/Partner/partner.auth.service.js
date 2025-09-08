@@ -49,6 +49,7 @@ const createPartnerAccount = async (data) => {
 
             // Создаем пользователя
             const newUser = new User({
+                email: cryptoString(normalizedEmail), // ✅ ДОБАВЛЯЕМ ЗАШИФРОВАННЫЙ EMAIL
                 role: 'partner',
                 is_email_verified: false,
                 is_active: true,
@@ -97,7 +98,10 @@ const createPartnerAccount = async (data) => {
                     delivery_fee: coordinates.zone === 1 ? 2.99 : 4.99,
                     min_order_amount: 30,
                     is_active: true
-                }]
+                }],
+                // ✅ ИСПРАВЛЕНО: owner_name и owner_surname ВНУТРИ business_data
+                owner_name: first_name,
+                owner_surname: last_name
             };
 
             // Создаем заявку партнера
@@ -105,8 +109,7 @@ const createPartnerAccount = async (data) => {
                 user_id: newUser._id,
                 personal_data: encryptedPersonalData,
                 business_data: encryptedBusinessData,
-                owner_name: first_name, // ✅ ИСПРАВЛЕНО: используем оригинальные имена
-                owner_surname: last_name,
+                // ❌ УБИРАЕМ - owner_name и owner_surname теперь в business_data
                 marketing_consent: {
                     whatsapp_consent: whatsapp_consent || false
                 },
