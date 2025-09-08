@@ -1,4 +1,4 @@
-// services/Partner/partner.legal.service.js - НОВЫЙ СЕРВИС ДЛЯ ЮРИДИЧЕСКИХ ДОКУМЕНТОВ
+// services/Partner/partner.legal.service.js - ИСПРАВЛЕННЫЙ СЕРВИС ДЛЯ ЮРИДИЧЕСКИХ ДОКУМЕНТОВ
 import { InitialPartnerRequest, PartnerLegalInfo } from '../../models/index.js';
 import { cryptoString } from '../../utils/crypto.js';
 import mongoose from 'mongoose';
@@ -34,17 +34,17 @@ export const submitPartnerLegalInfo = async (partnerId, requestId, legalData) =>
                 throw new Error('Юридические документы уже поданы для этой заявки');
             }
 
-            // Валидируем обязательные поля
-            if (!legalData.legal_data?.business_name || 
+            // ✅ ИСПРАВЛЕНО: Валидируем обязательные поля с правильными именами
+            if (!legalData.legal_data?.legal_name || 
                 !legalData.legal_data?.siret_number ||
                 !legalData.bank_details?.iban ||
                 !legalData.legal_contact?.email) {
-                throw new Error('Обязательные поля: business_name, siret_number, iban, email');
+                throw new Error('Обязательные поля: legal_name, siret_number, iban, email');
             }
 
-            // Шифруем юридические данные
+            // ✅ ИСПРАВЛЕНО: Шифруем юридические данные с правильными именами полей
             const encryptedLegalData = {
-                business_name: cryptoString(legalData.legal_data.business_name),
+                legal_name: cryptoString(legalData.legal_data.legal_name),
                 siret_number: cryptoString(legalData.legal_data.siret_number),
                 tva_number: legalData.legal_data.tva_number ? 
                     cryptoString(legalData.legal_data.tva_number) : null,

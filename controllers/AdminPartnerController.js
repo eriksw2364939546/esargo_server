@@ -386,9 +386,9 @@ const approveLegalInfo = async (req, res) => {
             floor_unit: decryptedBusinessData.floor_unit ? 
                 cryptoString(decryptedBusinessData.floor_unit) : null,
             
-            // ✅ ИСПРАВЛЕНО: Профиль сразу одобрен для работы с меню
+            // ✅ ИСПРАВЛЕНО: Правильные значения enum согласно модели PartnerProfile
             content_status: 'awaiting_content',  // ✅ Правильное значение из enum
-            approval_status: 'awaiting_content', // ✅ Правильное значение из enum
+            approval_status: 'awaiting_approval', // ✅ ИСПРАВЛЕНО: правильное значение из enum модели
             is_approved: true,                   // ✅ ИСПРАВЛЕНО: true вместо false
             is_active: false,                    // Станет true после публикации
             is_public: false,                    // Станет true после публикации
@@ -397,17 +397,16 @@ const approveLegalInfo = async (req, res) => {
             legal_info_id: legalInfo._id,
             
             // 📊 ИНИЦИАЛИЗАЦИЯ СТАТИСТИКИ
-            stats: {
+            business_stats: {
                 total_orders: 0,
                 completed_orders: 0,
-                total_revenue: 0,
+                cancelled_orders: 0,
                 avg_order_value: 0,
                 total_products: 0,
                 active_products: 0,
                 total_categories: 0,
                 total_gallery_images: 0,
-                last_stats_update: new Date(),
-                cancelled_orders: 0
+                last_stats_update: new Date()
             },
             
             // 🎨 РЕЙТИНГ И ОТЗЫВЫ
@@ -482,8 +481,8 @@ const approveLegalInfo = async (req, res) => {
             brand_name: newProfile.brand_name,
             category: newProfile.category,
             is_approved: newProfile.is_approved,
-            status: newProfile.status,
-            content_status: newProfile.content_status
+            content_status: newProfile.content_status,
+            approval_status: newProfile.approval_status
         });
 
         // ✅ ПОЛНЫЙ УСПЕШНЫЙ ОТВЕТ
@@ -504,9 +503,9 @@ const approveLegalInfo = async (req, res) => {
                 category: newProfile.category,
                 is_approved: newProfile.is_approved,
                 is_active: newProfile.is_active,
-                is_published: newProfile.is_published,
-                status: newProfile.status,
+                is_public: newProfile.is_public,
                 content_status: newProfile.content_status,
+                approval_status: newProfile.approval_status,
                 location: newProfile.location
             },
             next_step: {
