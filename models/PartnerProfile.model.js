@@ -1,6 +1,10 @@
 // models/Order.model.js - ПОЛНАЯ МОДЕЛЬ ЗАКАЗОВ ESARGO с расширенными полями
 import mongoose from 'mongoose';
 
+if (mongoose.models.PartnerProfile) {
+  delete mongoose.models.PartnerProfile;
+}
+
 const orderSchema = new mongoose.Schema({
   // Основная информация
   order_number: {
