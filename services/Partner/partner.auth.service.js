@@ -1,19 +1,15 @@
-// ================ services/Partner/partner.auth.service.js (ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ) ================
+// services/Partner/partner.auth.service.js - ИСПРАВЛЕННЫЙ БЕЗ ДУБЛИРОВАНИЯ
 import jwt from "jsonwebtoken";
 import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo } from '../../models/index.js';
 import Meta from '../../models/Meta.model.js';
 import { hashString, hashMeta, comparePassword } from '../../utils/hash.js';
 import { cryptoString } from '../../utils/crypto.js';
 import { generateCustomerToken } from '../token.service.js';
+import { mockGeocode } from '../../utils/address.utils.js'; // ✅ ИСПОЛЬЗУЕМ УТИЛИТУ
 import mongoose from 'mongoose';
 
 /**
- * ================== БИЗНЕС-ЛОГИКА АВТОРИЗАЦИИ ==================
- */
-
-
-/**
- * Создание аккаунта партнера с InitialPartnerRequest
+ * ================== СОЗДАНИЕ АККАУНТА ПАРТНЕРА ==================
  */
 const createPartnerAccount = async (data) => {
     const {
@@ -22,169 +18,137 @@ const createPartnerAccount = async (data) => {
         location, whatsapp_consent
     } = data;
 
-    console.log('🔍 CREATE PARTNER ACCOUNT - Data check:', {
-        has_brand_name: !!brand_name,
-        has_floor_unit: !!floor_unit,
-        whatsapp_consent: whatsapp_consent,
-        location_received: !!location,
-        location_structure: location
-    });
-
+    const session = await mongoose.startSession();
+    
     try {
-        // ✅ ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ТОЛЬКО ЧЕРЕЗ META
-        const existingMeta = await Meta.findByEmailAndRole(hashMeta(email), 'partner');
-        if (existingMeta) {
-            throw new Error('Партнер с таким email уже существует');
-        }
-
-        // Хешируем пароль
-        const hashedPassword = await hashString(password);
-
-        // Создаем пользователя с ЗАШИФРОВАННЫМ EMAIL
-        const newUser = new User({
-            email: cryptoString(email), // 🔐 ЗАШИФРОВАННЫЙ EMAIL
-            password_hash: hashedPassword,
-            role: 'partner',
-            is_active: true,
-            is_email_verified: false,
-            gdpr_consent: {
-                data_processing: true,
-                marketing: false,
-                analytics: false,
-                consent_date: new Date()
-            },
-            registration_source: 'web'
-        });
-
-        await newUser.save();
-
-        // Создаем Meta запись
-        const newMeta = new Meta({
-            em: hashMeta(email),
-            role: 'partner',
-            partner: newUser._id,
-            is_active: true,
-            security_info: {
-                last_login_attempt: null,
-                failed_login_attempts: 0,
-                account_locked_until: null
-            }
-        });
-
-        await newMeta.save();
-
-        // ✅ ИСПРАВЛЕНО: Валидация location
-        if (!location || !location.coordinates || !Array.isArray(location.coordinates) || location.coordinates.length !== 2) {
-            throw new Error('Некорректные данные геолокации');
-        }
-
-        const [longitude, latitude] = location.coordinates;
+        let result = null;
         
-        // Дополнительная проверка координат
-        if (typeof longitude !== 'number' || typeof latitude !== 'number') {
-            throw new Error('Координаты должны быть числовыми значениями');
-        }
+        await session.withTransaction(async () => {
+            const normalizedEmail = email.toLowerCase().trim();
 
-        // ✅ ИСПРАВЛЕНО: Создаем InitialPartnerRequest с ПРАВИЛЬНОЙ структурой
-        const partnerRequest = new InitialPartnerRequest({
-            user_id: newUser._id,
-            
-            // 👤 ЛИЧНЫЕ ДАННЫЕ (зашифрованы в personal_data)
-            personal_data: {
-                first_name: cryptoString(first_name), // 🔐 ЗАШИФРОВАНО
-                last_name: cryptoString(last_name),   // 🔐 ЗАШИФРОВАНО
-                email: cryptoString(email),           // 🔐 ЗАШИФРОВАНО
-                phone: cryptoString(phone)            // 🔐 ЗАШИФРОВАНО
-            },
-            
-            // 🏪 БИЗНЕС ДАННЫЕ
-            business_data: {
-                // Адрес и этаж (зашифрованы)
-                address: cryptoString(address),                                    // 🔐 ЗАШИФРОВАНО
-                floor_unit: floor_unit ? cryptoString(floor_unit) : null,         // 🔐 ЗАШИФРОВАНО или null
-                
-                // Названия (открыто)
-                business_name: business_name,                                      // ✅ ОТКРЫТО
-                brand_name: brand_name || business_name,                          // ✅ ОТКРЫТО
-                
-                // Тип бизнеса
-                category: category,                                               // ✅ ОТКРЫТО
-                
-                // ✅ ИСПРАВЛЕНО: Добавляем owner_name и owner_surname как ТРЕБУЕТ МОДЕЛЬ
-                owner_name: first_name,                                           // ✅ ОТКРЫТО (для поиска)
-                owner_surname: last_name,                                         // ✅ ОТКРЫТО (для поиска)
-                
-                // Геолокация
-                location: {
-                    type: 'Point',
-                    coordinates: [longitude, latitude] // [lng, lat] правильный порядок
-                }
-            },
-            
-            // 📱 WHATSAPP СОГЛАСИЕ
-            marketing_consent: {
-                whatsapp_consent: whatsapp_consent === true
-            },
-            
-            // 🎯 СТАТУС (по умолчанию)
-            status: 'pending',
-            workflow_stage: 1,
-            
-            // 🛡️ БЕЗОПАСНОСТЬ
-            security_info: {
-                registration_ip: '127.0.0.1', // В реальном проекте получить из req.ip
-                user_agent: 'API_REQUEST',     // В реальном проекте получить из req.headers['user-agent']
-                country_code: 'FR',
-                phone_country: 'FR'
-            },
-            
-            // 📅 ВРЕМЕННЫЕ МЕТКИ
-            submitted_at: new Date(),
-            updated_at: new Date()
-        });
-
-        // Сохраняем заявку
-        const savedRequest = await partnerRequest.save();
-
-        console.log('✅ PARTNER REQUEST CREATED:', {
-            id: savedRequest._id,
-            user_id: savedRequest.user_id,
-            business_name: savedRequest.business_data.business_name,
-            brand_name: savedRequest.business_data.brand_name,
-            category: savedRequest.business_data.category,
-            owner_name: savedRequest.business_data.owner_name,       // ✅ Теперь есть
-            owner_surname: savedRequest.business_data.owner_surname, // ✅ Теперь есть
-            status: savedRequest.status,
-            workflow_stage: savedRequest.workflow_stage
-        });
-
-const token = generateCustomerToken({
-    _id: newUser._id,
-    email: email,
-    role: 'partner'
-}, '30d');
-
-        return {
-            token,
-            user: {
-                id: newUser._id,
-                email: email, // Возвращаем расшифрованный email
+            // Проверяем существование партнера
+            const existingMeta = await Meta.findOne({
+                em: hashMeta(normalizedEmail),
                 role: 'partner'
-            },
-            request: savedRequest
-        };
+            });
+
+            if (existingMeta) {
+                throw new Error('Партнер с таким email уже существует');
+            }
+
+            // Геокодирование адреса через утилиту
+            let coordinates = null;
+            if (location?.lat && location?.lng) {
+                coordinates = {
+                    lat: parseFloat(location.lat),
+                    lng: parseFloat(location.lng),
+                    zone: location.lat > 43.3 ? 2 : 1
+                };
+            } else {
+                const geocodeResult = mockGeocode(address);
+                if (geocodeResult.success) {
+                    coordinates = geocodeResult.coordinates;
+                }
+            }
+
+            // Создаем пользователя
+            const newUser = new User({
+                role: 'partner',
+                is_email_verified: false,
+                is_active: true,
+                password_hash: await hashString(password),
+                created_at: new Date(),
+                last_login_at: null
+            });
+
+            await newUser.save({ session });
+
+            // Создаем Meta запись
+            const newMeta = new Meta({
+                em: hashMeta(normalizedEmail),
+                role: 'partner',
+                partner: newUser._id,
+                is_active: true,
+                failed_attempts: 0,
+                last_failed_attempt: null,
+                account_locked_until: null
+            });
+
+            await newMeta.save({ session });
+
+            // Шифруем персональные данные
+            const encryptedPersonalData = {
+                first_name: cryptoString(first_name),
+                last_name: cryptoString(last_name),
+                email: cryptoString(normalizedEmail),
+                phone: cryptoString(phone)
+            };
+
+            // Шифруем бизнес данные
+            const encryptedBusinessData = {
+                business_name: business_name,
+                brand_name: brand_name || '',
+                category: category,
+                address: cryptoString(address),
+                floor_unit: floor_unit ? cryptoString(floor_unit) : null,
+                location: coordinates || null,
+                delivery_zones: coordinates ? [{
+                    zone_number: coordinates.zone,
+                    max_distance_km: coordinates.zone === 1 ? 5 : 10,
+                    delivery_fee: coordinates.zone === 1 ? 2.99 : 4.99,
+                    min_order_amount: 30,
+                    is_active: true
+                }] : []
+            };
+
+            // Создаем заявку партнера
+            const savedRequest = new InitialPartnerRequest({
+                user_id: newUser._id,
+                personal_data: encryptedPersonalData,
+                business_data: encryptedBusinessData,
+                owner_name: first_name, // ✅ ИСПРАВЛЕНО: используем оригинальные имена
+                owner_surname: last_name,
+                marketing_consent: {
+                    whatsapp_consent: whatsapp_consent || false
+                },
+                status: 'pending',
+                workflow_stage: 1,
+                submitted_at: new Date()
+            });
+
+            await savedRequest.save({ session });
+
+            // Генерируем токен БЕЗ email (последовательно)
+            const token = generateCustomerToken({
+                _id: newUser._id,
+                user_id: newUser._id,
+                role: 'partner'
+            }, '30d');
+
+            result = {
+                token,
+                user: {
+                    id: newUser._id,
+                    role: 'partner'
+                },
+                request: savedRequest
+            };
+        });
+
+        return result;
 
     } catch (error) {
         console.error('🚨 CREATE PARTNER ACCOUNT ERROR:', error);
         throw error;
+    } finally {
+        await session.endSession();
     }
 };
 
 /**
- * Авторизация партнера
- * ✅ Логика не тронута - работает корректно
+ * ================== АВТОРИЗАЦИЯ ПАРТНЕРА ==================
  */
- const loginPartner = async ({ email, password }) => {
+const loginPartner = async (email, password) => {
     try {
         const normalizedEmail = email.toLowerCase().trim();
         
@@ -236,7 +200,7 @@ const token = generateCustomerToken({
         // Получаем профиль
         const profile = await PartnerProfile.findOne({ user_id: partner._id });
 
-        // Генерируем токен БЕЗ EMAIL
+        // Генерируем токен БЕЗ EMAIL (последовательно)
         const token = generateCustomerToken({
             _id: partner._id,
             user_id: partner._id,
@@ -260,14 +224,9 @@ const token = generateCustomerToken({
 };
 
 /**
- * ================== МЕТОДЫ ДЛЯ MIDDLEWARE ==================
- * ✅ Все методы остаются без изменений - работают корректно
+ * ================== ВЕРИФИКАЦИЯ ТОКЕНА ==================
  */
-
-/**
- * Верификация токена партнера (для middleware)
- */
- const verifyPartnerToken = async (token) => {
+const verifyPartnerToken = async (token) => {
     try {
         // Декодируем токен
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -336,28 +295,15 @@ const token = generateCustomerToken({
 };
 
 /**
- * Проверка существования партнера по email
- * ✅ Логика не тронута - работает корректно
+ * ================== ПРОВЕРКА СУЩЕСТВОВАНИЯ ==================
  */
- const checkPartnerExists = async (email) => {
+const checkPartnerExists = async (email) => {
     try {
         const normalizedEmail = email.toLowerCase().trim();
         
-        console.log('🔍 CHECK PARTNER EXISTS - Start:', {
-            original_email: email,
-            normalized_email: normalizedEmail,
-            hashed_email: hashMeta(normalizedEmail)
-        });
-        
-        // Ищем через Meta
         const existingMeta = await Meta.findOne({
             em: hashMeta(normalizedEmail),
             role: 'partner'
-        });
-        
-        console.log('🔍 CHECK PARTNER EXISTS - Result:', {
-            found: !!existingMeta,
-            meta_id: existingMeta ? existingMeta._id : null
         });
         
         return !!existingMeta;
@@ -368,5 +314,9 @@ const token = generateCustomerToken({
     }
 };
 
-
-export { createPartnerAccount,loginPartner,verifyPartnerToken,checkPartnerExists }
+export { 
+    createPartnerAccount,
+    loginPartner,
+    verifyPartnerToken,
+    checkPartnerExists 
+};

@@ -1,150 +1,47 @@
-// ================ services/Partner/partner.service.js (ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ) ================
-// Добавить эти функции в существующий файл services/Partner/partner.service.js
-
+// services/Partner/partner.service.js - ИСПРАВЛЕННЫЙ ОСНОВНОЙ СЕРВИС
 import { User, PartnerProfile, InitialPartnerRequest, PartnerLegalInfo, Product } from '../../models/index.js';
 import Meta from '../../models/Meta.model.js';
-import { cryptoString, decryptString } from '../../utils/crypto.js';
-import { hashMeta } from '../../utils/hash.js';
+import { decryptString } from '../../utils/crypto.js';
+import { getPartnerLegalInfo } from './partner.legal.service.js';
 import mongoose from 'mongoose';
 
 /**
- * ================== ОСНОВНЫЕ ФУНКЦИИ ДЛЯ КОНТРОЛЛЕРОВ ==================
+ * ================== ПОЛУЧЕНИЕ ПОЛНОЙ ИНФОРМАЦИИ О ПАРТНЕРЕ ==================
  */
-
-/**
- * Получение заявки партнера
- * @param {string} partnerId - ID партнера
- * @returns {object|null} - Заявка партнера или null
- */
- const getPartnerRequest = async (partnerId) => {
-    try {
-        console.log('🔍 GET PARTNER REQUEST:', { partnerId });
-        
-        if (!partnerId) {
-            console.log('❌ PARTNER REQUEST - No partnerId provided');
-            return null;
-        }
-        
-        const request = await InitialPartnerRequest.findOne({ 
-            user_id: partnerId 
-        });
-        
-        console.log('✅ PARTNER REQUEST FOUND:', {
-            found: !!request,
-            status: request ? request.status : null,
-            workflow_stage: request ? request.workflow_stage : null,
-            business_name: request ? request.business_data?.business_name : null
-        });
-        
-        return request;
-        
-    } catch (error) {
-        console.error('🚨 GET PARTNER REQUEST ERROR:', error);
-        return null;
-    }
-};
-
-/**
- * Получение профиля партнера
- * @param {string} partnerId - ID партнера
- * @returns {object|null} - Профиль партнера или null
- */
- const getPartnerProfile = async (partnerId) => {
-    try {
-        console.log('🔍 GET PARTNER PROFILE:', { partnerId });
-        
-        if (!partnerId) {
-            console.log('❌ PARTNER PROFILE - No partnerId provided');
-            return null;
-        }
-        
-        const profile = await PartnerProfile.findOne({ 
-            user_id: partnerId 
-        });
-        
-        console.log('✅ PARTNER PROFILE FOUND:', {
-            found: !!profile,
-            is_published: profile ? profile.is_published : null,
-            status: profile ? profile.status : null
-        });
-        
-        return profile;
-        
-    } catch (error) {
-        console.error('🚨 GET PARTNER PROFILE ERROR:', error);
-        return null;
-    }
-};
-
-/**
- * Получение юридической информации партнера
- * @param {string} partnerId - ID партнера
- * @returns {object|null} - Юридическая информация или null
- */
- const getPartnerLegalInfo = async (partnerId) => {
-    try {
-        console.log('🔍 GET PARTNER LEGAL INFO:', { partnerId });
-        
-        if (!partnerId) {
-            console.log('❌ PARTNER LEGAL INFO - No partnerId provided');
-            return null;
-        }
-        
-        const legalInfo = await PartnerLegalInfo.findOne({ 
-            user_id: partnerId 
-        });
-        
-        console.log('✅ PARTNER LEGAL INFO FOUND:', {
-            found: !!legalInfo,
-            status: legalInfo ? legalInfo.status : null
-        });
-        
-        return legalInfo;
-        
-    } catch (error) {
-        console.error('🚨 GET PARTNER LEGAL INFO ERROR:', error);
-        return null;
-    }
-};
-
-/**
- * Получение полной информации о партнере
- * @param {string} partnerId - ID партнера
- * @returns {object} - Полная информация о партнере
- */
- const getPartnerFullInfo = async (partnerId) => {
+export const getPartnerFullInfo = async (partnerId) => {
     try {
         console.log('🔍 GET PARTNER FULL INFO:', { partnerId });
         
         if (!partnerId) {
-            throw new Error('Partner ID не предоставлен');
+            throw new Error('ID партнера не указан');
         }
-        
-        // Получаем базовую информацию
-        const partner = await User.findById(partnerId).select('-password_hash');
-        if (!partner || partner.role !== 'partner') {
+
+        // Получаем пользователя
+        const partner = await User.findById(partnerId);
+        if (!partner) {
             throw new Error('Партнер не найден');
         }
 
-        // Получаем все связанные данные
-        const partnerProfile = await getPartnerProfile(partnerId);
-        const partnerRequest = await getPartnerRequest(partnerId);
+        // Получаем заявку
+        const request = await InitialPartnerRequest.findOne({ 
+            user_id: partnerId 
+        });
+
+        // Получаем юридическую информацию
         const legalInfo = await getPartnerLegalInfo(partnerId);
 
+        // Получаем профиль
+        const profile = await PartnerProfile.findOne({ 
+            user_id: partnerId 
+        });
+
         const fullInfo = {
-            partner: {
-                id: partner._id,
-                email: partner.email,
-                role: partner.role,
-                is_active: partner.is_active,
-                is_email_verified: partner.is_email_verified,
-                created_at: partner.createdAt
-            },
-            profile: partnerProfile,
-            request: partnerRequest,
-            legalInfo: legalInfo
+            partner,
+            request,
+            legalInfo,
+            profile
         };
-        
+
         console.log('✅ PARTNER FULL INFO COLLECTED:', {
             has_partner: !!fullInfo.partner,
             has_profile: !!fullInfo.profile,
@@ -161,11 +58,9 @@ import mongoose from 'mongoose';
 };
 
 /**
- * Получение статуса дашборда и workflow
- * @param {string} partnerId - ID партнера
- * @returns {object} - Статус дашборда
+ * ================== ПОЛУЧЕНИЕ СТАТУСА ДАШБОРДА ==================
  */
- const getDashboardWorkflow = async (partnerId) => {
+export const getDashboardWorkflow = async (partnerId) => {
     try {
         console.log('🔍 GET DASHBOARD WORKFLOW:', { partnerId });
         
@@ -189,7 +84,7 @@ import mongoose from 'mongoose';
                 permissions.can_submit_legal = true;
             }
             
-            if (legalInfo && legalInfo.status === 'approved') {
+            if (legalInfo && legalInfo.verification_status === 'approved') {
                 permissions.can_create_profile = true;
             }
             
@@ -227,11 +122,7 @@ import mongoose from 'mongoose';
 };
 
 /**
- * Определение следующего действия в workflow
- * @param {object} request - Заявка партнера
- * @param {object} legal - Юридическая информация
- * @param {object} profile - Профиль партнера
- * @returns {object} - Следующее действие
+ * ================== ОПРЕДЕЛЕНИЕ СЛЕДУЮЩЕГО ДЕЙСТВИЯ ==================
  */
 const getNextAction = (request, legal, profile) => {
     if (!request) {
@@ -258,7 +149,7 @@ const getNextAction = (request, legal, profile) => {
         };
     }
     
-    if (legal && legal.status === 'pending') {
+    if (legal && legal.verification_status === 'pending') {
         return {
             action: "wait_legal_approval",
             description: "Ожидайте проверки документов",
@@ -266,7 +157,7 @@ const getNextAction = (request, legal, profile) => {
         };
     }
     
-    if (legal && legal.status === 'approved' && !profile) {
+    if (legal && legal.verification_status === 'approved' && !profile) {
         return {
             action: "create_profile",
             description: "Создать профиль заведения",
@@ -277,7 +168,7 @@ const getNextAction = (request, legal, profile) => {
     if (profile && !profile.is_published) {
         return {
             action: "wait_publication",
-            description: "Ожидайте финальной публикации",
+            description: "Ожидайте публикации профиля",
             status: "waiting"
         };
     }
@@ -285,148 +176,44 @@ const getNextAction = (request, legal, profile) => {
     if (profile && profile.is_published) {
         return {
             action: "manage_content",
-            description: "Управление контентом заведения",
+            description: "Управление контентом и заказами",
             status: "active"
         };
     }
     
     return {
         action: "unknown",
-        description: "Неопределенное состояние",
+        description: "Неизвестный статус",
         status: "error"
     };
 };
 
-
 /**
- * Проверка прав доступа партнера к ресурсу
- * @param {string} partnerId - ID партнера
- * @param {string} resourceId - ID ресурса
- * @param {string} resourceType - Тип ресурса (profile, request, legal)
- * @returns {boolean} - Имеет ли права доступа
+ * ================== ОБНОВЛЕНИЕ ПРОФИЛЯ ПАРТНЕРА ==================
  */
- const checkPartnerAccess = async (partnerId, resourceId, resourceType = 'profile') => {
+export const updatePartnerProfile = async (profileId, updateData, partnerId) => {
     try {
-        console.log('🔍 CHECK PARTNER ACCESS:', {
-            partnerId,
-            resourceId,
-            resourceType
-        });
-        
-        // Простая проверка - партнер может работать только со своими ресурсами
-        let resource = null;
-        
-        switch (resourceType) {
-            case 'profile':
-                resource = await PartnerProfile.findById(resourceId);
-                break;
-            case 'request':
-                resource = await InitialPartnerRequest.findById(resourceId);
-                break;
-            case 'legal':
-                resource = await PartnerLegalInfo.findById(resourceId);
-                break;
-            default:
-                return false;
-        }
-        
-        if (!resource) {
-            console.log('❌ RESOURCE NOT FOUND');
-            return false;
-        }
-        
-        const hasAccess = resource.user_id.toString() === partnerId.toString();
-        
-        console.log('✅ ACCESS CHECK RESULT:', {
-            hasAccess,
-            resource_owner: resource.user_id,
-            requesting_partner: partnerId
-        });
-        
-        return hasAccess;
-        
-    } catch (error) {
-        console.error('🚨 CHECK PARTNER ACCESS ERROR:', error);
-        return false;
-    }
-};
+        console.log('🔍 UPDATE PARTNER PROFILE:', { profileId, partnerId });
 
-/**
- * Обновление профиля партнера
- * @param {string} partnerId - ID партнера
- * @param {object} updateData - Данные для обновления
- * @returns {object} - Обновленный профиль
- */
- const updatePartnerProfile = async (partnerId, updateData) => {
-    try {
-        console.log('🔍 UPDATE PARTNER PROFILE:', { partnerId, fields: Object.keys(updateData) });
-        
-        if (!partnerId) {
-            throw new Error('Partner ID не предоставлен');
-        }
-
-        // Ищем профиль партнера
-        const profile = await PartnerProfile.findOne({ user_id: partnerId });
-        
+        // Проверяем существование профиля
+        const profile = await PartnerProfile.findById(profileId);
         if (!profile) {
-            throw new Error('Профиль партнера не найден');
+            throw new Error('Профиль не найден');
         }
 
-        // Проверяем статус профиля
-        if (!profile.is_approved) {
-            throw new Error('Профиль не одобрен администратором');
-        }
-
-        // Разрешенные поля для обновления
-        const allowedFields = [
-            'business_name', 'brand_name', 'description', 'phone',
-            'cover_image_url', 'working_hours', 'delivery_info',
-            'contact_info', 'social_media'
-        ];
-
-        // Обновляем только разрешенные поля
-        const updateFields = {};
-        allowedFields.forEach(field => {
-            if (updateData[field] !== undefined) {
-                updateFields[field] = updateData[field];
-            }
-        });
-
-        // Специальная обработка некоторых полей
-        if (updateData.working_hours) {
-            // Валидация рабочих часов
-            const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
-            const hours = updateData.working_hours;
-            
-            for (const day of validDays) {
-                if (hours[day]) {
-                    if (hours[day].open_time && hours[day].close_time) {
-                        // Проверяем формат времени
-                        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-                        if (!timeRegex.test(hours[day].open_time) || !timeRegex.test(hours[day].close_time)) {
-                            throw new Error(`Некорректный формат времени для ${day}`);
-                        }
-                    }
-                }
-            }
-            updateFields.working_hours = hours;
+        // Проверяем права доступа
+        if (profile.user_id.toString() !== partnerId.toString()) {
+            throw new Error('Доступ запрещен: можно изменять только свой профиль');
         }
 
         // Обновляем профиль
-        const updatedProfile = await PartnerProfile.findOneAndUpdate(
-            { user_id: partnerId },
-            { 
-                ...updateFields,
-                updated_at: new Date()
-            },
-            { new: true, runValidators: true }
+        const updatedProfile = await PartnerProfile.findByIdAndUpdate(
+            profileId,
+            { ...updateData, updated_at: new Date() },
+            { new: true }
         );
 
-        console.log('✅ PARTNER PROFILE UPDATED:', {
-            profile_id: updatedProfile._id,
-            updated_fields: Object.keys(updateFields)
-        });
-
+        console.log('✅ PARTNER PROFILE UPDATED');
         return updatedProfile;
 
     } catch (error) {
@@ -435,43 +222,35 @@ const getNextAction = (request, legal, profile) => {
     }
 };
 
-
 /**
- * Удаление аккаунта партнера (полная очистка)
- * @param {string} partnerId - ID партнера
- * @returns {object} - Результат удаления
+ * ================== УДАЛЕНИЕ АККАУНТА ПАРТНЕРА ==================
  */
- const deletePartnerAccount = async (partnerId) => {
+export const deletePartnerAccount = async (profileId, partnerId) => {
     const session = await mongoose.startSession();
-    
-    try {
-        console.log('🔍 DELETE PARTNER ACCOUNT:', { partnerId });
-        
-        if (!partnerId) {
-            throw new Error('Partner ID не предоставлен');
-        }
 
+    try {
         let cleanupInfo = {
-            user_deleted: false,
-            meta_deleted: false,
-            request_deleted: false,
-            legal_deleted: false,
             profile_deleted: false,
-            products_deleted: 0
+            products_deleted: false,
+            legal_deleted: false,
+            request_deleted: false,
+            meta_deleted: false,
+            user_deleted: false
         };
 
         await session.withTransaction(async () => {
-            // 1. Удаляем продукты
-            const deleteProductsResult = await Product.deleteMany({ 
-                partner_id: partnerId 
-            }, { session });
-            cleanupInfo.products_deleted = deleteProductsResult.deletedCount;
-
-            // 2. Удаляем профиль
+            // 1. Удаляем профиль партнера
             const profileResult = await PartnerProfile.findOneAndDelete({ 
+                _id: profileId,
                 user_id: partnerId 
             }, { session });
             cleanupInfo.profile_deleted = !!profileResult;
+
+            // 2. Удаляем товары партнера
+            const productsResult = await Product.deleteMany({ 
+                partner_id: partnerId 
+            }, { session });
+            cleanupInfo.products_deleted = productsResult.deletedCount > 0;
 
             // 3. Удаляем юридическую информацию
             const legalResult = await PartnerLegalInfo.findOneAndDelete({ 
@@ -515,14 +294,10 @@ const getNextAction = (request, legal, profile) => {
     }
 };
 
-// ================ services/Partner/partner.service.js (ИСПРАВЛЕННАЯ ФУНКЦИЯ) ================
-
 /**
- * ✅ ИСПРАВЛЕННАЯ ФУНКЦИЯ: Нормализация данных партнера с расшифровкой
- * @param {object} partnerData - Данные партнера из InitialPartnerRequest
- * @returns {object} - Нормализованные и расшифрованные данные
+ * ================== НОРМАЛИЗАЦИЯ ДАННЫХ ПАРТНЕРА ==================
  */
-const normalizePartnerData = (partnerData) => {
+export const normalizePartnerData = (partnerData) => {
     try {
         console.log('🔍 NORMALIZING PARTNER DATA:', {
             has_business_data: !!partnerData.business_data,
@@ -530,23 +305,20 @@ const normalizePartnerData = (partnerData) => {
             business_name: partnerData.business_data?.business_name
         });
 
-        // ✅ РАСШИФРОВКА ЗАШИФРОВАННЫХ ПОЛЕЙ
+        // Расшифровка зашифрованных полей
         let decryptedEmail = '';
         let decryptedPhone = '';
         let decryptedAddress = '';
 
         try {
-            // Расшифровываем email из personal_data
             if (partnerData.personal_data?.email) {
                 decryptedEmail = decryptString(partnerData.personal_data.email);
             }
 
-            // Расшифровываем phone из personal_data  
             if (partnerData.personal_data?.phone) {
                 decryptedPhone = decryptString(partnerData.personal_data.phone);
             }
 
-            // Расшифровываем address из business_data
             if (partnerData.business_data?.address) {
                 decryptedAddress = decryptString(partnerData.business_data.address);
             }
@@ -559,77 +331,41 @@ const normalizePartnerData = (partnerData) => {
 
         } catch (decryptError) {
             console.warn('⚠️ DECRYPTION WARNING:', decryptError.message);
-            // Fallback к пустым строкам если расшифровка не удалась
+            // Продолжаем с пустыми значениями
         }
 
-        const normalized = {
-            // Обязательные поля
-            business_name: partnerData.business_data?.business_name || 'Не указано',
-            brand_name: partnerData.business_data?.brand_name || 
-                       partnerData.business_data?.business_name || 'Не указано',
-            category: partnerData.business_data?.category || 'store',
+        // Возвращаем нормализованную структуру
+        return {
+            // Открытые данные
+            business_name: partnerData.business_data?.business_name || '',
+            brand_name: partnerData.business_data?.brand_name || '',
+            category: partnerData.business_data?.category || '',
+            owner_name: partnerData.owner_name || '',
+            owner_surname: partnerData.owner_surname || '',
             
-            // ✅ ИСПРАВЛЕНО: Используем расшифрованные данные
-            phone: decryptedPhone || 'Не указан',           // ← РАСШИФРОВАННЫЙ
-            email: decryptedEmail || 'не-указан@example.com', // ← РАСШИФРОВАННЫЙ
-            address: decryptedAddress || '',                  // ← РАСШИФРОВАННЫЙ
+            // Расшифрованные данные
+            email: decryptedEmail,
+            phone: decryptedPhone,
+            address: decryptedAddress,
             
-            // Опциональные поля с fallback
-            floor_unit: partnerData.business_data?.floor_unit ? 
-                       decryptString(partnerData.business_data.floor_unit) : null,
-            description: partnerData.business_data?.description || 
-                        `Партнер ${partnerData.business_data?.business_name || 'без названия'}`,
+            // Координаты
+            location: partnerData.business_data?.location || null,
+            delivery_zones: partnerData.business_data?.delivery_zones || [],
             
-            // Геолокация с fallback
-            location: partnerData.business_data?.location || {
-                type: 'Point',
-                coordinates: [2.3522, 48.8566] // Paris coordinates
-            },
+            // Статус
+            status: partnerData.status || 'pending',
+            workflow_stage: partnerData.workflow_stage || 1,
             
             // Согласия
-            whatsapp_consent: partnerData.marketing_consent?.whatsapp_consent || false
+            whatsapp_consent: partnerData.marketing_consent?.whatsapp_consent || false,
+            
+            // Даты
+            submitted_at: partnerData.submitted_at,
+            updated_at: partnerData.updated_at
         };
-
-        console.log('✅ DATA NORMALIZED WITH DECRYPTION:', {
-            has_brand_name: !!normalized.brand_name,
-            has_floor_unit: !!normalized.floor_unit,
-            category: normalized.category,
-            has_phone: !!normalized.phone && normalized.phone !== 'Не указан',
-            has_email: !!normalized.email && normalized.email !== 'не-указан@example.com',
-            whatsapp_consent: normalized.whatsapp_consent
-        });
-
-        return normalized;
 
     } catch (error) {
         console.error('🚨 NORMALIZE PARTNER DATA ERROR:', error);
-        
-        // ✅ ИСПРАВЛЕНО: Возвращаем ВАЛИДНЫЕ fallback данные
-        return {
-            business_name: 'Не указано',
-            brand_name: 'Не указано', 
-            category: 'store',
-            floor_unit: null,
-            description: 'Описание недоступно',
-            address: 'Адрес не указан',
-            phone: '+33 1 00 00 00 00',              // ← ВАЛИДНЫЙ телефон
-            email: 'fallback@partner-temp.com',     // ← ВАЛИДНЫЙ email
-            location: { type: 'Point', coordinates: [2.3522, 48.8566] },
-            whatsapp_consent: false
-        };
+        throw error;
     }
 };
-
-
-export{
-    getPartnerRequest,
-    getPartnerProfile,
-    getPartnerLegalInfo,
-    getPartnerFullInfo,
-    getDashboardWorkflow,
-    getNextAction,
-    checkPartnerAccess,
-    updatePartnerProfile,
-    deletePartnerAccount,
-    normalizePartnerData
-}
