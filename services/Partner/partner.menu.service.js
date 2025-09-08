@@ -186,20 +186,47 @@ const addMenuCategoryService = async (partnerId, categoryData) => {
             throw new Error(`Категория "${categoryData.name}" уже существует`);
         }
 
-        // ✅ ИСПРАВЛЕНО: Создаем slug из названия
+        // ✅ ИСПРАВЛЕНО: Создаем slug с поддержкой кириллицы
         const createSlug = (name) => {
-            return name.toLowerCase()
-                .replace(/\s+/g, '-')           // пробелы в дефисы
-                .replace(/[^\w\-]+/g, '')       // удаляем спецсимволы
-                .replace(/\-\-+/g, '-')         // удаляем двойные дефисы
-                .replace(/^-+/, '')             // удаляем дефисы в начале
-                .replace(/-+$/, '');            // удаляем дефисы в конце
+            // Словарь транслитерации русских букв
+            const cyrillicToLatin = {
+                'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+                'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+                'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+                'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch',
+                'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya'
+            };
+
+            return name
+                .toLowerCase()
+                .trim()
+                .split('')
+                .map(char => cyrillicToLatin[char] || char)  // Транслитерация
+                .join('')
+                .replace(/[^a-z0-9\s-]/g, '')               // Удаляем все кроме букв, цифр, пробелов и дефисов
+                .replace(/\s+/g, '-')                       // Пробелы в дефисы
+                .replace(/-+/g, '-')                        // Убираем повторяющиеся дефисы
+                .replace(/^-+|-+$/g, '');                   // Убираем дефисы в начале и конце
         };
 
         // ✅ ИСПРАВЛЕНО: Прямое добавление в массив menu_categories
+        const categoryName = categoryData.name.trim();
+        const categorySlug = createSlug(categoryName);
+        
+        // Проверяем, что slug не пустой
+        if (!categorySlug) {
+            throw new Error('Невозможно создать slug из названия категории');
+        }
+
+        // Проверяем уникальность slug
+        const existingSlug = partner.menu_categories.find(cat => cat.slug === categorySlug);
+        if (existingSlug) {
+            throw new Error(`Категория с таким названием уже существует (slug: ${categorySlug})`);
+        }
+
         const newCategory = {
-            name: categoryData.name.trim(),
-            slug: createSlug(categoryData.name.trim()),
+            name: categoryName,
+            slug: categorySlug,
             description: categoryData.description?.trim() || '',
             image_url: categoryData.image_url || '',
             sort_order: categoryData.sort_order !== undefined ? 
@@ -209,6 +236,12 @@ const addMenuCategoryService = async (partnerId, categoryData) => {
             created_at: new Date(),
             updated_at: new Date()
         };
+
+        console.log('🔍 CREATING CATEGORY:', {
+            name: newCategory.name,
+            slug: newCategory.slug,
+            slug_length: newCategory.slug.length
+        });
 
         // Добавляем в массив
         partner.menu_categories.push(newCategory);
