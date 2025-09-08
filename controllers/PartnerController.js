@@ -308,6 +308,96 @@ const submitLegalInfo = async (req, res) => {
     }
 };
 
+/**
+ * Отправка профиля на проверку администратору
+ * POST /api/partners/profile/:id/submit-for-review
+ */
+const submitProfileForReview = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { user } = req;
+        const { submission_notes } = req.body;
+
+        console.log('🔍 SUBMIT PROFILE FOR REVIEW:', {
+            profile_id: id,
+            partner_id: user._id
+        });
+
+        // Проверяем что профиль принадлежит партнеру
+        const profile = await PartnerProfile.findOne({
+            _id: id,
+            user_id: user._id
+        });
+
+        if (!profile) {
+            return res.status(404).json({
+                result: false,
+                message: "Профиль не найден или не принадлежит вам"
+            });
+        }
+
+        // Проверяем текущий статус
+        if (profile.content_status !== 'awaiting_content') {
+            return res.status(400).json({
+                result: false,
+                message: `Профиль уже отправлен на проверку. Текущий статус: ${profile.content_status}`,
+                current_status: profile.content_status
+            });
+        }
+
+        // Проверяем готовность контента
+        const contentValidation = await validateProfileContent(profile);
+        
+        if (!contentValidation.is_ready) {
+            return res.status(400).json({
+                result: false,
+                message: "Профиль не готов к отправке на проверку",
+                missing_requirements: contentValidation.missing_requirements,
+                recommendations: contentValidation.recommendations
+            });
+        }
+
+        // Обновляем статус профиля
+        await PartnerProfile.findByIdAndUpdate(id, {
+            content_status: 'pending_review',
+            'submission_info.submitted_for_review_at': new Date(),
+            'submission_info.submission_notes': submission_notes || 'Профиль готов к проверке',
+            'submission_info.submitted_by': user._id
+        });
+
+        console.log('✅ PROFILE SUBMITTED FOR REVIEW');
+
+        res.status(200).json({
+            result: true,
+            message: "Профиль успешно отправлен на проверку администратору",
+            profile: {
+                id: profile._id,
+                business_name: profile.business_name,
+                content_status: 'pending_review',
+                submitted_at: new Date()
+            },
+            next_steps: {
+                description: "Ожидайте проверки администратором. Вы получите уведомление о результате.",
+                estimated_time: "24-48 часов",
+                what_happens_next: [
+                    "Администратор проверит ваш профиль и меню",
+                    "При одобрении профиль будет опубликован",
+                    "При отклонении вы получите комментарии для исправления"
+                ]
+            },
+            content_summary: contentValidation.summary
+        });
+
+    } catch (error) {
+        console.error('🚨 SUBMIT PROFILE FOR REVIEW ERROR:', error);
+        res.status(500).json({
+            result: false,
+            message: "Ошибка при отправке профиля на проверку",
+            error: error.message
+        });
+    }
+};
+
 // ================ ЭКСПОРТ ВСЕХ ФУНКЦИЙ ================
 
 export {
@@ -315,6 +405,7 @@ export {
     loginPartnerController,
     verifyPartner,
     getDashboardStatus,
+    submitProfileForReview,
     getProfile,
     updateProfile,
     deletePartner,

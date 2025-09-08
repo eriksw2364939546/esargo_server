@@ -8,7 +8,8 @@ import {
     updateProfile,
     deletePartner,
     getDashboardStatus,
-    submitLegalInfo
+    submitLegalInfo,
+    submitProfileForReview  
 } from '../controllers/PartnerController.js';
 import { 
     checkPartnerToken, 
@@ -61,6 +62,17 @@ router.post('/legal-info/:request_id',
     checkPartnerStatus(['approved']), // Проверка что заявка одобрена
     validateLegalInfoData,            // Валидация SIRET, IBAN, TVA и др.
     submitLegalInfo                   // Создание PartnerLegalInfo
+);
+
+/**
+ * POST /api/partners/profile/:id/submit-for-review - Отправка профиля на проверку
+ * Этап 5.5: Партнер отправляет готовый профиль на проверку администратору
+ */
+router.post('/profile/:id/submit-for-review', 
+    checkPartnerToken,                // Проверка токена
+    requirePartnerProfile,            // Проверка что профиль создан
+    checkProfileAccess,               // Проверка принадлежности профиля
+    submitProfileForReview            // Контроллер
 );
 
 // ================ ПРОФИЛЬ (требуется созданный профиль) ================
