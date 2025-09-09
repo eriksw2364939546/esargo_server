@@ -460,20 +460,20 @@ const rateOrder = async (req, res) => {
       });
     }
 
-    const ratingData = {
-      rating: parseInt(rating),
-      comment: comment.trim(),
-      delivery_rating: delivery_rating ? parseInt(delivery_rating) : null
-    };
+const ratingData = {
+  partner_rating: parseInt(rating),         
+  courier_rating: delivery_rating ? parseInt(delivery_rating) : null, 
+  comment: comment.trim()
+};
 
     const result = await rateCompletedOrder(id, user._id, ratingData);
 
-    res.status(200).json({
-      result: true,
-      message: "Оценка добавлена",
-      rating: result.rating,
-      order_status: result.order.status
-    });
+   res.status(200).json({
+  result: true,
+  message: "Оценка добавлена",
+  ratings: result.ratings,  // Добавь .ratings
+  order_number: result.order_number
+});
 
   } catch (error) {
     console.error('🚨 RATE ORDER Error:', error);

@@ -241,21 +241,50 @@ export const createCourierTransactionOnAccept = async (order_id, courier_id) => 
  * Вызывается когда курьер доставил заказ
  */
 export const processDeliveryTransactions = async (order_id, courier_id) => {
+  const session = await mongoose.startSession();
+  
   try {
+    await session.startTransaction();
+
     console.log('🚚 PROCESS DELIVERY TRANSACTIONS:', { order_id, courier_id });
 
-    // Находим все pending транзакции для этого заказа
+    // 1. Получаем данные заказа
+    const order = await Order.findById(order_id).session(session);
+    if (!order) {
+      throw new Error('Заказ не найден при обработке транзакций');
+    }
+
+    console.log('📊 ORDER DATA:', {
+      order_number: order.order_number,
+      courier_earnings: order.courier_earnings,
+      delivery_fee: order.delivery_fee,
+      peak_hour_surcharge: order.peak_hour_surcharge,
+      delivery_zone: order.delivery_zone
+    });
+
+    // 2. Находим все pending транзакции для этого заказа
     const pendingTransactions = await Transaction.find({
       order_id,
       status: 'pending'
-    });
+    }).session(session);
+
+    console.log(`💰 Found ${pendingTransactions.length} pending transactions`);
 
     const processedTransactions = [];
 
+    // 3. Обрабатываем каждую транзакцию
     for (const transaction of pendingTransactions) {
       try {
         // Обрабатываем транзакцию (меняем статус на completed)
-        await transaction.process();
+        transaction.status = 'completed';
+        transaction.processed_at = new Date();
+        transaction.processing_logs.push({
+          action: 'processed',
+          details: 'Transaction processed successfully',
+          timestamp: new Date()
+        });
+        await transaction.save({ session });
+
         processedTransactions.push({
           transaction_id: transaction.transaction_id,
           type: transaction.transaction_type,
@@ -276,17 +305,74 @@ export const processDeliveryTransactions = async (order_id, courier_id) => {
       }
     }
 
-    return {
+    // 4. ✅ ИСПРАВЛЕНО: Обновляем earnings курьера БЕЗ двойного учета
+    if (order.courier_id && order.courier_id.toString() === courier_id.toString()) {
+      console.log('💰 UPDATING COURIER EARNINGS...');
+      
+      const courier = await CourierProfile.findById(order.courier_id).session(session);
+      if (courier) {
+        // ИСПРАВЛЕНО: Правильный расчет без двойного учета
+        const totalCourierEarnings = order.courier_earnings || order.delivery_fee || 0;
+        const baseFee = totalCourierEarnings - (order.peak_hour_surcharge || 0);
+        const peakSurcharge = order.peak_hour_surcharge || 0;
+        
+        console.log('📊 CORRECT EARNINGS CALCULATION:', {
+          total_courier_earnings: totalCourierEarnings,
+          base_fee: baseFee,
+          peak_surcharge: peakSurcharge,
+          check: baseFee + peakSurcharge
+        });
+
+        // ИСПРАВЛЕНО: Передаем компоненты отдельно
+        const earningsData = {
+          delivery_fee: baseFee,                          // ТОЛЬКО базовая ставка (9€)
+          peak_hour_surcharge: peakSurcharge,            // ТОЛЬКО доплата за час пик (2€)
+          delivery_zone: order.delivery_zone || 1,       
+          delivery_distance_km: order.delivery_distance_km || 0
+        };
+
+        console.log('📊 EARNINGS DATA FOR COURIER:', earningsData);
+
+        await courier.addEarnings(earningsData);
+        
+        console.log('✅ Courier earnings updated successfully:', {
+          courier_id: courier._id,
+          base_amount: baseFee,
+          peak_bonus: peakSurcharge,
+          total_added: totalCourierEarnings
+        });
+      } else {
+        console.error('❌ Courier profile not found:', order.courier_id);
+      }
+    } else {
+      console.warn('⚠️ Courier ID mismatch or missing:', {
+        order_courier_id: order.courier_id,
+        provided_courier_id: courier_id
+      });
+    }
+
+    await session.commitTransaction();
+
+    const result = {
       success: true,
       order_id,
+      order_number: order.order_number,
       processed_transactions: processedTransactions,
       total_processed: processedTransactions.filter(t => t.status === 'completed').length,
-      total_failed: processedTransactions.filter(t => t.status === 'failed').length
+      total_failed: processedTransactions.filter(t => t.status === 'failed').length,
+      courier_earnings_updated: true
     };
 
+    console.log('✅ DELIVERY TRANSACTIONS COMPLETED:', result);
+
+    return result;
+
   } catch (error) {
+    await session.abortTransaction();
     console.error('🚨 PROCESS DELIVERY TRANSACTIONS ERROR:', error);
     throw error;
+  } finally {
+    session.endSession();
   }
 };
 
