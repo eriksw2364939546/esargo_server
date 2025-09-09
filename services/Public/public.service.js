@@ -13,8 +13,8 @@ export const getPublicRestaurantCatalog = async (filters = {}) => {
       search = null,
       lat = null,
       lng = null,
-      radius = 10, // км
-      sort_by = 'popular', // popular, rating, distance, newest
+      radius = 10,
+      sort_by = 'popular',
       is_open_now = null,
       min_rating = null,
       delivery_fee_max = null,
@@ -30,11 +30,14 @@ export const getPublicRestaurantCatalog = async (filters = {}) => {
       filters_count: Object.keys(filters).length
     });
 
-    // Базовый фильтр - только активные и одобренные рестораны
+    // ✅ ИСПРАВЛЕННЫЙ ФИЛЬТР - используем правильные поля
     let mongoFilter = {
       is_active: true,
       is_approved: true,
-      profile_status: 'approved'
+      is_public: true,
+      // Убираем несуществующий profile_status
+      content_status: 'approved',
+      approval_status: 'approved'
     };
 
     // Фильтр по категории
@@ -42,189 +45,74 @@ export const getPublicRestaurantCatalog = async (filters = {}) => {
       mongoFilter.category = category;
     }
 
-    // Поиск по тексту (название ресторана, описание, кухня)
+    // Поиск по тексту
     if (search && search.trim()) {
       const searchRegex = new RegExp(search.trim(), 'i');
       mongoFilter.$or = [
         { business_name: searchRegex },
+        { brand_name: searchRegex },
         { description: searchRegex },
-        { category: searchRegex },
-        { cuisine_types: { $in: [searchRegex] } },
-        { 'business_info.tags': { $in: [searchRegex] } }
+        { category: searchRegex }
       ];
     }
 
     // Фильтр по рейтингу
     if (min_rating && min_rating > 0) {
-      mongoFilter['ratings.average_rating'] = { $gte: parseFloat(min_rating) };
+      mongoFilter['ratings.avg_rating'] = { $gte: parseFloat(min_rating) };
     }
 
-    // Фильтр по максимальной стоимости доставки
-    if (delivery_fee_max !== null && delivery_fee_max >= 0) {
-      mongoFilter['delivery_info.delivery_fee'] = { $lte: parseFloat(delivery_fee_max) };
-    }
-
-    // Фильтр по времени работы (если ресторан сейчас открыт)
+    // Фильтр по времени работы
     if (is_open_now === true || is_open_now === 'true') {
-      const now = new Date();
-      const currentDay = now.toLocaleDateString('en-US', { weekday: 'lowercase' });
-      const currentTime = now.toTimeString().slice(0, 5); // HH:MM формат
-
-      mongoFilter[`working_hours.${currentDay}.is_open`] = true;
-      mongoFilter.$expr = {
-        $and: [
-          { $lte: [`$working_hours.${currentDay}.open_time`, currentTime] },
-          { $gte: [`$working_hours.${currentDay}.close_time`, currentTime] }
-        ]
-      };
+      mongoFilter.is_currently_open = true;
     }
 
-    // Геофильтр (если указаны координаты)
-    if (lat && lng && radius > 0) {
-      const radiusInDegrees = radius / 111; // Примерное преобразование км в градусы
+    console.log('🔍 MONGO FILTER:', JSON.stringify(mongoFilter, null, 2));
+
+    // Выполняем запрос
+    const [restaurants, total] = await Promise.all([
+      PartnerProfile.find(mongoFilter)
+        .sort({ 'ratings.avg_rating': -1, 'business_stats.total_orders': -1 })
+        .skip(parseInt(offset))
+        .limit(parseInt(limit))
+        .lean(),
+      PartnerProfile.countDocuments(mongoFilter)
+    ]);
+
+    console.log('✅ RESTAURANTS FOUND:', restaurants.length);
+
+    // Обогащаем данные ресторанов
+    const enrichedRestaurants = restaurants.map(restaurant => ({
+      id: restaurant._id,
+      business_name: restaurant.business_name,
+      brand_name: restaurant.brand_name,
+      category: restaurant.category,
+      description: restaurant.description,
+      cover_image_url: restaurant.cover_image_url,
+      location: restaurant.location,
       
-      mongoFilter['location.coordinates'] = {
-        $geoWithin: {
-          $centerSphere: [[parseFloat(lng), parseFloat(lat)], radius / 6378.1] // Радиус Земли в км
-        }
-      };
-    }
-
-    // Сортировка
-    let sortOptions = {};
-    switch (sort_by) {
-      case 'rating':
-        sortOptions = { 'ratings.average_rating': -1, 'ratings.total_reviews': -1 };
-        break;
-      case 'newest':
-        sortOptions = { createdAt: -1 };
-        break;
-      case 'distance':
-        if (lat && lng) {
-          // MongoDB $near сортировка по расстоянию
-          sortOptions = { location: { $near: [parseFloat(lng), parseFloat(lat)] } };
-        } else {
-          sortOptions = { 'ratings.average_rating': -1 }; // Фоллбэк на рейтинг
-        }
-        break;
-      case 'popular':
-      default:
-        sortOptions = { 'ratings.total_orders': -1, 'ratings.average_rating': -1 };
-        break;
-    }
-
-    // Выполняем запрос с пагинацией
-    const restaurants = await PartnerProfile.find(mongoFilter)
-      .select({
-        business_name: 1,
-        category: 1,
-        cuisine_types: 1,
-        description: 1,
-        avatar_image: 1,
-        cover_image: 1,
-        location: 1,
-        ratings: 1,
-        delivery_info: 1,
-        working_hours: 1,
-        'business_info.tags': 1,
-        is_featured: 1,
-        createdAt: 1
-      })
-      .sort(sortOptions)
-      .limit(parseInt(limit))
-      .skip(parseInt(offset))
-      .lean(); // Для лучшей производительности
-
-    // Получаем общее количество для пагинации
-    const total = await PartnerProfile.countDocuments(mongoFilter);
-
-    // Обогащаем данные дополнительной информацией
-    const enrichedRestaurants = await Promise.all(
-      restaurants.map(async (restaurant) => {
-        // Расчет расстояния если указаны координаты пользователя
-        let distance = null;
-        if (lat && lng && restaurant.location?.coordinates) {
-          distance = calculateDistance(
-            lat, lng,
-            restaurant.location.coordinates[1],
-            restaurant.location.coordinates[0]
-          );
-        }
-
-        // Получаем популярные товары ресторана (топ-3)
-        const popularProducts = await Product.find({
-          partner_id: restaurant._id,
-          is_active: true,
-          is_available: true
-        })
-        .select('title price image_url category')
-        .sort({ order_count: -1 })
-        .limit(3)
-        .lean();
-
-        // Определяем статус работы
-        const isOpenNow = checkRestaurantOpenNow(restaurant.working_hours);
-
-        // Расчетное время доставки
-        const estimatedDeliveryTime = calculateEstimatedDelivery(
-          distance,
-          restaurant.delivery_info
-        );
-
-        return {
-          id: restaurant._id,
-          name: restaurant.business_name,
-          category: restaurant.category,
-          cuisine_types: restaurant.cuisine_types || [],
-          description: restaurant.description,
-          avatar_image: restaurant.avatar_image,
-          cover_image: restaurant.cover_image,
-          tags: restaurant.business_info?.tags || [],
-          
-          // Геолокация
-          location: {
-            address: restaurant.location?.address,
-            coordinates: restaurant.location?.coordinates,
-            distance: distance ? `${distance.toFixed(1)} км` : null
-          },
-          
-          // Рейтинги и отзывы
-          ratings: {
-            average_rating: restaurant.ratings?.average_rating || 0,
-            total_reviews: restaurant.ratings?.total_reviews || 0,
-            total_orders: restaurant.ratings?.total_orders || 0
-          },
-          
-          // Информация о доставке
-          delivery_info: {
-            fee: restaurant.delivery_info?.delivery_fee || 0,
-            min_order: restaurant.delivery_info?.min_order_amount || 0,
-            estimated_time: estimatedDeliveryTime,
-            free_delivery_from: restaurant.delivery_info?.free_delivery_from || null
-          },
-          
-          // Статус работы
-          is_open_now: isOpenNow,
-          is_featured: restaurant.is_featured || false,
-          
-          // Популярные товары
-          popular_items: popularProducts.map(product => ({
-            id: product._id,
-            title: product.title,
-            price: product.price,
-            image_url: product.image_url,
-            category: product.category
-          }))
-        };
-      })
-    );
-
-    console.log('✅ PUBLIC CATALOG SUCCESS:', {
-      restaurants_found: restaurants.length,
-      total_available: total,
-      has_coordinates: !!(lat && lng),
-      applied_filters: Object.keys(filters).length
-    });
+      // Информация о доставке
+      delivery_info: {
+        estimated_time: "30-45 мин", // Пока статично
+        min_order_amount: 15, // Пока статично
+        delivery_fee: 3.50 // Пока статично
+      },
+      
+      // Рейтинги
+      ratings: {
+        avg_rating: restaurant.ratings?.avg_rating || 0,
+        total_reviews: restaurant.ratings?.total_reviews || 0
+      },
+      
+      // Рабочие часы
+      working_hours: restaurant.working_hours,
+      is_currently_open: restaurant.is_currently_open,
+      
+      // Статистика
+      business_stats: {
+        total_orders: restaurant.business_stats?.total_orders || 0,
+        total_products: restaurant.business_stats?.total_products || 0
+      }
+    }));
 
     return {
       restaurants: enrichedRestaurants,
@@ -264,135 +152,52 @@ export const getPublicRestaurantDetails = async (restaurantId) => {
       throw new Error('Некорректный ID ресторана');
     }
 
-    // Получаем детальную информацию о ресторане
+    // ✅ ИСПРАВЛЕННЫЙ ФИЛЬТР
     const restaurant = await PartnerProfile.findOne({
       _id: restaurantId,
       is_active: true,
       is_approved: true,
-      profile_status: 'approved'
+      is_public: true,
+      content_status: 'approved',
+      approval_status: 'approved'
     }).lean();
 
     if (!restaurant) {
       throw new Error('Ресторан не найден или недоступен');
     }
 
-    // Получаем статистику товаров
-    const productsStats = await Product.aggregate([
-      { $match: { partner_id: new mongoose.Types.ObjectId(restaurantId), is_active: true } },
-      {
-        $group: {
-          _id: null,
-          total_products: { $sum: 1 },
-          available_products: { $sum: { $cond: ['$is_available', 1, 0] } },
-          avg_price: { $avg: '$price' },
-          min_price: { $min: '$price' },
-          max_price: { $max: '$price' }
-        }
-      }
-    ]);
-
-    // Получаем последние отзывы
-    const recentReviews = await mongoose.model('Review').find({
-      partner_id: restaurantId
-    })
-    .sort({ createdAt: -1 })
-    .limit(5)
-    .populate('customer_id', 'username profile_image')
-    .lean();
-
-    // Статус работы
-    const isOpenNow = checkRestaurantOpenNow(restaurant.working_hours);
-
-    const stats = productsStats[0] || {
-      total_products: 0,
-      available_products: 0,
-      avg_price: 0,
-      min_price: 0,
-      max_price: 0
-    };
-
-    console.log('✅ RESTAURANT DETAILS SUCCESS:', {
-      restaurant_name: restaurant.business_name,
-      products_count: stats.total_products,
-      reviews_count: recentReviews.length
-    });
-
+    // Формируем ответ
     return {
       id: restaurant._id,
-      name: restaurant.business_name,
+      business_name: restaurant.business_name,
+      brand_name: restaurant.brand_name,
       category: restaurant.category,
-      cuisine_types: restaurant.cuisine_types || [],
       description: restaurant.description,
+      cover_image_url: restaurant.cover_image_url,
+      location: restaurant.location,
       
-      // Изображения
-      avatar_image: restaurant.avatar_image,
-      cover_image: restaurant.cover_image,
+      // Меню категории
+      menu_categories: restaurant.menu_categories || [],
+      
+      // Рабочие часы
+      working_hours: restaurant.working_hours,
+      is_currently_open: restaurant.is_currently_open,
+      
+      // Рейтинги
+      ratings: restaurant.ratings,
+      
+      // Статистика
+      business_stats: restaurant.business_stats,
+      
+      // Галерея
       gallery: restaurant.gallery || [],
       
-      // Контакты и адрес
-      contact_info: {
-        phone: restaurant.contact_info?.phone,
-        email: restaurant.contact_info?.email,
-        website: restaurant.contact_info?.website
-      },
-      
-      location: {
-        address: restaurant.location?.address,
-        coordinates: restaurant.location?.coordinates,
-        zone: restaurant.location?.zone
-      },
-      
-      // Время работы
-      working_hours: restaurant.working_hours,
-      is_open_now: isOpenNow,
-      
-      // Рейтинги и статистика
-      ratings: {
-        average_rating: restaurant.ratings?.average_rating || 0,
-        total_reviews: restaurant.ratings?.total_reviews || 0,
-        total_orders: restaurant.ratings?.total_orders || 0,
-        rating_breakdown: restaurant.ratings?.rating_breakdown || {}
-      },
-      
-      // Информация о доставке
+      // Информация о доставке (пока статичная)
       delivery_info: {
-        fee: restaurant.delivery_info?.delivery_fee || 0,
-        min_order: restaurant.delivery_info?.min_order_amount || 0,
-        max_distance: restaurant.delivery_info?.max_delivery_distance || 10,
-        estimated_time: restaurant.delivery_info?.estimated_delivery_time || '30-45',
-        free_delivery_from: restaurant.delivery_info?.free_delivery_from || null,
-        delivery_zones: restaurant.delivery_info?.delivery_zones || []
-      },
-      
-      // Статистика товаров
-      menu_stats: {
-        total_products: stats.total_products,
-        available_products: stats.available_products,
-        price_range: stats.min_price && stats.max_price ? 
-          `${stats.min_price}₽ - ${stats.max_price}₽` : null,
-        average_price: stats.avg_price ? `${stats.avg_price.toFixed(0)}₽` : null
-      },
-      
-      // Последние отзывы
-      recent_reviews: recentReviews.map(review => ({
-        id: review._id,
-        customer_name: review.customer_id?.username || 'Аноним',
-        customer_avatar: review.customer_id?.profile_image,
-        rating: review.rating,
-        comment: review.comment,
-        created_at: review.createdAt,
-        photos: review.photos || []
-      })),
-      
-      // Дополнительная информация
-      business_info: {
-        registration_year: restaurant.business_info?.registration_year,
-        tags: restaurant.business_info?.tags || [],
-        special_features: restaurant.business_info?.special_features || []
-      },
-      
-      is_featured: restaurant.is_featured || false,
-      created_at: restaurant.createdAt
+        estimated_time: "30-45 мин",
+        min_order_amount: 15,
+        delivery_fee: 3.50
+      }
     };
 
   } catch (error) {
@@ -881,8 +686,15 @@ const checkRestaurantOpenNow = (workingHours) => {
   if (!workingHours) return false;
   
   const now = new Date();
-  const currentDay = now.toLocaleDateString('en-US', { weekday: 'lowercase' });
+  // ✅ ИСПРАВЛЕНО: используем 'long' вместо 'lowercase'
+  const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
   const currentTime = now.toTimeString().slice(0, 5); // HH:MM формат
+  
+  console.log('🕒 CHECK RESTAURANT OPEN:', {
+    currentDay,
+    currentTime,
+    workingHours: workingHours[currentDay]
+  });
   
   const todayHours = workingHours[currentDay];
   if (!todayHours || !todayHours.is_open) {
@@ -895,7 +707,16 @@ const checkRestaurantOpenNow = (workingHours) => {
   if (!openTime || !closeTime) return false;
   
   // Сравниваем время (простое строковое сравнение работает для HH:MM)
-  return currentTime >= openTime && currentTime <= closeTime;
+  const isOpen = currentTime >= openTime && currentTime <= closeTime;
+  
+  console.log('🕒 RESTAURANT HOURS CHECK:', {
+    openTime,
+    closeTime,
+    currentTime,
+    isOpen
+  });
+  
+  return isOpen;
 };
 
 /**

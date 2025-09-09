@@ -1,4 +1,4 @@
-// controllers/CustomerController.js - ИСПРАВЛЕННЫЙ контроллер
+// controllers/CustomerController.js - ИСПРАВЛЕННЫЙ с генерацией токена при регистрации
 import {
   createCustomerAccount,
   authenticateCustomer
@@ -12,7 +12,7 @@ import {
 
 import { generateCustomerToken } from '../services/token.service.js';
 
-// РЕГИСТРАЦИЯ КЛИЕНТА
+// РЕГИСТРАЦИЯ КЛИЕНТА - С ГЕНЕРАЦИЕЙ ТОКЕНА
 export const register = async (req, res) => {
   try {
     const customerData = req.body;
@@ -31,6 +31,20 @@ export const register = async (req, res) => {
       });
     }
 
+    // ✅ ГЕНЕРИРУЕМ ТОКЕН СРАЗУ ПОСЛЕ РЕГИСТРАЦИИ
+    const token = generateCustomerToken({
+      user_id: result.customer._id,
+      _id: result.customer._id,
+      email: result.customer.email,
+      role: result.customer.role
+    }, '30d'); // Токен на 30 дней
+
+    console.log('✅ Customer registered and token generated:', {
+      user_id: result.customer._id,
+      email: result.customer.email,
+      token_length: token ? token.length : 0
+    });
+
     const response = {
       result: true,
       message: "Регистрация прошла успешно",
@@ -39,7 +53,8 @@ export const register = async (req, res) => {
         email: result.customer.email,
         role: result.customer.role,
         profile: result.customer.profile
-      }
+      },
+      token // ✅ ДОБАВЛЯЕМ ТОКЕН В ОТВЕТ
     };
 
     if (result.generatedPassword) {
@@ -61,7 +76,7 @@ export const register = async (req, res) => {
   }
 };
 
-// АВТОРИЗАЦИЯ КЛИЕНТА
+// АВТОРИЗАЦИЯ КЛИЕНТА - БЕЗ ИЗМЕНЕНИЙ
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -126,33 +141,22 @@ export const verify = async (req, res) => {
       });
     }
 
-    const customerProfile = await getCustomerProfile(user._id);
-
     res.status(200).json({
       result: true,
       message: "Токен действителен",
       user: {
-        id: customerProfile.user._id,
-        email: customerProfile.user.email,
-        role: customerProfile.user.role,
-        profile: {
-          first_name: customerProfile.profile.first_name,
-          last_name: customerProfile.profile.last_name,
-          full_name: customerProfile.profile.full_name,
-          phone: customerProfile.profile.phone,
-          avatar_url: customerProfile.profile.avatar_url,
-          saved_addresses_count: customerProfile.profile.saved_addresses?.length || 0,
-          has_default_address: customerProfile.profile.saved_addresses?.some(addr => addr.is_default) || false
-        }
+        id: user._id,
+        email: user.email,
+        role: user.role,
+        profile: user.profile
       }
     });
 
   } catch (error) {
-    console.error('Verify token error:', error);
+    console.error('Verification error:', error);
     res.status(500).json({
       result: false,
-      message: "Ошибка при верификации токена",
-      error: error.message
+      message: "Ошибка верификации токена"
     });
   }
 };
@@ -162,27 +166,20 @@ export const getProfile = async (req, res) => {
   try {
     const { user } = req;
 
-    if (!user) {
-      return res.status(404).json({
-        result: false,
-        message: "Пользователь не определен!"
-      });
-    }
-
-    const customerProfile = await getCustomerProfile(user._id);
+    const profileResult = await getCustomerProfile(user._id);
 
     res.status(200).json({
       result: true,
       message: "Профиль получен",
-      user: customerProfile.user,
-      profile: customerProfile.profile
+      profile: profileResult.profile
     });
 
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({
       result: false,
-      message: error.message || "Ошибка при получении профиля"
+      message: "Ошибка получения профиля",
+      error: error.message
     });
   }
 };
@@ -191,68 +188,31 @@ export const getProfile = async (req, res) => {
 export const edit = async (req, res) => {
   try {
     const { user } = req;
+    const { id } = req.params;
     const updateData = req.body;
 
-    if (!user) {
-      return res.status(404).json({
+    // Проверяем, что пользователь редактирует свой профиль
+    if (user._id.toString() !== id) {
+      return res.status(403).json({
         result: false,
-        message: "Пользователь не определен!"
+        message: "Можно редактировать только собственный профиль"
       });
     }
 
-    // Исключаем адреса из обновления профиля
-    if (updateData.saved_addresses) {
-      return res.status(400).json({
-        result: false,
-        message: "Управление адресами через отдельное API: /api/customers/addresses"
-      });
-    }
-
-    const allowedFields = ['first_name', 'last_name', 'phone', 'avatar_url', 'language', 'current_password', 'new_password'];
-    const filteredUpdateData = {};
-    
-    allowedFields.forEach(field => {
-      if (updateData[field] !== undefined) {
-        filteredUpdateData[field] = updateData[field];
-      }
-    });
-
-    if (Object.keys(filteredUpdateData).length === 0) {
-      return res.status(400).json({
-        result: false,
-        message: "Нет данных для обновления"
-      });
-    }
-
-    const updatedProfile = await updateCustomerProfile(user._id, filteredUpdateData);
+    const updatedProfile = await updateCustomerProfile(user._id, updateData);
 
     res.status(200).json({
       result: true,
-      message: "Профиль обновлен успешно",
-      user: updatedProfile.user,
-      profile: {
-        ...updatedProfile.profile,
-        addresses_summary: {
-          total_count: updatedProfile.profile.saved_addresses?.length || 0,
-          has_default_address: updatedProfile.profile.saved_addresses?.some(addr => addr.is_default) || false
-        }
-      }
+      message: "Профиль обновлен",
+      profile: updatedProfile.profile
     });
 
   } catch (error) {
     console.error('Update profile error:', error);
-    
-    if (error.validationErrors) {
-      return res.status(400).json({
-        result: false,
-        message: "Ошибки валидации",
-        errors: error.validationErrors
-      });
-    }
-    
     res.status(500).json({
       result: false,
-      message: error.message || "Ошибка при обновлении профиля"
+      message: "Ошибка обновления профиля",
+      error: error.message
     });
   }
 };
@@ -261,11 +221,13 @@ export const edit = async (req, res) => {
 export const delClient = async (req, res) => {
   try {
     const { user } = req;
+    const { id } = req.params;
 
-    if (!user) {
-      return res.status(404).json({
+    // Проверяем, что пользователь удаляет свой профиль
+    if (user._id.toString() !== id) {
+      return res.status(403).json({
         result: false,
-        message: "Пользователь не определен!"
+        message: "Можно удалить только собственный профиль"
       });
     }
 
@@ -273,14 +235,15 @@ export const delClient = async (req, res) => {
 
     res.status(200).json({
       result: true,
-      message: "Профиль успешно удален"
+      message: "Профиль клиента удален"
     });
 
   } catch (error) {
     console.error('Delete profile error:', error);
     res.status(500).json({
       result: false,
-      message: error.message || "Ошибка при удалении профиля"
+      message: "Ошибка удаления профиля",
+      error: error.message
     });
   }
 };

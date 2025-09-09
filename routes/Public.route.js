@@ -1,4 +1,4 @@
-// routes/Public.route.js - Публичные эндпоинты каталога (как UberEats)
+// routes/Public.route.js - ИСПРАВЛЕННЫЙ с добавлением роута /restaurants
 import express from 'express';
 import {
   getCatalog,
@@ -23,6 +23,12 @@ const router = express.Router();
  * - sort - сортировка (rating, distance, delivery_time)
  */
 router.get('/catalog', getCatalog);
+
+/**
+ * ✅ ДОБАВЛЕНО: GET /api/public/restaurants - Алиас для /catalog
+ * Для совместимости с ожиданиями фронтенда
+ */
+router.get('/restaurants', getCatalog);
 
 /**
  * GET /api/public/restaurants/popular - Популярные рестораны
@@ -69,6 +75,7 @@ router.get('/health', (req, res) => {
     message: "Public catalog API working",
     available_endpoints: {
       catalog: "GET /api/public/catalog",
+      restaurants: "GET /api/public/restaurants", // ✅ ДОБАВЛЕНО
       restaurant_details: "GET /api/public/restaurants/:id",
       restaurant_menu: "GET /api/public/restaurants/:id/menu",
       search: "GET /api/public/restaurants/search",
