@@ -109,6 +109,68 @@ export const createOrderTransactions = async (orderData, deliveryData) => {
 };
 
 /**
+ * ✅ НОВАЯ ФУНКЦИЯ: Создание транзакции курьера при принятии заказа
+ * Вызывается когда курьер берет заказ на доставку
+ */
+export const createCourierTransactionOnAccept = async (order_id, courier_id) => {
+  const session = await mongoose.startSession();
+  
+  try {
+    await session.startTransaction();
+
+    console.log('💰 CREATE COURIER TRANSACTION:', { order_id, courier_id });
+
+    // Получаем данные заказа
+    const order = await Order.findById(order_id).session(session);
+    if (!order) {
+      throw new Error('Заказ не найден');
+    }
+
+    // Создаем pending транзакцию курьера
+    const courierPayment = new Transaction({
+      transaction_id: Transaction.generateTransactionId(),
+      order_id,
+      transaction_type: 'courier_payment',
+      from_user_type: 'platform',
+      to_user_id: courier_id,
+      to_user_type: 'courier',
+      amount: order.delivery_fee, // Полная сумма доставки
+      status: 'pending', // Станет completed при доставке
+      description: `Оплата за доставку заказа ${order.order_number}`,
+      metadata: {
+        delivery_zone: order.delivery_zone,
+        delivery_distance_km: order.delivery_distance_km,
+        base_delivery_fee: order.delivery_fee,
+        peak_hour_surcharge: order.peak_hour_surcharge || 0,
+        is_peak_hour: (order.peak_hour_surcharge || 0) > 0
+      }
+    });
+
+    await courierPayment.save({ session });
+    await session.commitTransaction();
+
+    console.log('✅ COURIER TRANSACTION CREATED:', {
+      transaction_id: courierPayment.transaction_id,
+      amount: courierPayment.amount,
+      status: 'pending'
+    });
+
+    return {
+      success: true,
+      transaction: courierPayment,
+      message: 'Транзакция курьера создана в статусе pending'
+    };
+
+  } catch (error) {
+    await session.abortTransaction();
+    console.error('🚨 CREATE COURIER TRANSACTION ERROR:', error);
+    throw error;
+  } finally {
+    session.endSession();
+  }
+};
+
+/**
  * ✅ ОБРАБОТКА ТРАНЗАКЦИЙ ПРИ ДОСТАВКЕ ЗАКАЗА
  * Вызывается когда курьер доставил заказ
  */
@@ -487,6 +549,21 @@ export const integrateWithOrderCreation = async (orderData, deliveryData) => {
 };
 
 /**
+ * ✅ ФУНКЦИЯ ДЛЯ ИНТЕГРАЦИИ С ПРИНЯТИЕМ ЗАКАЗА КУРЬЕРОМ
+ * Вызывается когда курьер берет заказ на доставку
+ */
+export const integrateWithCourierAccept = async (order_id, courier_id) => {
+  try {
+    const result = await createCourierTransactionOnAccept(order_id, courier_id);
+    return { success: true, transaction: result.transaction };
+  } catch (error) {
+    console.error('🚨 COURIER ACCEPT INTEGRATION ERROR:', error);
+    // НЕ бросаем ошибку, чтобы не сломать принятие заказа
+    return { success: false, error: error.message };
+  }
+};
+
+/**
  * ✅ ФУНКЦИЯ ДЛЯ ИНТЕГРАЦИИ С DELIVERY
  * Вызывается когда курьер доставил заказ
  */
@@ -510,6 +587,7 @@ export default {
   createOrderTransactions,
   processDeliveryTransactions,
   processOrderRefundTransactions,
+  createCourierTransactionOnAccept, // ✅ НОВАЯ ФУНКЦИЯ
   
   // Статистика
   getUserEarningsHistory,
@@ -518,6 +596,7 @@ export default {
   // Интеграция (безопасные функции)
   integrateWithOrderCreation,
   integrateWithOrderDelivery,
+  integrateWithCourierAccept, // ✅ НОВАЯ ИНТЕГРАЦИЯ
   
   // Утилиты
   Transaction // Экспортируем модель для прямого использования

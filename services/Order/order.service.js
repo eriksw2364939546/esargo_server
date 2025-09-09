@@ -1,7 +1,7 @@
 // services/Order/order.service.js - ПОЛНАЯ СИСТЕМА ЗАКАЗОВ ESARGO БЕЗ ЗАГЛУШЕК
 import { Order, Cart, User, PartnerProfile, CourierProfile, Product } from '../../models/index.js';
 import { calculateFullDelivery } from '../Delivery/delivery.service.js';
-import { integrateWithOrderCreation, integrateWithOrderDelivery } from '../Finance/transaction.service.js';
+import { integrateWithOrderCreation, integrateWithOrderDelivery, integrateWithCourierAccept } from '../Finance/transaction.service.js';
 import { processOrderPayment } from '../payment.stub.service.js';
 import { cleanupExpiredData } from '../System/cleanup.service.js';
 import mongoose from 'mongoose';
@@ -1331,12 +1331,24 @@ export const acceptOrderForDelivery = async (orderId, courierId) => {
       throw new Error('Заказ уже назначен другому курьеру');
     }
 
+    // 1. ✅ НАЗНАЧАЕМ КУРЬЕРА И ОБНОВЛЯЕМ СТАТУС
     order.courier_id = courierId;
     await order.addStatusHistory('picked_up', courierId, 'courier', 'Курьер забрал заказ');
 
+    // 2. ✅ СОЗДАЕМ PENDING ТРАНЗАКЦИЮ КУРЬЕРА
+    let courierTransactionResult = null;
+    try {
+      courierTransactionResult = await integrateWithCourierAccept(orderId, courierId);
+      console.log('💰 COURIER TRANSACTION:', courierTransactionResult.success ? 'CREATED' : 'FAILED');
+    } catch (financeError) {
+      console.error('⚠️ Courier transaction creation failed:', financeError.message);
+      // НЕ прерываем операцию, только логируем
+    }
+
     console.log('ORDER ACCEPTED FOR DELIVERY:', {
       order_number: order.order_number,
-      courier_id: courierId
+      courier_id: courierId,
+      transaction_created: courierTransactionResult?.success || false
     });
 
     return {
@@ -1344,7 +1356,8 @@ export const acceptOrderForDelivery = async (orderId, courierId) => {
       order_number: order.order_number,
       status: order.status,
       picked_up_at: order.picked_up_at,
-      message: 'Заказ принят на доставку'
+      message: 'Заказ принят на доставку',
+      finance_status: courierTransactionResult?.success ? 'transaction_created' : 'transaction_failed'
     };
 
   } catch (error) {
