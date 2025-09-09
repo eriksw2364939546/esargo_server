@@ -126,6 +126,68 @@ export const createCourierTransactionOnAccept = async (order_id, courier_id) => 
       throw new Error('Заказ не найден');
     }
 
+    // ПРАВИЛЬНЫЙ РАСЧЕТ: Курьер получает 100% от доставки
+    let courierAmount = 0;
+    
+    // Сначала пытаемся использовать готовый расчет courier_earnings
+    if (order.courier_earnings && order.courier_earnings > 0) {
+      courierAmount = order.courier_earnings;
+      console.log('📊 Using order.courier_earnings:', courierAmount);
+    }
+    // Если нет courier_earnings, рассчитываем сами
+    else {
+      // Базовая стоимость доставки
+      const baseDeliveryFee = order.delivery_fee || 0;
+      
+      // Если delivery_fee тоже 0, рассчитываем по тарифам
+      if (baseDeliveryFee === 0) {
+        const zone = order.delivery_zone || 1;
+        const orderTotal = order.subtotal || 0;
+        
+        // Тарифы согласно документации:
+        // Зона 1: 6€ (≥30€) или 9€ (<30€)
+        // Зона 2: 10€ (≥30€) или 13€ (<30€)
+        if (zone === 1) {
+          courierAmount = orderTotal >= 30 ? 6 : 9;
+        } else if (zone === 2) {
+          courierAmount = orderTotal >= 30 ? 10 : 13;
+        }
+        
+        console.log('📊 Calculated base delivery fee:', {
+          zone,
+          orderTotal,
+          baseCalculated: courierAmount
+        });
+      } else {
+        courierAmount = baseDeliveryFee;
+      }
+      
+      // Добавляем доплату за час пик (курьер получает все)
+      const peakSurcharge = order.peak_hour_surcharge || 0;
+      courierAmount += peakSurcharge;
+      
+      console.log('📊 Total courier amount:', {
+        baseFee: courierAmount - peakSurcharge,
+        peakSurcharge,
+        total: courierAmount
+      });
+    }
+
+    // Проверяем что сумма больше 0
+    if (courierAmount <= 0) {
+      throw new Error('Сумма оплаты курьера должна быть больше 0');
+    }
+
+    console.log('📊 FINAL COURIER PAYMENT CALCULATION:', {
+      order_number: order.order_number,
+      delivery_fee: order.delivery_fee,
+      courier_earnings: order.courier_earnings,
+      peak_hour_surcharge: order.peak_hour_surcharge,
+      final_amount: courierAmount,
+      zone: order.delivery_zone,
+      subtotal: order.subtotal
+    });
+
     // Создаем pending транзакцию курьера
     const courierPayment = new Transaction({
       transaction_id: Transaction.generateTransactionId(),
@@ -134,7 +196,7 @@ export const createCourierTransactionOnAccept = async (order_id, courier_id) => 
       from_user_type: 'platform',
       to_user_id: courier_id,
       to_user_type: 'courier',
-      amount: order.delivery_fee, // Полная сумма доставки
+      amount: courierAmount, // 100% от стоимости доставки + час пик
       status: 'pending', // Станет completed при доставке
       description: `Оплата за доставку заказа ${order.order_number}`,
       metadata: {
@@ -142,7 +204,9 @@ export const createCourierTransactionOnAccept = async (order_id, courier_id) => 
         delivery_distance_km: order.delivery_distance_km,
         base_delivery_fee: order.delivery_fee,
         peak_hour_surcharge: order.peak_hour_surcharge || 0,
-        is_peak_hour: (order.peak_hour_surcharge || 0) > 0
+        is_peak_hour: (order.peak_hour_surcharge || 0) > 0,
+        courier_earnings_original: order.courier_earnings,
+        calculation_method: order.courier_earnings > 0 ? 'from_order_field' : 'calculated_from_tariffs'
       }
     });
 
@@ -152,12 +216,14 @@ export const createCourierTransactionOnAccept = async (order_id, courier_id) => 
     console.log('✅ COURIER TRANSACTION CREATED:', {
       transaction_id: courierPayment.transaction_id,
       amount: courierPayment.amount,
-      status: 'pending'
+      status: 'pending',
+      description: courierPayment.description
     });
 
     return {
       success: true,
       transaction: courierPayment,
+      amount: courierAmount,
       message: 'Транзакция курьера создана в статусе pending'
     };
 

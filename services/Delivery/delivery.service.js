@@ -275,14 +275,48 @@ function checkPeakHours(orderTime) {
  * Расчет заработка курьера
  */
 function calculateCourierEarnings(zone, deliveryFee, peakSurcharge = 0) {
-  const baseEarnings = deliveryFee; // Курьер получает всю стоимость доставки
+  console.log('📊 CALCULATE COURIER EARNINGS:', {
+    zone,
+    deliveryFee,
+    peakSurcharge
+  });
+
+  // ИСПРАВЛЕНО: Используем правильные тарифы
+  // Зона 1: 6€ (≥30€) или 9€ (<30€) + час пик
+  // Зона 2: 10€ (≥30€) или 13€ (<30€) + час пик
+  
+  let baseEarnings = 0;
+  
+  // Курьер получает 100% от стоимости доставки
+  if (deliveryFee > 0) {
+    baseEarnings = deliveryFee;
+  } else {
+    // Резервный расчет если deliveryFee не передан
+    console.warn('⚠️ deliveryFee is 0, using fallback calculation');
+    baseEarnings = zone === 1 ? 9 : 13; // Берем максимальные тарифы как fallback
+  }
+  
+  // Добавляем доплату за час пик
   const peakBonus = peakSurcharge || 0;
+  const totalEarnings = baseEarnings + peakBonus;
+  
+  console.log('✅ COURIER EARNINGS CALCULATED:', {
+    base_earnings: baseEarnings,
+    peak_bonus: peakBonus,
+    total_earnings: totalEarnings,
+    zone: zone
+  });
   
   return {
     base_earnings: baseEarnings,
     peak_bonus: peakBonus,
-    total_earnings: baseEarnings + peakBonus,
-    zone: zone
+    total_earnings: totalEarnings,
+    zone: zone,
+    calculation_details: {
+      delivery_fee_used: deliveryFee,
+      peak_surcharge_applied: peakSurcharge,
+      is_peak_hour: peakSurcharge > 0
+    }
   };
 }
 

@@ -432,7 +432,7 @@ orderSchema.methods.calculateEsargoFinancials = function() {
   // Расчет заработка курьера (зависит от зоны и суммы заказа)
   let courierBase = 0;
   if (this.delivery_zone === 1) {
-    courierBase = this.subtotal >= 30 ? 6 : 8; // Зона 1: 6€ или 8€
+    courierBase = this.subtotal >= 30 ? 6 : 9; // Зона 1: 6€ или 9€
   } else if (this.delivery_zone === 2) {
     courierBase = this.subtotal >= 30 ? 10 : 13; // Зона 2: 10€ или 13€
   }
