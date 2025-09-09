@@ -1,4 +1,4 @@
-// models/Cart.model.js - ПОЛНАЯ ИСПРАВЛЕННАЯ модель корзины покупок
+// models/Cart.model.js - ПОЛНАЯ ИСПРАВЛЕННАЯ модель корзины покупок БЕЗ SERVICE_FEE
 import mongoose from 'mongoose';
 
 const cartSchema = new mongoose.Schema({
@@ -200,7 +200,7 @@ cartSchema.index({ customer_id: 1, status: 1, last_activity: -1 });
 // ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
 /**
- * 🧮 Пересчитать стоимость корзины
+ * 🧮 Пересчитать стоимость корзины - БЕЗ SERVICE_FEE
  */
 cartSchema.methods.recalculatePricing = function() {
   // Подсчет subtotal из всех items
@@ -208,14 +208,13 @@ cartSchema.methods.recalculatePricing = function() {
     return sum + item.total_item_price;
   }, 0);
   
-  // Сервисный сбор (например, 2% от суммы заказа)
-  this.pricing.service_fee = Math.round(this.pricing.subtotal * 0.02 * 100) / 100;
+  // ✅ УБИРАЕМ СЕРВИСНЫЙ СБОР - всегда 0
+  this.pricing.service_fee = 0;
   
-  // Общая стоимость
+  // ✅ Общая стоимость БЕЗ service_fee: только товары + доставка - скидки
   this.pricing.total_price = 
     this.pricing.subtotal + 
-    this.pricing.delivery_fee + 
-    this.pricing.service_fee - 
+    this.pricing.delivery_fee - 
     this.pricing.discount_amount;
   
   return this.pricing;
@@ -251,21 +250,24 @@ cartSchema.methods.addItem = function(itemData) {
     if (item.selected_options.length !== selected_options.length) return false;
     
     return item.selected_options.every(existingOption => {
-      return selected_options.some(newOption => 
+      return selected_options.some(newOption =>
         newOption.group_name === existingOption.group_name &&
         newOption.option_name === existingOption.option_name
       );
     });
   });
   
+  let isNewItem = false;
+  
   if (existingItemIndex !== -1) {
-    // Увеличиваем количество существующего товара
+    // Обновляем количество существующего товара
     this.items[existingItemIndex].quantity += quantity;
     this.items[existingItemIndex].total_item_price = 
       (this.items[existingItemIndex].item_price + this.items[existingItemIndex].options_price) * 
       this.items[existingItemIndex].quantity;
   } else {
     // Добавляем новый товар
+    isNewItem = true;
     this.items.push({
       product_id,
       product_snapshot,
@@ -274,16 +276,14 @@ cartSchema.methods.addItem = function(itemData) {
       special_requests,
       item_price,
       options_price,
-      total_item_price,
-      added_at: new Date()
+      total_item_price
     });
   }
   
-  // Пересчитываем общую стоимость
   this.recalculatePricing();
   this.last_activity = new Date();
   
-  return this.save();
+  return this.save().then(() => isNewItem);
 };
 
 /**
@@ -295,27 +295,23 @@ cartSchema.methods.updateItem = function(itemId, updateData) {
     throw new Error('Товар не найден в корзине');
   }
   
+  // Обновляем поля
   if (updateData.quantity !== undefined) {
     item.quantity = updateData.quantity;
   }
   
   if (updateData.selected_options !== undefined) {
     item.selected_options = updateData.selected_options;
-    
-    // Пересчитываем стоимость опций
-    item.options_price = updateData.selected_options.reduce((sum, option) => {
-      return sum + option.option_price;
-    }, 0);
+    item.options_price = updateData.selected_options.reduce((sum, opt) => sum + opt.option_price, 0);
   }
   
   if (updateData.special_requests !== undefined) {
     item.special_requests = updateData.special_requests;
   }
   
-  // Пересчитываем общую стоимость товара
+  // Пересчитываем стоимость товара
   item.total_item_price = (item.item_price + item.options_price) * item.quantity;
   
-  // Пересчитываем общую стоимость корзины
   this.recalculatePricing();
   this.last_activity = new Date();
   
@@ -340,14 +336,14 @@ cartSchema.methods.removeItem = function(itemId) {
 };
 
 /**
- * 🗑️ Очистить корзину
+ * 🗑️ Очистить корзину - БЕЗ SERVICE_FEE
  */
 cartSchema.methods.clear = function() {
   this.items = [];
   this.pricing = {
     subtotal: 0,
     delivery_fee: 0,
-    service_fee: 0,
+    service_fee: 0,      // ✅ Всегда 0
     discount_amount: 0,
     total_price: 0
   };
@@ -397,11 +393,11 @@ cartSchema.methods.updateActivity = function() {
 // ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
 /**
- * 🔍 Найти активную корзину пользователя - ОКОНЧАТЕЛЬНОЕ ИСПРАВЛЕНИЕ
+ * 🔍 Найти активную корзину пользователя
  * ПРИОРИТЕТ: customer_id важнее session_id
  */
 cartSchema.statics.findActiveCart = function(customerId, sessionId = null) {
-  // ИСПРАВЛЕНИЕ: Ищем ЛЮБУЮ активную корзину пользователя
+  // Ищем ЛЮБУЮ активную корзину пользователя
   // Session_id игнорируем, так как он постоянно меняется
   const query = {
     customer_id: customerId,

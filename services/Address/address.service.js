@@ -105,17 +105,25 @@ const validateAddressData = (addressData) => {
     errors.push('Название адреса должно быть: Дом, Работа, Родители, Друзья или Другое');
   }
 
-  // Валидация координат
-  if (typeof addressData.lat !== 'number' || typeof addressData.lng !== 'number') {
-    errors.push('Координаты должны быть числами');
-  } else {
-    // Проверка границ Марселя
-    if (addressData.lat < MARSEILLE_BOUNDS.lat.min || addressData.lat > MARSEILLE_BOUNDS.lat.max) {
-      errors.push('Координаты должны быть в пределах Марселя (широта)');
-    }
-    
-    if (addressData.lng < MARSEILLE_BOUNDS.lng.min || addressData.lng > MARSEILLE_BOUNDS.lng.max) {
-      errors.push('Координаты должны быть в пределах Марселя (долгота)');
+  // ✅ ИЗМЕНЕНИЕ: Валидация координат ТОЛЬКО если они переданы
+  if (addressData.lat !== undefined || addressData.lng !== undefined) {
+    // Если одна координата есть, должна быть и вторая
+    if (addressData.lat === undefined || addressData.lng === undefined) {
+      errors.push('Если указаны координаты, должны быть указаны и lat, и lng');
+    } else {
+      // Проверяем что это числа
+      if (typeof addressData.lat !== 'number' || typeof addressData.lng !== 'number') {
+        errors.push('Координаты должны быть числами');
+      } else {
+        // Проверка границ Марселя
+        if (addressData.lat < MARSEILLE_BOUNDS.lat.min || addressData.lat > MARSEILLE_BOUNDS.lat.max) {
+          errors.push('Координаты должны быть в пределах Марселя (широта)');
+        }
+        
+        if (addressData.lng < MARSEILLE_BOUNDS.lng.min || addressData.lng > MARSEILLE_BOUNDS.lng.max) {
+          errors.push('Координаты должны быть в пределах Марселя (долгота)');
+        }
+      }
     }
   }
 
@@ -149,8 +157,32 @@ export const addCustomerAddress = async (userId, addressData) => {
       throw new Error('Некорректный ID пользователя');
     }
 
-    // Валидация входных данных
-    const validation = validateAddressData(addressData);
+    // ✅ СНАЧАЛА делаем mock геокодирование если координаты не переданы
+    let coordinates = { lat: addressData.lat, lng: addressData.lng };
+    let zone = null;
+    
+    if (!addressData.lat || !addressData.lng) {
+      const geocodeResult = mockGeocodeAddress(addressData.address);
+      coordinates = geocodeResult.coordinates;
+      zone = geocodeResult.zone;
+      
+      console.log('🗺️ MOCK GEOCODING:', {
+        address: addressData.address,
+        coordinates,
+        zone
+      });
+    } else {
+      zone = determineDeliveryZone(addressData.lat, addressData.lng);
+    }
+
+    // ✅ ТЕПЕРЬ валидируем данные С координатами
+    const dataToValidate = {
+      ...addressData,
+      lat: coordinates.lat,
+      lng: coordinates.lng
+    };
+    
+    const validation = validateAddressData(dataToValidate);
     if (!validation.isValid) {
       const error = new Error('Ошибки валидации адреса');
       error.validationErrors = validation.errors;
@@ -165,18 +197,6 @@ export const addCustomerAddress = async (userId, addressData) => {
     // Проверка лимита адресов
     if (profile.saved_addresses.length >= 5) {
       throw new Error('Максимальное количество адресов: 5');
-    }
-
-    // Mock геокодирование если координаты не переданы
-    let coordinates = { lat: addressData.lat, lng: addressData.lng };
-    let zone = null;
-    
-    if (!addressData.lat || !addressData.lng) {
-      const geocodeResult = mockGeocodeAddress(addressData.address);
-      coordinates = geocodeResult.coordinates;
-      zone = geocodeResult.zone;
-    } else {
-      zone = determineDeliveryZone(addressData.lat, addressData.lng);
     }
 
     // Проверяем, что адрес в зоне доставки
@@ -218,7 +238,7 @@ export const addCustomerAddress = async (userId, addressData) => {
       validation: {
         is_validated: true,
         validated_at: new Date(),
-        validation_method: 'mock_geocoding'
+        validation_method: 'mock'
       }
     };
 
