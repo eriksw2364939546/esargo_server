@@ -1,5 +1,6 @@
 // services/Courier/courier.service.js - ПОЛНЫЙ ФАЙЛ с шифрованием данных
 import { User, CourierApplication, CourierProfile, Meta } from '../../models/index.js';
+import Product from '../../models/Product.model.js';
 import { cryptoString, decryptString } from '../../utils/crypto.js';
 import { hashString, hashMeta, comparePassword } from '../../utils/hash.js';
 import generatePassword from '../../utils/generatePassword.js';

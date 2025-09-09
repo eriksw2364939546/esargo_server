@@ -42,6 +42,30 @@ const courierProfileSchema = new mongoose.Schema({
     trim: true
   },
   
+  // ИНФОРМАЦИЯ О ТРАНСПОРТЕ
+  vehicle_type: {
+    type: String,
+    required: true,
+    enum: ['bike', 'motorbike', 'car'],
+    index: true
+  },
+  
+  vehicle_info: {
+    brand: { type: String, trim: true },
+    model: { type: String, trim: true },
+    license_plate: { type: String, trim: true },
+    color: { type: String, trim: true }
+  },
+  
+  // ДОКУМЕНТЫ (зашифрованные ссылки)
+  documents: {
+    id_card_url: { type: String },
+    driver_license_url: { type: String },
+    insurance_url: { type: String },
+    vehicle_registration_url: { type: String },
+    bank_rib_url: { type: String }
+  },
+  
   // ГЕОЛОКАЦИЯ (GeoJSON)
   location: {
     type: {
@@ -103,7 +127,7 @@ const courierProfileSchema = new mongoose.Schema({
     maxlength: 500
   },
   
-  // ✅ РАСШИРЕННАЯ СИСТЕМА ЗАРАБОТКА ESARGO
+  // РАСШИРЕННАЯ СИСТЕМА ЗАРАБОТКА ESARGO
   earnings: {
     total_earned: {
       type: Number,
@@ -126,7 +150,7 @@ const courierProfileSchema = new mongoose.Schema({
       min: 0
     },
     
-    // ✅ НОВАЯ ДЕТАЛИЗАЦИЯ заработка по типам
+    // НОВАЯ ДЕТАЛИЗАЦИЯ заработка по типам
     earnings_breakdown: {
       base_delivery_fees: {
         type: Number,
@@ -150,7 +174,7 @@ const courierProfileSchema = new mongoose.Schema({
       }
     },
     
-    // ✅ НОВАЯ СТАТИСТИКА по зонам доставки
+    // НОВАЯ СТАТИСТИКА по зонам доставки
     zone_stats: {
       zone_1_deliveries: {
         type: Number,
@@ -193,7 +217,7 @@ const courierProfileSchema = new mongoose.Schema({
     }
   },
   
-  // ✅ НОВЫЕ ПОЛЯ для предпочтений работы
+  // НОВЫЕ ПОЛЯ для предпочтений работы
   work_preferences: {
     preferred_zones: [{
       type: Number,
@@ -215,7 +239,7 @@ const courierProfileSchema = new mongoose.Schema({
     }
   },
   
-  // РЕЙТИНГ КУРЬЕРА
+  // РЕЙТИНГ КУРЬЕРА (ИСПРАВЛЕНО: rating_distribution вместо rating_breakdown)
   ratings: {
     avg_rating: {
       type: Number,
@@ -226,6 +250,13 @@ const courierProfileSchema = new mongoose.Schema({
     total_ratings: {
       type: Number,
       default: 0
+    },
+    rating_distribution: {
+      five_star: { type: Number, default: 0 },
+      four_star: { type: Number, default: 0 },
+      three_star: { type: Number, default: 0 },
+      two_star: { type: Number, default: 0 },
+      one_star: { type: Number, default: 0 }
     }
   },
   
@@ -301,14 +332,15 @@ courierProfileSchema.index({ location: '2dsphere' });
 courierProfileSchema.index({ application_status: 1 });
 courierProfileSchema.index({ 'ratings.avg_rating': -1 });
 courierProfileSchema.index({ last_activity: -1 });
-courierProfileSchema.index({ 'work_preferences.preferred_zones': 1 }); // ✅ НОВЫЙ ИНДЕКС
+courierProfileSchema.index({ 'work_preferences.preferred_zones': 1 });
+courierProfileSchema.index({ vehicle_type: 1 });
 
 // ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
 courierProfileSchema.virtual('full_name').get(function() {
   return `${this.first_name} ${this.last_name}`;
 });
 
-// ✅ НОВОЕ ВИРТУАЛЬНОЕ ПОЛЕ: Эффективность курьера
+// НОВОЕ ВИРТУАЛЬНОЕ ПОЛЕ: Эффективность курьера
 courierProfileSchema.virtual('efficiency_rating').get(function() {
   if (this.earnings.completed_orders === 0) return 0;
   
@@ -319,7 +351,7 @@ courierProfileSchema.virtual('efficiency_rating').get(function() {
   return Math.round((completionRate * 0.6 + (avgRating / 5) * 0.4) * 100) / 100;
 });
 
-// ✅ НОВОЕ ВИРТУАЛЬНОЕ ПОЛЕ: Предпочитаемые зоны как строка
+// НОВОЕ ВИРТУАЛЬНОЕ ПОЛЕ: Предпочитаемые зоны как строка
 courierProfileSchema.virtual('preferred_zones_text').get(function() {
   if (this.work_preferences.preferred_zones.length === 0) {
     return 'Все зоны';
@@ -329,7 +361,7 @@ courierProfileSchema.virtual('preferred_zones_text').get(function() {
 
 // ================ МЕТОДЫ ЭКЗЕМПЛЯРА ================
 
-// ✅ ОБНОВЛЕННЫЙ МЕТОД добавления заработка с детализацией
+// ОБНОВЛЕННЫЙ МЕТОД добавления заработка с детализацией
 courierProfileSchema.methods.addEarnings = function(orderData) {
   const {
     delivery_fee = 0,
@@ -375,7 +407,7 @@ courierProfileSchema.methods.addEarnings = function(orderData) {
   return this.save();
 };
 
-// ✅ НОВЫЙ МЕТОД: Обработка выплаты курьеру
+// НОВЫЙ МЕТОД: Обработка выплаты курьеру
 courierProfileSchema.methods.processPayout = function(amount) {
   if (amount > this.earnings.pending_payout) {
     throw new Error('Сумма выплаты превышает доступный баланс');
@@ -387,7 +419,7 @@ courierProfileSchema.methods.processPayout = function(amount) {
   return this.save();
 };
 
-// ✅ МЕТОДЫ сброса периодических заработков
+// МЕТОДЫ сброса периодических заработков
 courierProfileSchema.methods.resetWeeklyEarnings = function() {
   this.earnings.weekly_earned = 0;
   return this.save();
@@ -403,12 +435,12 @@ courierProfileSchema.methods.resetDailyEarnings = function() {
   return this.save();
 };
 
-// ✅ НОВЫЙ МЕТОД: Проверка предпочтений работы
+// НОВЫЙ МЕТОД: Проверка предпочтений работы
 courierProfileSchema.methods.prefersZone = function(zoneNumber) {
   return this.work_preferences.preferred_zones.includes(zoneNumber);
 };
 
-// ✅ НОВЫЙ МЕТОД: Проверка готовности принять заказ
+// НОВЫЙ МЕТОД: Проверка готовности принять заказ
 courierProfileSchema.methods.canAcceptOrder = function(orderData) {
   const {
     delivery_distance_km = 0,
@@ -436,8 +468,6 @@ courierProfileSchema.methods.canAcceptOrder = function(orderData) {
   return true;
 };
 
-// СУЩЕСТВУЮЩИЕ МЕТОДЫ (сохраняем)
-
 // Метод для обновления геолокации в формате GeoJSON
 courierProfileSchema.methods.updateLocation = function(lat, lng) {
   this.location = {
@@ -458,7 +488,7 @@ courierProfileSchema.methods.isAvailableForDelivery = function() {
          !this.is_blocked;
 };
 
-// Метод для обновления рейтинга
+// Метод для обновления рейтинга (ИСПРАВЛЕНО: rating_distribution)
 courierProfileSchema.methods.updateRating = function(newRating) {
   const totalRatings = this.ratings.total_ratings;
   const currentAvgRating = this.ratings.avg_rating;
@@ -466,12 +496,21 @@ courierProfileSchema.methods.updateRating = function(newRating) {
   this.ratings.total_ratings += 1;
   this.ratings.avg_rating = ((currentAvgRating * totalRatings) + newRating) / this.ratings.total_ratings;
   
+  // ИСПРАВЛЕНО: Обновляем распределение рейтингов
+  switch (newRating) {
+    case 5: this.ratings.rating_distribution.five_star += 1; break;
+    case 4: this.ratings.rating_distribution.four_star += 1; break;
+    case 3: this.ratings.rating_distribution.three_star += 1; break;
+    case 2: this.ratings.rating_distribution.two_star += 1; break;
+    case 1: this.ratings.rating_distribution.one_star += 1; break;
+  }
+  
   return this.save();
 };
 
 // ================ СТАТИЧЕСКИЕ МЕТОДЫ ================
 
-// ✅ НОВЫЙ МЕТОД: Статистика заработка всех курьеров
+// НОВЫЙ МЕТОД: Статистика заработка всех курьеров
 courierProfileSchema.statics.getEarningsStats = function() {
   return this.aggregate([
     {
@@ -498,7 +537,7 @@ courierProfileSchema.statics.getEarningsStats = function() {
   ]);
 };
 
-// ✅ НОВЫЙ МЕТОД: Найти лучших курьеров по эффективности
+// НОВЫЙ МЕТОД: Найти лучших курьеров по эффективности
 courierProfileSchema.statics.findTopPerformers = function(limit = 10) {
   return this.find({
     is_approved: true,
@@ -513,7 +552,7 @@ courierProfileSchema.statics.findTopPerformers = function(limit = 10) {
   .limit(limit);
 };
 
-// СУЩЕСТВУЮЩИЙ МЕТОД (сохраняем)
+// Поиск доступных курьеров поблизости
 courierProfileSchema.statics.findAvailableNearby = function(lat, lng, radiusKm = 5) {
   return this.find({
     location: {
@@ -538,10 +577,13 @@ courierProfileSchema.set('toJSON', {
   transform: function(doc, ret) {
     // Скрываем чувствительные данные из JSON ответа
     delete ret.phone; // Если это зашифрованное поле
+    delete ret.__v;
     return ret;
   }
 });
 
 courierProfileSchema.set('toObject', { virtuals: true });
 
-export default mongoose.model('CourierProfile', courierProfileSchema);
+// БЕЗОПАСНАЯ РЕГИСТРАЦИЯ МОДЕЛИ
+const CourierProfile = mongoose.models.CourierProfile || mongoose.model('CourierProfile', courierProfileSchema);
+export default CourierProfile;
