@@ -49,6 +49,12 @@ router.post('/',
   createOrder
 );
 
+router.post('/create', 
+  authenticateCustomer, 
+  requireCustomerRole('customer'),
+  createOrder
+);
+
 /**
  * GET /api/orders/my - Получить мои заказы
  * Query: status, limit, offset

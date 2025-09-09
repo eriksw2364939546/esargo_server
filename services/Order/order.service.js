@@ -596,8 +596,9 @@ export const createOrderFromCart = async (customerId, orderData) => {
 
     const { delivery_address, customer_contact, payment_method = 'card', special_requests = '' } = orderData;
 
-    console.log('CREATE ORDER FROM CART:', { customerId, payment_method });
+    console.log('CREATE ORDER FROM CART (UberEats Style):', { customerId, payment_method });
 
+    // Валидация входных данных
     if (!delivery_address || !delivery_address.address) {
       throw new Error('Адрес доставки обязателен');
     }
@@ -610,81 +611,88 @@ export const createOrderFromCart = async (customerId, orderData) => {
       throw new Error('Контактная информация (имя и телефон) обязательна');
     }
 
+    // Получаем корзину
     const cart = await Cart.findActiveCart(customerId).session(session);
     if (!cart || cart.items.length === 0) {
       throw new Error('Корзина пуста или не найдена');
     }
 
-    const minOrderAmount = cart.restaurant_info.min_order_amount || 0;
-    if (cart.pricing.subtotal < minOrderAmount) {
-      throw new Error(`Минимальная сумма заказа: ${minOrderAmount}€`);
-    }
-
+    // Получаем ресторан
     const restaurant = await PartnerProfile.findById(cart.restaurant_id).session(session);
-    if (!restaurant || !restaurant.is_active || !restaurant.is_approved) {
-      throw new Error('Ресторан недоступен для заказов');
+    if (!restaurant) {
+      throw new Error('Ресторан не найден');
     }
 
-    const validation = await validateProductsAvailability(cart.items, session);
-    const { unavailableItems, availableProducts, itemsSnapshot, validationStatus } = validation;
-
-    if (validationStatus === 'critical_issues') {
-      throw new Error(
-        `Все товары в корзине недоступны:\n${unavailableItems.map(item => 
-          `• "${item.title}" - ${getReasonText(item.reason)}`
-        ).join('\n')}`
-      );
+    if (!restaurant.is_active || !restaurant.is_approved) {
+      throw new Error('Ресторан временно недоступен');
     }
 
-    let deliveryData = null;
-    let deliveryFee = parseFloat(cart.pricing?.delivery_fee || 3.50);
-    
-    try {
-      deliveryData = await calculateFullDelivery({
-        restaurant_lat: restaurant.location.coordinates[1],
-        restaurant_lng: restaurant.location.coordinates[0],
-        delivery_lat: delivery_address.lat,
-        delivery_lng: delivery_address.lng,
-        order_total: cart.pricing.subtotal,
-        order_time: new Date()
-      });
-      
-      deliveryFee = deliveryData.delivery_fee;
-      console.log('NEW DELIVERY SYSTEM:', {
-        zone: deliveryData.delivery_zone,
-        fee: deliveryData.delivery_fee,
-        distance: deliveryData.distance_km
-      });
-    } catch (deliveryError) {
-      console.warn('Delivery service failed, using fallback:', deliveryError.message);
-    }
+    // Создаем orderItems из корзины
+    const orderItems = cart.items.map(item => ({
+      product_id: item.product_id,
+      title: item.product_snapshot.title,
+      price: item.item_price,
+      quantity: item.quantity,
+      selected_options: item.selected_options || [],
+      item_total: item.total_item_price,
+      special_requests: item.special_requests || ''
+    }));
 
-    const orderItems = cart.items
-      .filter(cartItem => !unavailableItems.some(unavail => 
-        unavail.product_id.toString() === cartItem.product_id.toString()
-      ))
-      .map(item => ({
-        product_id: item.product_id,
-        title: item.title,
-        price: item.price,
-        quantity: item.quantity,
-        selected_options: item.selected_options || [],
-        item_total: item.item_total,
-        special_requests: item.special_requests || ''
-      }));
+    // Рассчитываем стоимости
+    const subtotal = cart.pricing.subtotal;
+    const deliveryFee = cart.pricing.delivery_fee || 0;
+    const service_fee = 0; // Убрали сервисный сбор
+    const total_price = subtotal + deliveryFee;
 
-    const subtotal = orderItems.reduce((sum, item) => sum + (item.item_total || 0), 0);
-    const service_fee = Math.round(subtotal * 0.05 * 100) / 100;
-    const total_price = subtotal + deliveryFee + service_fee;
-
-    console.log('FINAL PRICING:', {
+    console.log('CALCULATED PRICES:', {
       subtotal,
-      delivery_fee: deliveryFee,
+      deliveryFee,
       service_fee,
-      total_price,
-      delivery_zone: deliveryData?.delivery_zone || 'unknown'
+      total_price
     });
 
+    // Валидация товаров
+    const { availableProducts, unavailableItems, validationStatus } = await validateProductsAvailability(orderItems, session);
+    
+    if (validationStatus === 'critical_issues') {
+      throw new Error('Критические проблемы с доступностью товаров');
+    }
+
+    // Резервируем товары
+    const reservationResults = await reserveProductsStock(orderItems, availableProducts, session);
+
+    // ЭТАП 1: СРАЗУ ОБРАБАТЫВАЕМ ПЛАТЕЖ (как UberEats)
+    let paymentResult;
+    if (payment_method !== 'card') {
+      throw new Error('Доступна только онлайн оплата картой');
+    }
+
+    try {
+      // Деньги СРАЗУ списываются с карты клиента
+      paymentResult = await processOrderPayment({
+        amount: total_price,
+        currency: 'EUR',
+        customer_id: customerId,
+        order_id: null, // Еще нет ID заказа
+        payment_method
+      });
+      
+      if (!paymentResult.success) {
+        throw new Error(paymentResult.details || 'Ошибка обработки платежа');
+      }
+      
+      console.log('PAYMENT SUCCESS - деньги у ESARGO:', {
+        payment_id: paymentResult.payment_id,
+        amount: paymentResult.amount
+      });
+      
+    } catch (paymentError) {
+      console.error('PAYMENT FAILED:', paymentError.message);
+      await returnProductsToStock(orderItems, session);
+      throw new Error(`Ошибка оплаты: ${paymentError.message}`);
+    }
+
+    // ЭТАП 2: СОЗДАЕМ ЗАКАЗ СО СТАТУСОМ "PENDING" (ожидает ресторан)
     const orderNumber = Order.generateOrderNumber();
     const estimatedDeliveryTime = await calculateEstimatedDeliveryTime(
       delivery_address,
@@ -692,13 +700,37 @@ export const createOrderFromCart = async (customerId, orderData) => {
       restaurant.delivery_info
     );
 
+    // Рассчитываем данные доставки
+    let deliveryData = null;
+    try {
+      deliveryData = await calculateFullDelivery({
+        restaurant_lat: restaurant.location.coordinates[1],
+        restaurant_lng: restaurant.location.coordinates[0],
+        delivery_lat: delivery_address.lat,
+        delivery_lng: delivery_address.lng,
+        order_total: subtotal,
+        order_time: new Date()
+      });
+    } catch (deliveryError) {
+      console.warn('Delivery calculation failed:', deliveryError.message);
+    }
+
     const newOrder = new Order({
       order_number: orderNumber,
       customer_id: customerId,
       partner_id: restaurant._id,
       items: orderItems,
       
-      items_snapshot: itemsSnapshot,
+      items_snapshot: orderItems.map(item => ({
+        product_id: item.product_id,
+        availability_at_order: {
+          is_active: true,
+          is_available: true,
+          stock_quantity: 999
+        },
+        captured_at: new Date()
+      })),
+      
       availability_validation: {
         validated_at: new Date(),
         unavailable_items: unavailableItems,
@@ -707,14 +739,14 @@ export const createOrderFromCart = async (customerId, orderData) => {
 
       subtotal,
       delivery_fee: deliveryFee,
-      service_fee,
+      service_fee: 0,
       total_price,
       
       platform_commission: deliveryData ? deliveryData.platform_commission : Math.round(subtotal * 0.10 * 100) / 100,
       delivery_zone: deliveryData ? deliveryData.delivery_zone : null,
       delivery_distance_km: deliveryData ? deliveryData.distance_km : null,
       peak_hour_surcharge: deliveryData ? (deliveryData.peak_hour_info?.surcharge || 0) : 0,
-      courier_earnings: deliveryData ? (deliveryData.courier_earnings?.total_earnings || 0) : 0,
+      courier_earnings: deliveryData ? (deliveryData.courier_earnings?.total_earnings || deliveryFee) : deliveryFee,
       
       restaurant_coordinates: {
         lat: restaurant.location.coordinates[1],
@@ -732,28 +764,12 @@ export const createOrderFromCart = async (customerId, orderData) => {
       special_requests,
       estimated_delivery_time: estimatedDeliveryTime,
       
+      // ВАЖНО: Статус "pending" = ожидает подтверждения ресторана
       status: 'pending',
-      payment_status: 'pending'
-    });
-
-    await newOrder.save({ session });
-
-    const reservationResults = await reserveProductsStock(orderItems, availableProducts, session);
-
-    let paymentResult;
-    if (payment_method !== 'card') {
-      throw new Error('Доступна только онлайн оплата картой');
-    }
-
-    try {
-      paymentResult = await processPayment(newOrder, { session });
       
-      if (!paymentResult.success) {
-        throw new Error(paymentResult.details || 'Ошибка обработки платежа');
-      }
-      
-      newOrder.payment_status = 'completed';
-      newOrder.payment_details = {
+      // ВАЖНО: Платеж уже обработан, деньги у ESARGO
+      payment_status: 'completed',
+      payment_details: {
         payment_id: paymentResult.payment_id,
         transaction_id: paymentResult.transaction_id,
         payment_processor: 'esargo_payments',
@@ -764,21 +780,12 @@ export const createOrderFromCart = async (customerId, orderData) => {
           receipt_url: paymentResult.receipt_url,
           card_last_digits: paymentResult.card_last_digits
         }
-      };
-      
-      console.log('PAYMENT SUCCESS:', {
-        payment_id: paymentResult.payment_id,
-        amount: paymentResult.amount
-      });
-      
-    } catch (paymentError) {
-      console.error('PAYMENT FAILED:', paymentError.message);
-      await returnProductsToStock(orderItems, session);
-      throw new Error(`Ошибка оплаты: ${paymentError.message}`);
-    }
+      }
+    });
 
     await newOrder.save({ session });
 
+    // ЭТАП 3: СОЗДАЕМ ТРАНЗАКЦИИ В СТАТУСЕ "PENDING"
     let transactionsResult = null;
     if (deliveryData) {
       try {
@@ -790,82 +797,51 @@ export const createOrderFromCart = async (customerId, orderData) => {
           courier_id: null,
           subtotal,
           total_price,
-          payment_status: newOrder.payment_status
+          payment_status: 'completed'
         }, deliveryData);
         
-        console.log('TRANSACTIONS CREATED:', {
+        console.log('TRANSACTIONS CREATED (PENDING):', {
           success: transactionsResult.success,
-          transactions_count: transactionsResult.transactions?.length || 0
+          platform_holds: total_price
         });
+        
       } catch (transactionError) {
-        console.warn('Transaction creation failed (non-critical):', transactionError.message);
+        console.warn('Transaction creation failed:', transactionError.message);
       }
     }
 
+    // ОЧИЩАЕМ КОРЗИНУ
     await cart.convertToOrder();
-    await cart.save({ session });
-
-    await PartnerProfile.findByIdAndUpdate(
-      cart.restaurant_id,
-      { 
-        $inc: { 
-          'ratings.total_orders': 1,
-          'business_stats.total_orders': 1
-        }
-      },
-      { session }
-    );
 
     await session.commitTransaction();
 
-    console.log('ORDER CREATED SUCCESS:', {
-      order_id: newOrder._id,
-      order_number: orderNumber,
-      total_price: newOrder.total_price,
-      delivery_zone: newOrder.delivery_zone,
-      platform_commission: newOrder.platform_commission,
-      unavailable_items_count: unavailableItems.length
+    console.log('ORDER CREATED (UberEats Style):', {
+      order_number: newOrder.order_number,
+      status: 'pending',
+      payment_status: 'completed',
+      total_amount: total_price,
+      message: 'Оплата прошла, ожидаем подтверждение ресторана'
     });
 
-    const response = {
+    return {
+      success: true,
       order: newOrder,
-      payment: paymentResult,
-      estimatedDelivery: estimatedDeliveryTime,
-      reservation_info: reservationResults,
-      
-      delivery_info: deliveryData ? {
-        zone: deliveryData.delivery_zone,
-        distance_km: deliveryData.distance_km,
-        estimated_minutes: deliveryData.estimated_delivery_minutes,
-        peak_hour: deliveryData.peak_hour_info?.is_peak_hour || false,
-        delivery_system: 'ESARGO_ZONES'
-      } : null,
-      
-      financial_info: transactionsResult ? {
-        platform_commission: newOrder.platform_commission,
-        courier_earnings: newOrder.courier_earnings,
-        transactions_created: transactionsResult.success
+      payment_info: {
+        amount_charged: total_price,
+        payment_id: paymentResult.payment_id,
+        status: 'charged',
+        message: 'Средства списаны с карты'
+      },
+      order_flow: {
+        current_step: 'waiting_restaurant_confirmation',
+        next_step: 'Ресторан рассмотрит заказ в течение 5-10 минут',
+        cancellation_policy: 'Автоматический возврат при отклонении рестораном'
+      },
+      financial_processing: transactionsResult ? {
+        success: transactionsResult.success,
+        transactions_created: transactionsResult.transactions ? transactionsResult.transactions.length : 0
       } : null
     };
-
-    if (unavailableItems.length > 0) {
-      response.warnings = {
-        message: `${unavailableItems.length} товар(ов) были исключены из заказа`,
-        unavailable_items: unavailableItems.map(item => ({
-          title: item.title,
-          reason: getReasonText(item.reason),
-          requested_quantity: item.requested_quantity,
-          available_quantity: item.available_quantity || 0
-        })),
-        price_adjustment: {
-          original_total: cart.pricing.total_price,
-          new_total: newOrder.total_price,
-          saved_amount: Math.round((cart.pricing.total_price - newOrder.total_price) * 100) / 100
-        }
-      };
-    }
-
-    return response;
 
   } catch (error) {
     await session.abortTransaction();
@@ -1134,40 +1110,36 @@ export const acceptRestaurantOrder = async (orderId, partnerId, acceptanceData =
   try {
     const { estimated_preparation_time = 15 } = acceptanceData;
 
-    console.log('ACCEPT RESTAURANT ORDER:', { orderId, partnerId, estimated_preparation_time });
+    console.log('✅ RESTAURANT ACCEPTS ORDER:', { orderId, partnerId });
 
     const order = await Order.findById(orderId);
 
-    if (!order) {
-      throw new Error('Заказ не найден');
-    }
-
-    if (order.partner_id.toString() !== partnerId.toString()) {
-      throw new Error('Нет доступа к этому заказу');
+    if (!order || order.partner_id.toString() !== partnerId.toString()) {
+      throw new Error('Заказ не найден или нет доступа');
     }
 
     if (order.status !== 'pending') {
       throw new Error('Заказ нельзя принять - неверный статус');
     }
 
-    await order.addStatusHistory('accepted', partnerId, 'partner', `Заказ принят. Время приготовления: ${estimated_preparation_time} мин`);
+    // ✅ МЕНЯЕМ СТАТУС: pending → accepted
+    await order.addStatusHistory('accepted', partnerId, 'partner', 
+      `Заказ принят. Время приготовления: ${estimated_preparation_time} мин`);
 
     const newEstimatedTime = new Date(Date.now() + estimated_preparation_time * 60 * 1000);
     order.estimated_delivery_time = newEstimatedTime;
     await order.save();
 
-    console.log('ORDER ACCEPTED SUCCESS:', {
+    console.log('✅ ORDER ACCEPTED:', {
       order_number: order.order_number,
-      estimated_preparation_time,
-      new_estimated_delivery: newEstimatedTime
+      status: 'accepted',
+      message: 'Начинайте готовить - деньги уже у ESARGO'
     });
 
     return {
       order_id: order._id,
       order_number: order.order_number,
       status: order.status,
-      accepted_at: order.accepted_at,
-      estimated_delivery_time: order.estimated_delivery_time,
       message: 'Заказ принят! Начинайте приготовление.'
     };
 
@@ -1185,24 +1157,19 @@ export const rejectRestaurantOrder = async (orderId, partnerId, rejectionData) =
     
     const { reason, details = '' } = rejectionData;
 
-    console.log('REJECT RESTAURANT ORDER:', { orderId, partnerId, reason });
+    console.log('❌ RESTAURANT REJECTS ORDER:', { orderId, reason });
 
     const order = await Order.findById(orderId).session(session);
 
-    if (!order) {
-      throw new Error('Заказ не найден');
-    }
-
-    if (order.partner_id.toString() !== partnerId.toString()) {
-      throw new Error('Нет доступа к этому заказу');
+    if (!order || order.partner_id.toString() !== partnerId.toString()) {
+      throw new Error('Заказ не найден или нет доступа');
     }
 
     if (order.status !== 'pending') {
       throw new Error('Заказ нельзя отклонить - неверный статус');
     }
 
-    const returnResults = await returnProductsToStock(order.items, session);
-
+    // ✅ ОТМЕНЯЕМ ЗАКАЗ
     await order.addStatusHistory('cancelled', partnerId, 'partner', `Заказ отклонен: ${reason}`);
     order.cancellation = {
       reason,
@@ -1210,35 +1177,53 @@ export const rejectRestaurantOrder = async (orderId, partnerId, rejectionData) =
       user_role: 'partner',
       details
     };
-    await order.save({ session });
 
+    // ✅ ВОЗВРАЩАЕМ ТОВАРЫ НА СКЛАД
+    const returnResults = await returnProductsToStock(order.items, session);
+
+    // ✅ АВТОМАТИЧЕСКИЙ ВОЗВРАТ ДЕНЕГ КЛИЕНТУ (как UberEats)
     if (order.payment_status === 'completed' && order.payment_method === 'card') {
-      const refundResult = await processRefund(order);
-      order.payment_status = 'refunded';
-      order.refund_details = refundResult;
-      await order.save({ session });
+      try {
+        const refundResult = await processOrderRefund({
+          original_payment_id: order.payment_details.payment_id,
+          amount: order.total_price,
+          order_id: order._id,
+          reason: `Ресторан отклонил заказ: ${reason}`
+        });
+
+        order.payment_status = 'refunded';
+        order.refund_details = {
+          refund_id: refundResult.refund_id,
+          refunded_amount: refundResult.amount,
+          refund_reason: reason,
+          refunded_at: new Date(),
+          estimated_arrival: '3-5 рабочих дней'
+        };
+
+        console.log('💸 AUTO REFUND PROCESSED:', {
+          refund_id: refundResult.refund_id,
+          amount: refundResult.amount
+        });
+
+      } catch (refundError) {
+        console.error('🚨 REFUND FAILED:', refundError.message);
+        order.refund_error = refundError.message;
+      }
     }
 
+    await order.save({ session });
     await session.commitTransaction();
-
-    console.log('ORDER REJECTED SUCCESS:', {
-      order_number: order.order_number,
-      reason,
-      items_returned_to_stock: returnResults.length
-    });
 
     return {
       order_id: order._id,
       order_number: order.order_number,
-      status: order.status,
-      cancelled_at: order.cancelled_at,
-      message: 'Заказ отклонен. Клиент получит уведомление.',
-      stock_return_info: returnResults
+      status: 'cancelled',
+      message: 'Заказ отклонен. Клиенту отправлен автоматический возврат.',
+      refund_info: order.refund_details
     };
 
   } catch (error) {
     await session.abortTransaction();
-    console.error('REJECT ORDER ERROR:', error);
     throw error;
   } finally {
     session.endSession();
@@ -1407,60 +1392,59 @@ export const markOrderPickedUpByCourier = async (orderId, courierId) => {
 };
 
 export const markOrderDeliveredByCourier = async (orderId, courierId) => {
+  const session = await mongoose.startSession();
+  
   try {
-    console.log('MARK ORDER DELIVERED:', { orderId, courierId });
+    await session.startTransaction();
 
-    const order = await Order.findById(orderId);
+    console.log('🚚 COURIER DELIVERED ORDER:', { orderId, courierId });
 
-    if (!order) {
-      throw new Error('Заказ не найден');
-    }
-
-    if (!order.courier_id || order.courier_id.toString() !== courierId.toString()) {
-      throw new Error('Заказ не назначен этому курьеру');
+    const order = await Order.findById(orderId).session(session);
+    
+    if (!order || order.courier_id.toString() !== courierId.toString()) {
+      throw new Error('Заказ не найден или нет доступа');
     }
 
     if (order.status !== 'on_the_way') {
-      throw new Error('Заказ не находится в пути');
+      throw new Error('Заказ нельзя пометить доставленным');
     }
 
+    // ✅ ДОСТАВЛЕНО
     await order.addStatusHistory('delivered', courierId, 'courier', 'Заказ доставлен клиенту');
+    order.delivered_at = new Date();
+    await order.save({ session });
 
+    // ✅ ТЕПЕРЬ РАСПРЕДЕЛЯЕМ ДЕНЬГИ МЕЖДУ УЧАСТНИКАМИ
     let transactionsResult = null;
     try {
       transactionsResult = await integrateWithOrderDelivery(order._id, courierId);
-      console.log('DELIVERY TRANSACTIONS PROCESSED:', {
-        success: transactionsResult.success,
-        processed_count: transactionsResult.processed?.length || 0
+      
+      console.log('💰 MONEY DISTRIBUTED:', {
+        partner_gets: Math.round(order.subtotal * 0.9 * 100) / 100,
+        courier_gets: order.delivery_fee,
+        esargo_gets: Math.round(order.subtotal * 0.1 * 100) / 100
       });
-    } catch (transactionError) {
-      console.warn('Transaction processing failed (non-critical):', transactionError.message);
+
+    } catch (financeError) {
+      console.error('⚠️ Finance distribution failed:', financeError.message);
     }
 
-    console.log('ORDER DELIVERED SUCCESS:', {
-      order_number: order.order_number,
-      delivered_at: order.delivered_at,
-      delivery_time: order.actual_delivery_time,
-      transactions_processed: transactionsResult?.success || false
-    });
+    await session.commitTransaction();
 
     return {
       order_id: order._id,
       order_number: order.order_number,
-      status: order.status,
+      status: 'delivered',
       delivered_at: order.delivered_at,
-      actual_delivery_time: order.actual_delivery_time,
-      message: 'Заказ доставлен! Спасибо за работу.',
-      
-      financial_processing: transactionsResult ? {
-        success: transactionsResult.success,
-        processed_transactions: transactionsResult.processed || []
-      } : null
+      message: 'Заказ доставлен! Средства распределены между участниками.',
+      financial_processing: transactionsResult
     };
 
   } catch (error) {
-    console.error('MARK ORDER DELIVERED ERROR:', error);
+    await session.abortTransaction();
     throw error;
+  } finally {
+    session.endSession();
   }
 };
 

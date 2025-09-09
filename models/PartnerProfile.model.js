@@ -322,10 +322,16 @@ partnerProfileSchema.index({ content_status: 1, approval_status: 1 });
 
 // ВИРТУАЛЬНЫЕ ПОЛЯ
 partnerProfileSchema.virtual('total_gallery_count').get(function() {
+  if (!this.gallery || !Array.isArray(this.gallery)) {
+    return 0;
+  }
   return this.gallery.length;
 });
 
 partnerProfileSchema.virtual('active_zones_count').get(function() {
+  if (!this.available_delivery_zones || !Array.isArray(this.available_delivery_zones)) {
+    return 0;
+  }
   return this.available_delivery_zones.filter(zone => zone.is_active).length;
 });
 

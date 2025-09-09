@@ -168,15 +168,14 @@ const createOrder = async (req, res) => {
     }
 
     // ✅ СОЗДАНИЕ ЗАКАЗА с обновленными данными
-    const orderData = {
-      customer_id: user._id,
-      delivery_address: finalDeliveryAddress,
-      customer_contact,
-      payment_method,
-      special_requests: special_requests.trim()
-    };
+const orderData = {
+  delivery_address: finalDeliveryAddress,
+  customer_contact,
+  payment_method,
+  special_requests: special_requests.trim()
+};
 
-    const result = await createOrderFromCart(orderData);
+const result = await createOrderFromCart(user._id, orderData);
 
     // ✅ НОВОЕ: Обновляем статистику использования адреса (если сохраненный)
     if (saved_address_id && result.success) {
