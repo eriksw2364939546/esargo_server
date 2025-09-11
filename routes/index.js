@@ -16,6 +16,8 @@ import publicRoutes from './Public.route.js';      // ИСПРАВЛЕНО: уб
 import cartRoutes from './Cart.route.js';          // Корзина покупок
 import orderRoutes from './Order.route.js';        // Заказы
 
+import fileUploadRoutes from './FileUpload.route.js';
+
 // Health check endpoint
 router.get('/health', (req, res) => {
     res.json({
@@ -56,6 +58,11 @@ router.use('/couriers', courierRoutes);
 router.use('/admin', adminRoutes);
 router.use('/admin/partners', adminPartnerRoutes);
 router.use('/admin/couriers', adminCourierRoutes);
+
+
+//======================IMAGES================================
+
+router.use('/uploads', fileUploadRoutes);
 
 // ================ СИСТЕМНАЯ ИНФОРМАЦИЯ ================
 router.get('/', (req, res) => {

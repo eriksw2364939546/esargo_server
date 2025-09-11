@@ -1,4 +1,4 @@
-// models/CourierProfile.model.js - ПОЛНАЯ МОДЕЛЬ КУРЬЕРА ESARGO
+// models/CourierProfile.model.js - ПОЛНАЯ МОДЕЛЬ КУРЬЕРА ESARGO с исправлениями
 import mongoose from 'mongoose';
 
 const courierProfileSchema = new mongoose.Schema({
@@ -37,7 +37,8 @@ const courierProfileSchema = new mongoose.Schema({
     trim: true
   },
   
-  profile_image_url: {
+  // ✅ ИСПРАВЛЕНО: profile_image_url → avatar_url (для соответствия FileUpload системе)
+  avatar_url: {
     type: String,
     trim: true
   },
@@ -57,8 +58,8 @@ const courierProfileSchema = new mongoose.Schema({
     color: { type: String, trim: true }
   },
   
-  // ДОКУМЕНТЫ (зашифрованные ссылки)
-  documents: {
+  // ✅ ИСПРАВЛЕНО: documents → registration_documents (документы из заявки)
+  registration_documents: {
     id_card_url: { type: String },
     driver_license_url: { type: String },
     insurance_url: { type: String },
@@ -66,16 +67,50 @@ const courierProfileSchema = new mongoose.Schema({
     bank_rib_url: { type: String }
   },
   
-  // ГЕОЛОКАЦИЯ (GeoJSON)
+  // ✅ ДОБАВЛЕНО: additional_documents для новой файловой системы
+  additional_documents: [{
+    type: {
+      type: String,
+      enum: ['identity_document', 'driving_license', 'vehicle_registration', 'insurance', 'bank_details', 'other'],
+      required: true
+    },
+    url: {
+      type: String,
+      required: true
+    },
+    filename: String,
+    original_name: String,
+    size: Number,
+    uploaded_at: {
+      type: Date,
+      default: Date.now
+    },
+    status: {
+      type: String,
+      enum: ['pending_review', 'approved', 'rejected', 'needs_update'],
+      default: 'pending_review'
+    },
+    admin_notes: String,
+    document_category: String
+  }],
+  
+  // ✅ ДОБАВЛЕНО: documents_status для отслеживания статуса дополнительных документов
+  documents_status: {
+    type: String,
+    enum: ['not_required', 'incomplete', 'complete', 'needs_update', 'pending_review'],
+    default: 'not_required'
+  },
+  
+  // ГЕОЛОКАЦИЯ (GeoJSON) - ✅ ИСПРАВЛЕНО: убрана обязательность
   location: {
     type: {
       type: String,
       enum: ['Point'],
-      required: true
+      required: false  // ✅ НЕ обязательно при создании
     },
     coordinates: {
       type: [Number],
-      required: true,
+      required: false,  // ✅ НЕ обязательно при создании
       index: '2dsphere'
     }
   },
@@ -121,13 +156,22 @@ const courierProfileSchema = new mongoose.Schema({
     type: Date
   },
   
-  rejection_reason: {
-    type: String,
-    trim: true,
-    maxlength: 500
+  is_blocked: {
+    type: Boolean,
+    default: false,
+    index: true
   },
   
-  // РАСШИРЕННАЯ СИСТЕМА ЗАРАБОТКА ESARGO
+  blocked_reason: {
+    type: String,
+    trim: true
+  },
+  
+  blocked_until: {
+    type: Date
+  },
+  
+  // РАБОТА И ЗАРАБОТОК
   earnings: {
     total_earned: {
       type: Number,
@@ -149,75 +193,76 @@ const courierProfileSchema = new mongoose.Schema({
       default: 0,
       min: 0
     },
-    
-    // НОВАЯ ДЕТАЛИЗАЦИЯ заработка по типам
     earnings_breakdown: {
       base_delivery_fees: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
       peak_hour_bonuses: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
       distance_bonuses: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
       tips_received: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
       special_bonuses: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       }
     },
-    
-    // НОВАЯ СТАТИСТИКА по зонам доставки
     zone_stats: {
       zone_1_deliveries: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
       zone_1_earnings: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
       zone_2_deliveries: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       },
       zone_2_earnings: {
         type: Number,
-        default: 0
+        default: 0,
+        min: 0
       }
     },
-    
     completed_orders: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     cancelled_orders: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
-    
-    // Статистика платежей
     last_payout_date: {
       type: Date
     },
-    last_earnings_update: {
-      type: Date,
-      default: Date.now
-    },
     pending_payout: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     }
   },
   
-  // НОВЫЕ ПОЛЯ для предпочтений работы
+  // ПРЕДПОЧТЕНИЯ В РАБОТЕ
   work_preferences: {
     preferred_zones: [{
       type: Number,
@@ -225,9 +270,9 @@ const courierProfileSchema = new mongoose.Schema({
     }],
     max_distance_per_delivery: {
       type: Number,
-      default: 10, // максимум 10км
+      default: 15,
       min: 1,
-      max: 10
+      max: 50
     },
     peak_hours_only: {
       type: Boolean,
@@ -235,11 +280,12 @@ const courierProfileSchema = new mongoose.Schema({
     },
     min_order_value: {
       type: Number,
-      default: 0 // минимальная стоимость заказа для принятия
+      default: 0,
+      min: 0
     }
   },
   
-  // РЕЙТИНГ КУРЬЕРА (ИСПРАВЛЕНО: rating_distribution вместо rating_breakdown)
+  // РЕЙТИНГИ И ОТЗЫВЫ
   ratings: {
     avg_rating: {
       type: Number,
@@ -249,72 +295,76 @@ const courierProfileSchema = new mongoose.Schema({
     },
     total_ratings: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
     rating_distribution: {
-      five_star: { type: Number, default: 0 },
-      four_star: { type: Number, default: 0 },
-      three_star: { type: Number, default: 0 },
-      two_star: { type: Number, default: 0 },
-      one_star: { type: Number, default: 0 }
+      five_star: { type: Number, default: 0, min: 0 },
+      four_star: { type: Number, default: 0, min: 0 },
+      three_star: { type: Number, default: 0, min: 0 },
+      two_star: { type: Number, default: 0, min: 0 },
+      one_star: { type: Number, default: 0, min: 0 }
     }
   },
   
-  // СТАТИСТИКА РАБОТЫ
+  // АКТИВНОСТЬ И СТАТИСТИКА
   work_stats: {
-    total_distance_km: {
+    hours_worked_today: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
+    },
+    hours_worked_week: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    hours_worked_month: {
+      type: Number,
+      default: 0,
+      min: 0
     },
     avg_delivery_time: {
       type: Number,
-      default: 0 // в минутах
+      default: 0,
+      min: 0
     },
-    best_delivery_time: {
-      type: Number,
-      default: 0 // в минутах
+    last_delivery_at: {
+      type: Date
     },
-    total_working_hours: {
+    total_distance_km: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     }
   },
   
-  // НАСТРОЙКИ УВЕДОМЛЕНИЙ
-  notifications: {
+  // УВЕДОМЛЕНИЯ
+  notification_settings: {
     new_orders: {
       type: Boolean,
       default: true
     },
-    order_updates: {
+    promotions: {
       type: Boolean,
-      default: true
+      default: false
     },
-    payment_received: {
+    system_updates: {
       type: Boolean,
       default: true
     }
   },
   
-  // ИНФОРМАЦИЯ О ПОСЛЕДНЕЙ АКТИВНОСТИ
+  // ДОПОЛНИТЕЛЬНЫЕ ДАННЫЕ
+  notes: {
+    type: String,
+    trim: true,
+    maxlength: 500
+  },
+  
   last_activity: {
     type: Date,
     default: Date.now
-  },
-  last_order_at: {
-    type: Date
-  },
-  
-  // ЗАБЛОКИРОВАН ЛИ КУРЬЕР
-  is_blocked: {
-    type: Boolean,
-    default: false
-  },
-  blocked_reason: {
-    type: String
-  },
-  blocked_until: {
-    type: Date
   }
 }, {
   timestamps: true
@@ -322,22 +372,24 @@ const courierProfileSchema = new mongoose.Schema({
 
 // ================ ИНДЕКСЫ ================
 courierProfileSchema.index({ user_id: 1 });
-courierProfileSchema.index({ 
-  is_available: 1, 
-  is_approved: 1, 
-  is_online: 1,
-  is_blocked: 1 
-});
-courierProfileSchema.index({ location: '2dsphere' });
-courierProfileSchema.index({ application_status: 1 });
-courierProfileSchema.index({ 'ratings.avg_rating': -1 });
-courierProfileSchema.index({ last_activity: -1 });
-courierProfileSchema.index({ 'work_preferences.preferred_zones': 1 });
+courierProfileSchema.index({ is_available: 1, is_online: 1 });
+courierProfileSchema.index({ is_approved: 1, is_active: 1 });
 courierProfileSchema.index({ vehicle_type: 1 });
 
 // ================ ВИРТУАЛЬНЫЕ ПОЛЯ ================
 courierProfileSchema.virtual('full_name').get(function() {
   return `${this.first_name} ${this.last_name}`;
+});
+
+// ✅ ДОБАВЛЕНО: Виртуальное поле для подсчета дополнительных документов
+courierProfileSchema.virtual('additional_documents_count').get(function() {
+  return this.additional_documents ? this.additional_documents.length : 0;
+});
+
+// ✅ ДОБАВЛЕНО: Виртуальное поле для подсчета одобренных дополнительных документов
+courierProfileSchema.virtual('approved_additional_documents_count').get(function() {
+  return this.additional_documents ? 
+    this.additional_documents.filter(doc => doc.status === 'approved').length : 0;
 });
 
 // НОВОЕ ВИРТУАЛЬНОЕ ПОЛЕ: Эффективность курьера
@@ -388,92 +440,66 @@ courierProfileSchema.methods.addEarnings = function(orderData) {
   this.earnings.earnings_breakdown.special_bonuses += bonus_amount;
   
   // Если есть бонус за расстояние (для длинных доставок)
-  const distanceBonus = delivery_distance_km > 7 ? 1 : 0;
-  this.earnings.earnings_breakdown.distance_bonuses += distanceBonus;
+  const distanceBonus = delivery_distance_km > 7 ? 
+    Math.round((delivery_distance_km - 7) * 0.5 * 100) / 100 : 0;
+  
+  if (distanceBonus > 0) {
+    this.earnings.earnings_breakdown.distance_bonuses += distanceBonus;
+  }
   
   // Обновляем статистику по зонам
   if (delivery_zone === 1) {
     this.earnings.zone_stats.zone_1_deliveries += 1;
-    this.earnings.zone_stats.zone_1_earnings += totalEarning;
+    this.earnings.zone_stats.zone_1_earnings += totalEarning + distanceBonus;
   } else if (delivery_zone === 2) {
     this.earnings.zone_stats.zone_2_deliveries += 1;
-    this.earnings.zone_stats.zone_2_earnings += totalEarning;
+    this.earnings.zone_stats.zone_2_earnings += totalEarning + distanceBonus;
   }
   
-  this.earnings.last_earnings_update = new Date();
-  this.earnings.pending_payout += totalEarning;
-  this.last_order_at = new Date();
+  this.last_activity = new Date();
   
   return this.save();
 };
 
-// НОВЫЙ МЕТОД: Обработка выплаты курьеру
-courierProfileSchema.methods.processPayout = function(amount) {
-  if (amount > this.earnings.pending_payout) {
-    throw new Error('Сумма выплаты превышает доступный баланс');
-  }
+// Метод обработки выплаты
+courierProfileSchema.methods.processPayout = function() {
+  const payoutAmount = this.earnings.pending_payout;
   
-  this.earnings.pending_payout -= amount;
+  this.earnings.pending_payout = 0;
   this.earnings.last_payout_date = new Date();
   
-  return this.save();
-};
-
-// МЕТОДЫ сброса периодических заработков
-courierProfileSchema.methods.resetWeeklyEarnings = function() {
+  // Обнуляем недельный заработок
   this.earnings.weekly_earned = 0;
+  
   return this.save();
 };
 
-courierProfileSchema.methods.resetMonthlyEarnings = function() {
-  this.earnings.monthly_earned = 0;
-  return this.save();
-};
-
-courierProfileSchema.methods.resetDailyEarnings = function() {
-  this.earnings.daily_earned = 0;
-  return this.save();
-};
-
-// НОВЫЙ МЕТОД: Проверка предпочтений работы
-courierProfileSchema.methods.prefersZone = function(zoneNumber) {
-  return this.work_preferences.preferred_zones.includes(zoneNumber);
-};
-
-// НОВЫЙ МЕТОД: Проверка готовности принять заказ
-courierProfileSchema.methods.canAcceptOrder = function(orderData) {
-  const {
-    delivery_distance_km = 0,
-    delivery_zone = 1,
-    subtotal = 0
-  } = orderData;
+// Метод проверки может ли курьер принимать заказы
+courierProfileSchema.methods.canAcceptOrder = function(orderZone) {
+  const isAvailable = this.is_available && this.is_online && this.is_approved && this.is_active && !this.is_blocked;
   
-  // Проверка максимального расстояния
-  if (delivery_distance_km > this.work_preferences.max_distance_per_delivery) {
-    return false;
-  }
+  if (!isAvailable) return false;
   
-  // Проверка минимальной стоимости заказа
-  if (subtotal < this.work_preferences.min_order_value) {
-    return false;
-  }
-  
-  // Проверка предпочитаемых зон (если настроено)
+  // Проверяем предпочтения по зонам
   if (this.work_preferences.preferred_zones.length > 0) {
-    if (!this.work_preferences.preferred_zones.includes(delivery_zone)) {
-      return false;
-    }
+    return this.work_preferences.preferred_zones.includes(orderZone);
   }
   
   return true;
 };
 
-// Метод для обновления геолокации в формате GeoJSON
-courierProfileSchema.methods.updateLocation = function(lat, lng) {
-  this.location = {
-    type: 'Point',
-    coordinates: [lng, lat], // [longitude, latitude] - порядок важен для MongoDB!
-  };
+// Метод обновления статуса работы
+courierProfileSchema.methods.updateWorkStatus = function(isAvailable, location = null) {
+  this.is_available = isAvailable;
+  this.is_online = isAvailable;
+  
+  if (location) {
+    this.location = {
+      type: 'Point',
+      coordinates: [location.lng, location.lat]
+    };
+  }
+  
   this.last_activity = new Date();
   
   return this.save();
@@ -542,41 +568,65 @@ courierProfileSchema.statics.findTopPerformers = function(limit = 10) {
   return this.find({
     is_approved: true,
     is_active: true,
-    'earnings.completed_orders': { $gte: 10 }, // Минимум 10 заказов
-    'ratings.total_ratings': { $gte: 5 } // Минимум 5 оценок
+    'earnings.completed_orders': { $gte: 10 }
   })
   .sort({ 
-    'ratings.avg_rating': -1,
+    'ratings.avg_rating': -1, 
     'earnings.completed_orders': -1 
   })
   .limit(limit);
 };
 
-// Поиск доступных курьеров поблизости
-courierProfileSchema.statics.findAvailableNearby = function(lat, lng, radiusKm = 5) {
-  return this.find({
+// Поиск доступных курьеров
+courierProfileSchema.statics.findAvailable = function(zone = null) {
+  const query = {
+    is_available: true,
+    is_online: true,
+    is_approved: true,
+    is_active: true,
+    is_blocked: false
+  };
+  
+  if (zone) {
+    query.$or = [
+      { 'work_preferences.preferred_zones': { $size: 0 } },
+      { 'work_preferences.preferred_zones': zone }
+    ];
+  }
+  
+  return this.find(query);
+};
+
+// Поиск ближайших курьеров
+courierProfileSchema.statics.findNearby = function(lat, lng, radiusKm = 10, zone = null) {
+  const query = {
     location: {
       $near: {
-        $geometry: {
-          type: 'Point',
-          coordinates: [lng, lat] // [longitude, latitude]
-        },
-        $maxDistance: radiusKm * 1000 // конвертируем км в метры
+        $geometry: { type: 'Point', coordinates: [lng, lat] },
+        $maxDistance: radiusKm * 1000
       }
     },
     is_available: true,
-    is_approved: true,
     is_online: true,
+    is_approved: true,
+    is_active: true,
     is_blocked: false
-  }).sort({ 'ratings.avg_rating': -1 });
+  };
+  
+  if (zone) {
+    query.$or = [
+      { 'work_preferences.preferred_zones': { $size: 0 } },
+      { 'work_preferences.preferred_zones': zone }
+    ];
+  }
+  
+  return this.find(query).sort({ 'ratings.avg_rating': -1 });
 };
 
-// ================ НАСТРОЙКИ JSON ================
+// НАСТРОЙКИ JSON
 courierProfileSchema.set('toJSON', { 
   virtuals: true,
   transform: function(doc, ret) {
-    // Скрываем чувствительные данные из JSON ответа
-    delete ret.phone; // Если это зашифрованное поле
     delete ret.__v;
     return ret;
   }

@@ -442,7 +442,7 @@ courierApplicationSchema.methods.getAge = function() {
   return age;
 };
 
-// Создание CourierProfile после одобрения
+// Заменить ТОЛЬКО этот метод в существующем файле CourierApplication.model.js
 courierApplicationSchema.methods.createCourierProfile = async function() {
   if (this.status !== 'approved') {
     throw new Error('Заявка должна быть одобрена');
@@ -450,13 +450,66 @@ courierApplicationSchema.methods.createCourierProfile = async function() {
   
   const CourierProfile = mongoose.model('CourierProfile');
   
+  // ✅ ИСПРАВЛЕНО: Устанавливаем домашний адрес по городу из search_data
+  let homeLocation = null;
+  
+  try {
+    // Геокодируем домашний адрес (используем город из search_data)
+    if (this.search_data.city) {
+      // Координаты основных городов Франции
+      const cityCoordinates = {
+        'marseille': [5.3698, 43.2965],
+        'марсель': [5.3698, 43.2965],
+        'paris': [2.3522, 48.8566], 
+        'париж': [2.3522, 48.8566],
+        'lyon': [4.8357, 45.7640],
+        'лион': [4.8357, 45.7640],
+        'toulouse': [1.4442, 43.6047],
+        'nice': [7.2619, 43.7102],
+        'ницца': [7.2619, 43.7102],
+        'nantes': [-1.5534, 47.2184],
+        'нант': [-1.5534, 47.2184],
+        'strasbourg': [7.7521, 48.5734],
+        'страсбург': [7.7521, 48.5734],
+        'montpellier': [3.8767, 43.6119],
+        'монпелье': [3.8767, 43.6119],
+        'bordeaux': [-0.5792, 44.8378],
+        'бордо': [-0.5792, 44.8378]
+      };
+      
+      const coordinates = cityCoordinates[this.search_data.city.toLowerCase()];
+      if (coordinates) {
+        homeLocation = {
+          type: 'Point',
+          coordinates: coordinates // [longitude, latitude]
+        };
+      }
+    }
+  } catch (error) {
+    console.warn('Не удалось геокодировать адрес курьера:', error);
+    // homeLocation остается null
+  }
+  
+  // ✅ ИСПРАВЛЕНО: Создаем профиль с новыми полями
   const courierProfile = new CourierProfile({
     user_id: this.user_id,
     first_name: this.search_data.first_name,  // Используем открытые данные
     last_name: this.search_data.last_name,    // Используем открытые данные
     phone: this.personal_data.phone,          // Зашифрованный телефон
+    email: this.personal_data.email,          // Зашифрованный email
     vehicle_type: this.vehicle_info.vehicle_type,
-    documents: this.documents,                // Зашифрованные документы
+    
+    // ✅ ИСПРАВЛЕНО: registration_documents вместо documents
+    registration_documents: this.documents,   // Зашифрованные документы из заявки
+    
+    // ✅ ДОБАВЛЕНО: Новые поля
+    additional_documents: [],                 // Пустой массив для дополнительных документов
+    avatar_url: null,                        // Пустой аватар
+    documents_status: 'not_required',        // Статус дополнительных документов
+    
+    // ✅ ИСПРАВЛЕНО: Устанавливаем домашний адрес (может быть null)
+    location: homeLocation,                  // Приблизительная геолокация по городу
+    
     is_approved: true,
     application_status: 'approved',
     approved_by: this.review_info.reviewed_by,

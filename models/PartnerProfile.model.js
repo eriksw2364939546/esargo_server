@@ -1,4 +1,4 @@
-// models/PartnerProfile.model.js - ПОЛНАЯ МОДЕЛЬ С SUBMISSION_INFO И ВСЕМИ ПОЛЯМИ
+// models/PartnerProfile.model.js - ПОЛНАЯ МОДЕЛЬ С МИНИМАЛЬНЫМИ ИСПРАВЛЕНИЯМИ
 import mongoose from 'mongoose';
 
 const partnerProfileSchema = new mongoose.Schema({
@@ -103,156 +103,156 @@ const partnerProfileSchema = new mongoose.Schema({
     uploaded_at: { type: Date, default: Date.now }
   }],
   
+  // ✅ ЕДИНСТВЕННОЕ ДОБАВЛЕНИЕ: additional_documents для новой файловой системы
+  additional_documents: [{
+    type: {
+      type: String,
+      enum: ['menu_certificate', 'hygiene_certificate', 'business_license', 'tax_document', 'other'],
+      required: true
+    },
+    url: {
+      type: String,
+      required: true
+    },
+    filename: String,
+    original_name: String,
+    size: Number,
+    uploaded_at: {
+      type: Date,
+      default: Date.now
+    },
+    status: {
+      type: String,
+      enum: ['pending_review', 'approved', 'rejected', 'needs_update'],
+      default: 'pending_review'
+    },
+    admin_notes: String,
+    document_category: String
+  }],
+  
   // КАТЕГОРИИ МЕНЮ
   menu_categories: [{
     name: { type: String, required: true, trim: true, maxlength: 50 },
-    slug: { type: String, required: true, trim: true },
     description: { type: String, trim: true, maxlength: 200 },
-    image_url: { type: String, default: '' },
     sort_order: { type: Number, default: 0 },
     is_active: { type: Boolean, default: true },
-    products_count: { type: Number, default: 0 },
-    created_at: { type: Date, default: Date.now },
-    updated_at: { type: Date, default: Date.now }
+    created_at: { type: Date, default: Date.now }
   }],
   
-  // РАБОЧИЕ ЧАСЫ
+  // ВРЕМЯ РАБОТЫ
   working_hours: {
     monday: {
       is_open: { type: Boolean, default: true },
-      open_time: { type: String, default: "09:00" },
-      close_time: { type: String, default: "21:00" }
+      open_time: { type: String, default: '09:00' },
+      close_time: { type: String, default: '22:00' },
+      break_start: { type: String },
+      break_end: { type: String }
     },
     tuesday: {
       is_open: { type: Boolean, default: true },
-      open_time: { type: String, default: "09:00" },
-      close_time: { type: String, default: "21:00" }
+      open_time: { type: String, default: '09:00' },
+      close_time: { type: String, default: '22:00' },
+      break_start: { type: String },
+      break_end: { type: String }
     },
     wednesday: {
       is_open: { type: Boolean, default: true },
-      open_time: { type: String, default: "09:00" },
-      close_time: { type: String, default: "21:00" }
+      open_time: { type: String, default: '09:00' },
+      close_time: { type: String, default: '22:00' },
+      break_start: { type: String },
+      break_end: { type: String }
     },
     thursday: {
       is_open: { type: Boolean, default: true },
-      open_time: { type: String, default: "09:00" },
-      close_time: { type: String, default: "21:00" }
+      open_time: { type: String, default: '09:00' },
+      close_time: { type: String, default: '22:00' },
+      break_start: { type: String },
+      break_end: { type: String }
     },
     friday: {
       is_open: { type: Boolean, default: true },
-      open_time: { type: String, default: "09:00" },
-      close_time: { type: String, default: "21:00" }
+      open_time: { type: String, default: '09:00' },
+      close_time: { type: String, default: '22:00' },
+      break_start: { type: String },
+      break_end: { type: String }
     },
     saturday: {
       is_open: { type: Boolean, default: true },
-      open_time: { type: String, default: "09:00" },
-      close_time: { type: String, default: "21:00" }
+      open_time: { type: String, default: '10:00' },
+      close_time: { type: String, default: '23:00' },
+      break_start: { type: String },
+      break_end: { type: String }
     },
     sunday: {
       is_open: { type: Boolean, default: false },
-      open_time: { type: String, default: "09:00" },
-      close_time: { type: String, default: "21:00" }
+      open_time: { type: String, default: '11:00' },
+      close_time: { type: String, default: '21:00' },
+      break_start: { type: String },
+      break_end: { type: String }
     }
   },
   
-  // СИСТЕМА ЗАРАБОТКА ESARGO
-  earnings: {
-    total_earned: {
-      type: Number,
-      default: 0,
-      min: 0
-    },
-    weekly_earned: {
-      type: Number,
-      default: 0,
-      min: 0
-    },
-    monthly_earned: {
-      type: Number,
-      default: 0,
-      min: 0
-    },
-    daily_earned: {
-      type: Number,
-      default: 0,
-      min: 0
-    },
-    
-    // Детализация заработка
-    earnings_breakdown: {
-      food_sales: {
-        type: Number,
-        default: 0
-      },
-      commission_paid: {
-        type: Number,
-        default: 0
-      },
-      bonus_payments: {
-        type: Number,
-        default: 0
-      }
-    },
-    
-    // Статистика периодов
-    last_payout_date: {
-      type: Date
-    },
-    last_earnings_update: {
-      type: Date,
-      default: Date.now
-    }
+  // НАСТРОЙКИ ДОСТАВКИ
+  delivery_settings: {
+    delivery_fee: { type: Number, default: 3.50, min: 0 },
+    free_delivery_threshold: { type: Number, default: 25, min: 0 },
+    min_order_amount: { type: Number, default: 15, min: 0 },
+    max_delivery_distance: { type: Number, default: 10, min: 1 },
+    estimated_delivery_time: { type: Number, default: 30, min: 10 },
+    max_items_per_order: { type: Number, default: 50, min: 1 }
   },
   
-  // ЗОНЫ ДОСТАВКИ ESARGO
+  // ЗОНЫ ДОСТАВКИ
   available_delivery_zones: [{
-    zone_number: {
-      type: Number,
-      enum: [1, 2], // Зона 1: 0-5км, Зона 2: 5-10км
-      required: true
-    },
-    max_distance_km: {
-      type: Number,
-      required: true,
-      min: 0,
-      max: 10
-    },
-    delivery_fee: {
-      type: Number,
-      required: true,
-      min: 0
-    },
-    min_order_amount: {
-      type: Number,
-      default: 30 // Минимальная сумма заказа
-    },
-    is_active: {
-      type: Boolean,
-      default: true
-    }
+    zone_number: { type: Number, required: true, enum: [1, 2] },
+    zone_name: { type: String, required: true },
+    delivery_fee: { type: Number, required: true, min: 0 },
+    min_order_amount: { type: Number, default: 15, min: 0 },
+    estimated_time: { type: Number, default: 30, min: 10 },
+    is_active: { type: Boolean, default: true }
   }],
   
-  // РЕЙТИНГИ
+  // РЕЙТИНГИ И ОТЗЫВЫ
   ratings: {
     avg_rating: { type: Number, default: 0, min: 0, max: 5 },
-    total_reviews: { type: Number, default: 0 },
-    rating_breakdown: {
-      five_star: { type: Number, default: 0 },
-      four_star: { type: Number, default: 0 },
-      three_star: { type: Number, default: 0 },
-      two_star: { type: Number, default: 0 },
-      one_star: { type: Number, default: 0 }
+    total_ratings: { type: Number, default: 0, min: 0 },
+    rating_distribution: {
+      five_star: { type: Number, default: 0, min: 0 },
+      four_star: { type: Number, default: 0, min: 0 },
+      three_star: { type: Number, default: 0, min: 0 },
+      two_star: { type: Number, default: 0, min: 0 },
+      one_star: { type: Number, default: 0, min: 0 }
     }
   },
   
-  // БИЗНЕС СТАТИСТИКА
+  // ЗАРАБОТОК И ФИНАНСЫ
+  earnings: {
+    total_earned: { type: Number, default: 0, min: 0 },
+    weekly_earned: { type: Number, default: 0, min: 0 },
+    monthly_earned: { type: Number, default: 0, min: 0 },
+    daily_earned: { type: Number, default: 0, min: 0 },
+    last_earnings_update: { type: Date },
+    earnings_breakdown: {
+      food_sales: { type: Number, default: 0, min: 0 },
+      commission_paid: { type: Number, default: 0, min: 0 }
+    }
+  },
+  
+  // СТАТИСТИКА БИЗНЕСА
   business_stats: {
-    total_orders: { type: Number, default: 0 },
-    completed_orders: { type: Number, default: 0 },
-    cancelled_orders: { type: Number, default: 0 },
-    avg_order_value: { type: Number, default: 0 },
+    total_orders: { type: Number, default: 0, min: 0 },
+    completed_orders: { type: Number, default: 0, min: 0 },
+    cancelled_orders: { type: Number, default: 0, min: 0 },
+    avg_order_value: { type: Number, default: 0, min: 0 },
+    total_revenue: { type: Number, default: 0, min: 0 },
+    most_popular_items: [{ 
+      product_id: mongoose.Schema.Types.ObjectId, 
+      name: String, 
+      order_count: Number 
+    }],
     total_products: { type: Number, default: 0 },
     active_products: { type: Number, default: 0 },
+    total_menu_items: { type: Number, default: 0 },
     total_categories: { type: Number, default: 0 },
     total_gallery_images: { type: Number, default: 0 },
     last_stats_update: { type: Date }
@@ -321,6 +321,22 @@ partnerProfileSchema.index({ 'available_delivery_zones.zone_number': 1 });
 partnerProfileSchema.index({ content_status: 1, approval_status: 1 });
 
 // ВИРТУАЛЬНЫЕ ПОЛЯ
+partnerProfileSchema.virtual('full_owner_name').get(function() {
+  return `${this.owner_name} ${this.owner_surname}`;
+});
+
+partnerProfileSchema.virtual('is_currently_accepting_orders').get(function() {
+  return this.is_approved && this.is_active && this.is_public && this.is_currently_open;
+});
+
+partnerProfileSchema.virtual('avg_preparation_time').get(function() {
+  return this.delivery_settings.estimated_delivery_time - 15; // Вычитаем время доставки
+});
+
+partnerProfileSchema.virtual('rating_percentage').get(function() {
+  return this.ratings.avg_rating ? Math.round((this.ratings.avg_rating / 5) * 100) : 0;
+});
+
 partnerProfileSchema.virtual('total_gallery_count').get(function() {
   if (!this.gallery || !Array.isArray(this.gallery)) {
     return 0;
@@ -333,6 +349,16 @@ partnerProfileSchema.virtual('active_zones_count').get(function() {
     return 0;
   }
   return this.available_delivery_zones.filter(zone => zone.is_active).length;
+});
+
+// ✅ ЕДИНСТВЕННЫЕ ДОБАВЛЕННЫЕ ВИРТУАЛЬНЫЕ ПОЛЯ: для подсчета дополнительных документов
+partnerProfileSchema.virtual('additional_documents_count').get(function() {
+  return this.additional_documents ? this.additional_documents.length : 0;
+});
+
+partnerProfileSchema.virtual('approved_additional_documents_count').get(function() {
+  return this.additional_documents ? 
+    this.additional_documents.filter(doc => doc.status === 'approved').length : 0;
 });
 
 // МЕТОДЫ ЭКЗЕМПЛЯРА
@@ -354,6 +380,26 @@ partnerProfileSchema.methods.updateEarnings = function(orderData) {
   this.earnings.earnings_breakdown.commission_paid += commission;
   
   this.earnings.last_earnings_update = new Date();
+  
+  return this.save();
+};
+
+partnerProfileSchema.methods.addEarnings = function(orderData) {
+  const { total_amount, commission_rate = 0.15 } = orderData;
+  const commission = total_amount * commission_rate;
+  const partnerEarning = total_amount - commission;
+  
+  this.earnings.total_earned += partnerEarning;
+  this.earnings.weekly_earned += partnerEarning;
+  this.earnings.monthly_earned += partnerEarning;
+  this.earnings.last_earnings_update = new Date();
+  
+  this.earnings.earnings_breakdown.food_sales += total_amount;
+  this.earnings.earnings_breakdown.commission_paid += commission;
+  
+  this.business_stats.total_orders += 1;
+  this.business_stats.total_revenue += total_amount;
+  this.business_stats.avg_order_value = this.business_stats.total_revenue / this.business_stats.total_orders;
   
   return this.save();
 };
@@ -393,53 +439,60 @@ partnerProfileSchema.methods.getDeliveryFeeForZone = function(zoneNumber, orderT
   if (!zone) return null;
   
   // Если заказ больше минимальной суммы, используем льготный тариф
-  return orderTotal >= zone.min_order_amount ? 
-    zone.delivery_fee : zone.delivery_fee + 2; // Доплата за малый заказ
+  return orderTotal >= zone.min_order_amount ?
+    zone.delivery_fee : zone.delivery_fee + 2; // Доплата за маленький заказ
 };
 
 // Обновление рейтинга
 partnerProfileSchema.methods.updateRating = function(newRating) {
-  const currentTotal = this.ratings.total_reviews;
-  const currentAvg = this.ratings.avg_rating;
+  const totalRatings = this.ratings.total_ratings;
+  const currentAvgRating = this.ratings.avg_rating;
   
-  this.ratings.total_reviews += 1;
-  this.ratings.avg_rating = ((currentAvg * currentTotal) + newRating) / this.ratings.total_reviews;
+  this.ratings.total_ratings += 1;
+  this.ratings.avg_rating = ((currentAvgRating * totalRatings) + newRating) / this.ratings.total_ratings;
   
   // Обновляем распределение рейтингов
   switch (newRating) {
-    case 5: this.ratings.rating_breakdown.five_star += 1; break;
-    case 4: this.ratings.rating_breakdown.four_star += 1; break;
-    case 3: this.ratings.rating_breakdown.three_star += 1; break;
-    case 2: this.ratings.rating_breakdown.two_star += 1; break;
-    case 1: this.ratings.rating_breakdown.one_star += 1; break;
+    case 5: this.ratings.rating_distribution.five_star += 1; break;
+    case 4: this.ratings.rating_distribution.four_star += 1; break;
+    case 3: this.ratings.rating_distribution.three_star += 1; break;
+    case 2: this.ratings.rating_distribution.two_star += 1; break;
+    case 1: this.ratings.rating_distribution.one_star += 1; break;
   }
   
   return this.save();
 };
 
-// Обновление статистики продуктов
-partnerProfileSchema.methods.updateProductStats = async function() {
-  const Product = mongoose.model('Product');
+// Проверка открыт ли ресторан сейчас
+partnerProfileSchema.methods.isOpenNow = function() {
+  const now = new Date();
+  const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][now.getDay()];
+  const currentTime = now.toTimeString().slice(0, 5); // HH:MM format
   
-  const stats = await Product.aggregate([
-    { $match: { partner_id: this._id } },
-    {
-      $group: {
-        _id: null,
-        total_products: { $sum: 1 },
-        active_products: { $sum: { $cond: [{ $and: ['$is_active', '$is_available'] }, 1, 0] } }
-      }
-    }
-  ]);
+  const todaySchedule = this.working_hours[dayOfWeek];
   
-  if (stats.length > 0) {
-    this.business_stats.total_products = stats[0].total_products;
-    this.business_stats.active_products = stats[0].active_products;
-  } else {
-    this.business_stats.total_products = 0;
-    this.business_stats.active_products = 0;
+  if (!todaySchedule.is_open) {
+    return false;
   }
   
+  // Простая проверка времени
+  return currentTime >= todaySchedule.open_time && currentTime <= todaySchedule.close_time;
+};
+
+// Добавление категории меню
+partnerProfileSchema.methods.addMenuCategory = function(categoryData) {
+  this.menu_categories.push({
+    ...categoryData,
+    sort_order: this.menu_categories.length
+  });
+  
+  this.business_stats.total_categories = this.menu_categories.length;
+  return this.save();
+};
+
+// Обновление статистики бизнеса
+partnerProfileSchema.methods.updateBusinessStats = function() {
+  this.business_stats.total_menu_items = this.menu_items ? this.menu_items.length : 0;
   this.business_stats.total_categories = this.menu_categories.length;
   this.business_stats.total_gallery_images = this.gallery.length;
   this.business_stats.last_stats_update = new Date();
