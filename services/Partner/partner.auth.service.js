@@ -83,8 +83,8 @@ const createPartnerAccount = async (data) => {
 
             // Шифруем бизнес данные
             const encryptedBusinessData = {
-                business_name: business_name,
-                brand_name: brand_name || '',
+                business_name: cryptoString(business_name),
+                brand_name: cryptoString(brand_name) || '',
                 category: category,
                 address: cryptoString(address),
                 floor_unit: floor_unit ? cryptoString(floor_unit) : null,
@@ -100,8 +100,8 @@ const createPartnerAccount = async (data) => {
                     is_active: true
                 }],
                 // ✅ ИСПРАВЛЕНО: owner_name и owner_surname ВНУТРИ business_data
-                owner_name: first_name,
-                owner_surname: last_name
+                  owner_name: cryptoString(first_name),      // ✅ ЗАШИФРОВАННО
+                  owner_surname: cryptoString(last_name)
             };
 
             // Создаем заявку партнера

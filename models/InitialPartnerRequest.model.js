@@ -231,6 +231,8 @@ initialPartnerRequestSchema.set('toJSON', {
     if (ret.business_data) {
       delete ret.business_data.address;
       delete ret.business_data.floor_unit;
+      delete ret.business_data.owner_name;      // ✅ ДОБАВИТЬ
+      delete ret.business_data.owner_surname; 
     }
     return ret;
   }
