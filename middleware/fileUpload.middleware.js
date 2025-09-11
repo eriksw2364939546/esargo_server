@@ -1,4 +1,4 @@
-// middleware/fileUpload.middleware.js - Универсальная система загрузки файлов для ESARGO-SERVER
+// middleware/fileUpload.middleware.js - УПРОЩЕННАЯ СИСТЕМА (ТОЛЬКО ИЗОБРАЖЕНИЯ)
 import multer from "multer";
 import sharp from "sharp";
 import path from "path";
@@ -11,18 +11,18 @@ const UPLOAD_CONFIGS = {
   partners: {
     restaurant: {
       base: "uploads/partners/partnersImage",
-      menu: "uploads/partners/menusImage", 
-      documents: "uploads/partners/documentsImage"
+      menu: "uploads/partners/menusImage"
+      // ✅ УДАЛЕНО: documents: "uploads/partners/documentsImage" (теперь в регистрации)
     },
     store: {
       base: "uploads/partners/partnersImage",
-      menu: "uploads/partners/menusImage",
-      documents: "uploads/partners/documentsImage"
+      menu: "uploads/partners/menusImage"
+      // ✅ УДАЛЕНО: documents: "uploads/partners/documentsImage" (теперь в регистрации)
     }
   },
   couriers: {
-    avatars: "uploads/couriers/avatarsImage",
-    documents: "uploads/couriers/documentsPdf"
+    avatars: "uploads/couriers/avatarsImage"
+    // ✅ УДАЛЕНО: documents: "uploads/couriers/documentsPdf" (теперь в регистрации)
   },
   admins: {
     avatars: "uploads/admins/avatarsImage"
@@ -39,7 +39,7 @@ const ensureDirectoryExists = (dirPath) => {
   }
 };
 
-// Создаем все необходимые папки при запуске
+// Создаем все необходимые папки при запуске (только для изображений)
 Object.values(UPLOAD_CONFIGS.partners.restaurant).forEach(ensureDirectoryExists);
 Object.values(UPLOAD_CONFIGS.couriers).forEach(ensureDirectoryExists);
 Object.values(UPLOAD_CONFIGS.admins).forEach(ensureDirectoryExists);
@@ -49,22 +49,11 @@ Object.values(UPLOAD_CONFIGS.admins).forEach(ensureDirectoryExists);
  */
 const storage = multer.memoryStorage();
 
-// Фильтр файлов - изображения и PDF
+// ✅ УПРОЩЕННЫЙ фильтр файлов - ТОЛЬКО ИЗОБРАЖЕНИЯ
 const fileFilter = (req, file, cb) => {
-  const { uploadType } = req.body;
-  
-  // Для изображений
-  if (['restaurant-cover', 'menu-item', 'courier-avatar', 'admin-avatar'].includes(uploadType)) {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Разрешены только изображения!"), false);
-    }
-  }
-  
-  // Для документов
-  if (['partner-documents', 'courier-documents'].includes(uploadType)) {
-    if (file.mimetype !== "application/pdf") {
-      return cb(new Error("Разрешены только PDF документы!"), false);
-    }
+  // Проверяем только изображения
+  if (!file.mimetype.startsWith("image/")) {
+    return cb(new Error("Разрешены только изображения!"), false);
   }
   
   cb(null, true);
@@ -83,7 +72,7 @@ const uploadBase = multer({
 });
 
 /**
- * ==================== MIDDLEWARE ДЛЯ РАЗНЫХ ТИПОВ ЗАГРУЗКИ ====================
+ * ==================== MIDDLEWARE ДЛЯ ИЗОБРАЖЕНИЙ ====================
  */
 
 // Одиночное изображение (аватарки, обложки)
@@ -92,8 +81,7 @@ export const uploadSingleImage = uploadBase.single("image");
 // Множественные изображения (меню, галерея) 
 export const uploadMultipleImages = uploadBase.array("images", 10);
 
-// Документы PDF
-export const uploadDocuments = uploadBase.array("documents", 5);
+// ✅ УДАЛЕНО: uploadDocuments - теперь в registrationUpload.middleware.js
 
 /**
  * ==================== ОБРАБОТКА ИЗОБРАЖЕНИЙ ====================
@@ -108,11 +96,11 @@ export const processImages = async (req, res, next) => {
     if (!files || files.length === 0) {
       return res.status(400).json({ 
         result: false, 
-        message: "Файлы не загружены" 
+        message: "Изображения не загружены" 
       });
     }
 
-    // Определяем папку назначения
+    // ✅ УПРОЩЕННОЕ определение папки назначения (только изображения)
     let uploadDir;
     switch (uploadType) {
       case 'restaurant-cover':
@@ -131,19 +119,23 @@ export const processImages = async (req, res, next) => {
       default:
         return res.status(400).json({
           result: false,
-          message: `Неизвестный тип загрузки: ${uploadType}`
+          message: `Неизвестный тип изображения: ${uploadType}`
         });
     }
 
-    // Обрабатываем изображения
+    // Обрабатываем и сохраняем изображения
     const processedImages = await Promise.all(
       files.map(async (file, index) => {
         const uniqueSuffix = `${Date.now()}-${index}`;
         const filename = `${uploadType}-${uniqueSuffix}.webp`;
         const outputPath = path.join(uploadDir, filename);
 
+        // Обрабатываем изображение через Sharp
         await sharp(file.buffer)
-          .resize(800, 800, { fit: "inside", withoutEnlargement: true })
+          .resize(800, 800, { 
+            fit: 'inside',
+            withoutEnlargement: true 
+          })
           .webp({ quality: 80 })
           .toFile(outputPath);
 
@@ -153,12 +145,14 @@ export const processImages = async (req, res, next) => {
           size: file.size,
           path: outputPath,
           url: `/${uploadDir}/${filename}`,
-          uploadType
+          uploadType,
+          format: 'webp',
+          dimensions: '800x800 max'
         };
       })
     );
 
-    req.uploadedFiles = processedImages;
+    req.uploadedImages = processedImages;
     next();
 
   } catch (error) {
@@ -171,72 +165,7 @@ export const processImages = async (req, res, next) => {
   }
 };
 
-/**
- * ==================== ОБРАБОТКА PDF ДОКУМЕНТОВ ====================
- */
-export const processDocuments = async (req, res, next) => {
-  try {
-    const { uploadType, userRole } = req.body;
-    
-    const files = req.files || [];
-    
-    if (!files || files.length === 0) {
-      return res.status(400).json({ 
-        result: false, 
-        message: "Документы не загружены" 
-      });
-    }
-
-    // Определяем папку назначения
-    let uploadDir;
-    switch (uploadType) {
-      case 'partner-documents':
-        uploadDir = UPLOAD_CONFIGS.partners.restaurant.documents;
-        break;
-      case 'courier-documents':
-        uploadDir = UPLOAD_CONFIGS.couriers.documents;
-        break;
-      default:
-        return res.status(400).json({
-          result: false,
-          message: `Неизвестный тип документов: ${uploadType}`
-        });
-    }
-
-    // Сохраняем PDF документы
-    const processedDocuments = await Promise.all(
-      files.map(async (file, index) => {
-        const uniqueSuffix = `${Date.now()}-${index}`;
-        const filename = `${uploadType}-${uniqueSuffix}.pdf`;
-        const outputPath = path.join(uploadDir, filename);
-
-        // Сохраняем PDF как есть (без обработки)
-        await fs.promises.writeFile(outputPath, file.buffer);
-
-        return {
-          filename,
-          originalName: file.originalname,
-          size: file.size,
-          path: outputPath,
-          url: `/${uploadDir}/${filename}`,
-          uploadType,
-          documentType: file.fieldname || 'document'
-        };
-      })
-    );
-
-    req.uploadedDocuments = processedDocuments;
-    next();
-
-  } catch (error) {
-    console.error('🚨 PROCESS DOCUMENTS ERROR:', error);
-    return res.status(500).json({
-      result: false,
-      message: "Ошибка обработки документов",
-      error: error.toString()
-    });
-  }
-};
+// ✅ УДАЛЕНО: processDocuments - теперь в registrationUpload.middleware.js
 
 /**
  * ==================== УДАЛЕНИЕ ФАЙЛОВ ====================
@@ -245,7 +174,7 @@ export const deleteFile = async (req, res, next) => {
   try {
     const { filename, uploadType } = req.params;
     
-    // Определяем папку по типу
+    // ✅ УПРОЩЕННОЕ определение папки (только изображения)
     let uploadDir;
     switch (uploadType) {
       case 'restaurant-cover':
@@ -260,12 +189,6 @@ export const deleteFile = async (req, res, next) => {
         break;
       case 'admin-avatar':
         uploadDir = UPLOAD_CONFIGS.admins.avatars;
-        break;
-      case 'partner-documents':
-        uploadDir = UPLOAD_CONFIGS.partners.restaurant.documents;
-        break;
-      case 'courier-documents':
-        uploadDir = UPLOAD_CONFIGS.couriers.documents;
         break;
       default:
         return res.status(400).json({
@@ -315,7 +238,7 @@ export const getFilesList = async (req, res, next) => {
   try {
     const { uploadType } = req.params;
     
-    // Определяем папку по типу
+    // ✅ УПРОЩЕННОЕ определение папки (только изображения)
     let uploadDir;
     switch (uploadType) {
       case 'restaurant-cover':
@@ -331,12 +254,6 @@ export const getFilesList = async (req, res, next) => {
       case 'admin-avatar':
         uploadDir = UPLOAD_CONFIGS.admins.avatars;
         break;
-      case 'partner-documents':
-        uploadDir = UPLOAD_CONFIGS.partners.restaurant.documents;
-        break;
-      case 'courier-documents':
-        uploadDir = UPLOAD_CONFIGS.couriers.documents;
-        break;
       default:
         return res.status(400).json({
           result: false,
@@ -347,20 +264,17 @@ export const getFilesList = async (req, res, next) => {
     const fullPath = path.join(process.cwd(), uploadDir);
     const files = await fs.promises.readdir(fullPath);
     
-    // Фильтруем файлы по расширению
+    // ✅ УПРОЩЕННАЯ фильтрация файлов (только изображения)
     const filteredFiles = files.filter(file => {
-      if (['partner-documents', 'courier-documents'].includes(uploadType)) {
-        return file.match(/\.(pdf)$/i);
-      } else {
-        return file.match(/\.(jpg|jpeg|png|webp)$/i);
-      }
+      return file.match(/\.(jpg|jpeg|png|webp|gif|bmp)$/i);
     });
 
     req.filesList = {
       files: filteredFiles,
       uploadType,
       directory: uploadDir,
-      count: filteredFiles.length
+      count: filteredFiles.length,
+      file_type: 'images_only' // ✅ НОВОЕ
     };
 
     next();
@@ -388,17 +302,20 @@ export const validateUploadType = (req, res, next) => {
     });
   }
 
-  // Проверяем соответствие роли и типа загрузки
+  // ✅ УПРОЩЕННЫЕ права доступа (только изображения)
   const rolePermissions = {
-    partner: ['restaurant-cover', 'store-cover', 'menu-item', 'partner-documents'],
-    courier: ['courier-avatar', 'courier-documents'],
+    partner: ['restaurant-cover', 'store-cover', 'menu-item'],
+    courier: ['courier-avatar'],
     admin: ['admin-avatar']
   };
+
+  // ✅ УДАЛЕНО: 'partner-documents', 'courier-documents' (теперь в регистрации)
 
   if (userRole && !rolePermissions[userRole]?.includes(uploadType)) {
     return res.status(403).json({
       result: false,
-      message: `Роль ${userRole} не имеет права загружать файлы типа ${uploadType}`
+      message: `Роль ${userRole} не имеет права загружать файлы типа ${uploadType}`,
+      allowed_types: rolePermissions[userRole] || []
     });
   }
 
@@ -409,14 +326,10 @@ export const validateUploadType = (req, res, next) => {
  * ==================== ЭКСПОРТ ====================
  */
 export default {
-  // Основные функции загрузки
+  // ✅ ТОЛЬКО функции для изображений
   uploadSingleImage,
   uploadMultipleImages,
-  uploadDocuments,
-  
-  // Обработка файлов
   processImages,
-  processDocuments,
   
   // Управление файлами
   deleteFile,
@@ -427,4 +340,6 @@ export default {
   
   // Конфигурация
   UPLOAD_CONFIGS
+  
+  // ✅ УДАЛЕНО: uploadDocuments, processDocuments (теперь в registrationUpload.middleware.js)
 };

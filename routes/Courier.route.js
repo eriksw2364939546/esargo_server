@@ -1,4 +1,4 @@
-// routes/Courier.route.js
+// routes/Courier.route.js - ПОЛНЫЙ РОУТ С ИНТЕГРАЦИЕЙ ЗАГРУЗКИ PDF
 import express from 'express';
 import {
   registerCourier,
@@ -19,14 +19,25 @@ import {
   checkCourierProfileAccess
 } from '../middleware/courierAuth.middleware.js';
 
+// ✅ НОВЫЙ ИМПОРТ: Middleware для загрузки PDF документов
+import { 
+  uploadCourierRegistrationDocuments, 
+  processCourierRegistrationDocuments 
+} from '../middleware/registrationUpload.middleware.js';
+
 const router = express.Router();
 
 // ================ ПУБЛИЧНЫЕ РОУТЫ ================
 
-// POST /api/couriers/register - Регистрация курьера с подачей документов
+// ✅ ОБНОВЛЕННЫЙ РОУТ: POST /api/couriers/register - Регистрация курьера с PDF документами
 router.post('/register', 
-  validateCourierRegistration,  // Валидация данных регистрации
-  registerCourier
+  // ✅ НОВЫЕ MIDDLEWARE для загрузки PDF файлов
+  uploadCourierRegistrationDocuments,    // Multer для PDF документов (заменяет URL поля)
+  processCourierRegistrationDocuments,   // Обработка файлов и создание URL полей в req.body
+  
+  // ✅ СУЩЕСТВУЮЩИЕ MIDDLEWARE остаются без изменений
+  validateCourierRegistration,           // Валидация данных регистрации (проверяет URL поля)
+  registerCourier                        // Контроллер регистрации (получает URL в req.body)
 );
 
 // POST /api/couriers/login - Авторизация курьера
@@ -48,7 +59,7 @@ router.get('/profile', requireApprovedCourier, getProfile);
 // PUT /api/couriers/profile - Обновление профиля курьера
 router.put('/profile', requireApprovedCourier, updateProfile);
 
-// PATCH /api/couriers/availability - Переключение статуса On-e/Off-e
+// PATCH /api/couriers/availability - Переключение статуса Online/Offline
 router.patch('/availability', requireApprovedCourier, toggleAvailability);
 
 // PATCH /api/couriers/location - Обновление геолокации
@@ -77,6 +88,9 @@ router.put('/profile/:id',
 
 // POST /api/couriers/validate-registration - Предварительная валидация
 router.post('/validate-registration',
+  // ✅ ОБНОВЛЕНО: Поддержка PDF файлов для валидации
+  uploadCourierRegistrationDocuments,
+  processCourierRegistrationDocuments,
   validateCourierRegistration,
   (req, res) => {
     res.status(200).json({
@@ -87,6 +101,14 @@ router.post('/validate-registration',
         vehicle_info: "OK",
         documents: "OK",
         consents: "OK"
+      },
+      uploaded_documents: {
+        count: req.uploadedDocuments?.length || 0,
+        files: req.uploadedDocuments?.map(doc => ({
+          type: doc.documentType,
+          size: doc.size,
+          status: "uploaded"
+        })) || []
       }
     });
   }
@@ -100,11 +122,26 @@ router.get('/workflow-info', (req, res) => {
     workflow_stages: {
       stage_1: {
         name: "Подача заявки",
-        description: "Заполнение формы и загрузка документов",
-        required_documents: ["Удостоверение личности", "RIB банковские реквизиты"],
+        description: "Заполнение формы и загрузка PDF документов",
+        endpoint: "POST /api/couriers/register",
+        method: "multipart/form-data", // ✅ ОБНОВЛЕНО
+        required_documents: [
+          "Удостоверение личности (id_card)",
+          "RIB банковские реквизиты (bank_rib)"
+        ],
         conditional_documents: {
-          motorbike_car: ["Водительские права", "Страховка"],
-          car_only: ["Регистрация ТС"]
+          motorbike_car: [
+            "Водительские права (driver_license)",
+            "Страховка (insurance)"
+          ],
+          car_only: [
+            "Регистрация ТС (vehicle_registration)"
+          ]
+        },
+        file_requirements: {
+          format: "PDF только",
+          max_size: "5MB на файл",
+          max_files: "5 документов максимум"
         }
       },
       stage_2: {
@@ -122,11 +159,72 @@ router.get('/workflow-info', (req, res) => {
       }
     },
     document_requirements: {
-      all_couriers: ["id_card_url", "bank_rib_url"],
-      motorbike_car: ["driver_license_url", "insurance_url"],
-      car_only: ["vehicle_registration_url"]
+      all_couriers: ["id_card", "bank_rib"],
+      motorbike_car: ["driver_license", "insurance"],
+      car_only: ["vehicle_registration"]
     },
-    vehicle_types: ["bike", "motorbike", "car"]
+    vehicle_types: ["bike", "motorbike", "car"],
+    // ✅ НОВАЯ ИНФОРМАЦИЯ О ФАЙЛАХ
+    file_upload_info: {
+      supported_formats: ["application/pdf"],
+      max_file_size: "5MB",
+      max_total_files: 5,
+      storage_location: "uploads/couriers/documentsPdf/",
+      security: "Files are encrypted and stored securely"
+    }
+  });
+});
+
+// ✅ НОВЫЙ РОУТ: GET /api/couriers/registration-example - Пример данных для регистрации
+router.get('/registration-example', (req, res) => {
+  res.status(200).json({
+    result: true,
+    message: "Пример данных для регистрации курьера с PDF файлами",
+    postman_example: {
+      method: "POST",
+      url: "/api/couriers/register",
+      headers: {
+        "Content-Type": "multipart/form-data"
+      },
+      form_data: {
+        // Личные данные
+        first_name: "Иван",
+        last_name: "Иванов",
+        email: "ivan.ivanov@example.com",
+        phone: "+33123456789",
+        date_of_birth: "1990-05-15",
+        
+        // Адрес
+        street: "123 Rue de la République",
+        city: "Marseille",
+        postal_code: "13001",
+        country: "France",
+        
+        // Транспорт
+        vehicle_type: "motorbike",
+        vehicle_brand: "Yamaha",
+        vehicle_model: "MT-07",
+        license_plate: "AB-123-CD",
+        
+        // Согласия
+        terms_accepted: true,
+        privacy_policy_accepted: true,
+        data_processing_accepted: true,
+        background_check_accepted: true,
+        
+        // PDF ФАЙЛЫ (вместо URL полей)
+        id_card: "[PDF FILE]",           // Загрузить PDF файл
+        bank_rib: "[PDF FILE]",          // Загрузить PDF файл  
+        driver_license: "[PDF FILE]",    // Для motorbike/car
+        insurance: "[PDF FILE]",         // Для motorbike/car
+        vehicle_registration: "[PDF FILE]" // Только для car
+      }
+    },
+    old_vs_new: {
+      old_way: "Нужно было загружать файлы отдельно и вставлять URL",
+      new_way: "Прикрепляете PDF файлы прямо к форме регистрации",
+      advantage: "Намного удобнее для пользователя"
+    }
   });
 });
 

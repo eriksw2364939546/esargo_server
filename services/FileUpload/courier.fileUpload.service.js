@@ -96,16 +96,16 @@ export const saveCourierDocuments = async (courierId, documentsData) => {
     }));
 
     // Обновляем документы в профиле курьера
-    if (!profile.documents) {
-      profile.documents = [];
-    }
+       if (!profile.additional_documents) {
+       profile.additional_documents = [];
+     }
 
     // Проверяем лимит документов (максимум 10)
     if (profile.documents.length + documentRecords.length > 10) {
       throw new Error(`Превышен лимит документов. Максимум 10 документов. Текущее количество: ${profile.documents.length}`);
     }
 
-    profile.documents.push(...documentRecords);
+    profile.additional_documents.push(...documentRecords);
     
     // Обновляем статус документов в зависимости от типа
     updateDocumentStatus(profile);
@@ -117,7 +117,7 @@ export const saveCourierDocuments = async (courierId, documentsData) => {
       profile_id: profile._id,
       courier_name: `${profile.first_name} ${profile.last_name}`,
       uploaded_documents: documentRecords.length,
-      total_documents: profile.documents.length,
+      total_documents: profile.additional_documents.length,
       documents: documentRecords,
       document_status: profile.documents_status || 'pending'
     };
@@ -138,15 +138,15 @@ export const getCourierFiles = async (courierId) => {
     }
 
     const profile = await CourierProfile.findById(courierId).select(
-      'first_name last_name avatar_url documents vehicle_type application_status'
+      'first_name last_name avatar_url additional_documents registration_documents vehicle_type application_status documents_status'
     );
     
     if (!profile) {
       throw new Error('Профиль курьера не найден');
     }
 
-    // Группируем документы по типам
-    const documentsByType = groupDocumentsByType(profile.documents || []);
+    // ✅ ИСПРАВЛЕНО: Группируем additional_documents по типам
+    const additionalDocumentsByType = groupDocumentsByType(profile.additional_documents || []);
 
     return {
       success: true,
@@ -156,12 +156,14 @@ export const getCourierFiles = async (courierId) => {
       application_status: profile.application_status,
       files: {
         avatar: profile.avatar_url || null,
-        documents: documentsByType
+        // ✅ РАЗДЕЛЕНИЕ: registration_documents (из заявки) и additional_documents (загруженные после)
+        registration_documents: profile.registration_documents || {},
+        additional_documents: additionalDocumentsByType
       },
       statistics: {
-        total_documents: profile.documents?.length || 0,
+        total_additional_documents: profile.additional_documents?.length || 0, // ✅ ИСПРАВЛЕНО
         has_avatar: !!profile.avatar_url,
-        document_status: profile.documents_status || 'pending',
+        document_status: profile.documents_status || 'not_required',
         required_documents: getRequiredDocuments(profile.vehicle_type),
         missing_documents: getMissingDocuments(profile)
       }
@@ -187,14 +189,14 @@ export const removeCourierDocument = async (courierId, documentId) => {
       throw new Error('Профиль курьера не найден');
     }
 
-    // Найдем и удалим документ
-    const documentIndex = profile.documents.findIndex(doc => doc._id.toString() === documentId);
+    // ✅ ИСПРАВЛЕНО: Ищем в additional_documents
+    const documentIndex = profile.additional_documents.findIndex(doc => doc._id.toString() === documentId);
     if (documentIndex === -1) {
       throw new Error('Документ не найден');
     }
 
-    const removedDocument = profile.documents[documentIndex];
-    profile.documents.splice(documentIndex, 1);
+    const removedDocument = profile.additional_documents[documentIndex];
+    profile.additional_documents.splice(documentIndex, 1);
     
     // Обновляем статус документов
     updateDocumentStatus(profile);
@@ -205,7 +207,7 @@ export const removeCourierDocument = async (courierId, documentId) => {
       success: true,
       profile_id: profile._id,
       removed_document: removedDocument,
-      remaining_documents: profile.documents.length,
+      remaining_documents: profile.additional_documents.length, // ✅ ИСПРАВЛЕНО
       document_status: profile.documents_status
     };
 
@@ -289,7 +291,7 @@ const getRequiredDocuments = (vehicleType) => {
 // Определение недостающих документов
 const getMissingDocuments = (profile) => {
   const required = getRequiredDocuments(profile.vehicle_type);
-  const existing = (profile.documents || []).map(doc => doc.type);
+  const existing = (profile.additional_documents || []).map(doc => doc.type);
   
   return required.filter(type => !existing.includes(type));
 };
@@ -297,7 +299,7 @@ const getMissingDocuments = (profile) => {
 // Обновление статуса документов
 const updateDocumentStatus = (profile) => {
   const missing = getMissingDocuments(profile);
-  const hasRejected = (profile.documents || []).some(doc => doc.status === 'rejected');
+  const hasRejected = (profile.additional_documents || []).some(doc => doc.status === 'rejected');
   
   if (missing.length === 0 && !hasRejected) {
     profile.documents_status = 'complete';

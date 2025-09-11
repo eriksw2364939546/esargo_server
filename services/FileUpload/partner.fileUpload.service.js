@@ -176,11 +176,11 @@ export const savePartnerDocuments = async (partnerId, documentsData) => {
 
     // Сохраняем документы (можно расширить модель PartnerProfile или создать отдельную модель)
     // Пока сохраняем в поле documents (если оно есть) или создаем временное решение
-    if (!profile.documents) {
-      profile.documents = [];
+        if (!profile.additional_documents) {
+      profile.additional_documents = [];
     }
     
-    profile.documents.push(...documentRecords);
+    profile.additional_documents.push(...documentRecords);
     await profile.save();
 
     return {
@@ -188,7 +188,7 @@ export const savePartnerDocuments = async (partnerId, documentsData) => {
       profile_id: profile._id,
       business_name: profile.business_name,
       uploaded_documents: documentRecords.length,
-      total_documents: profile.documents.length,
+      total_documents: profile.additional_documents.length,
       documents: documentRecords
     };
 
@@ -245,18 +245,12 @@ export const getPartnerFiles = async (partnerId) => {
     }
 
     const profile = await PartnerProfile.findById(partnerId).select(
-      'business_name cover_image_url gallery documents'
+      'business_name cover_image_url gallery additional_documents'
     );
     
     if (!profile) {
       throw new Error('Профиль партнера не найден');
     }
-
-    // Получаем продукты с изображениями
-    const products = await Product.find({ 
-      partner_id: partnerId,
-      image_url: { $exists: true, $ne: '' }
-    }).select('name image_url category_id');
 
     return {
       success: true,
@@ -265,18 +259,11 @@ export const getPartnerFiles = async (partnerId) => {
       files: {
         cover_image: profile.cover_image_url || null,
         gallery: profile.gallery || [],
-        documents: profile.documents || [],
-        menu_items: products.map(product => ({
-          product_id: product._id,
-          product_name: product.name,
-          image_url: product.image_url,
-          category_id: product.category_id
-        }))
+        additional_documents: profile.additional_documents || [] // ✅ ИСПРАВЛЕНО
       },
       statistics: {
         total_gallery_images: profile.gallery?.length || 0,
-        total_documents: profile.documents?.length || 0,
-        total_menu_images: products.length,
+        total_additional_documents: profile.additional_documents?.length || 0, // ✅ ИСПРАВЛЕНО
         has_cover_image: !!profile.cover_image_url
       }
     };

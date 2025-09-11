@@ -1,13 +1,11 @@
-// routes/FileUpload.route.js - Роуты для системы загрузки файлов ESARGO
+// routes/FileUpload.route.js - УПРОЩЕННАЯ ФАЙЛОВАЯ СИСТЕМА (ТОЛЬКО ИЗОБРАЖЕНИЯ)
 import express from 'express';
 
-// Middleware для загрузки файлов
+// Middleware для загрузки файлов (только изображения)
 import {
   uploadSingleImage,
   uploadMultipleImages,
-  uploadDocuments,
   processImages,
-  processDocuments,
   deleteFile,
   getFilesList,
   validateUploadType
@@ -30,48 +28,52 @@ const router = express.Router();
 router.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'ESARGO File Upload API',
-    version: '1.0.0',
+    message: 'ESARGO File Upload API - Images Only',
+    version: '2.0.0', // ✅ ОБНОВЛЕНО
     supported_roles: ['partner', 'courier', 'admin'],
     
-    file_types: {
+    // ✅ ОБНОВЛЕНО: Только изображения
+    supported_file_types: {
       images: {
         formats: ['jpg', 'jpeg', 'png', 'webp'],
         processing: 'Конвертация в WebP, resize 800x800, качество 80%',
-        max_size: '5MB'
-      },
-      documents: {
-        formats: ['pdf'],
-        processing: 'Без обработки',
-        max_size: '5MB'
+        max_size: '5MB',
+        use_cases: ['Аватары', 'Обложки ресторанов', 'Фото меню', 'Галереи']
       }
     },
     
+    // ✅ ОБНОВЛЕНО: PDF документы исключены
     upload_structure: {
       partners: {
         cover: 'uploads/partners/partnersImage/',
-        menu: 'uploads/partners/menusImage/',
-        documents: 'uploads/partners/documentsImage/'
+        menu: 'uploads/partners/menusImage/'
+        // ✅ УДАЛЕНО: documents: 'uploads/partners/documentsImage/' (теперь в регистрации)
       },
       couriers: {
-        avatars: 'uploads/couriers/avatarsImage/',
-        documents: 'uploads/couriers/documentsPdf/'
+        avatars: 'uploads/couriers/avatarsImage/'
+        // ✅ УДАЛЕНО: documents: 'uploads/couriers/documentsPdf/' (теперь в регистрации)
       },
       admins: {
         avatars: 'uploads/admins/avatarsImage/'
       }
     },
     
+    // ✅ ОБНОВЛЕНО: Разделение ответственности
+    system_separation: {
+      this_api: "Изображения для одобренных профилей (аватары, обложки, галереи, меню)",
+      registration_api: "PDF документы при регистрации курьеров и подаче документов партнеров"
+    },
+    
     endpoints: {
-      partners: 'POST /api/uploads/partners/*',
-      couriers: 'POST /api/uploads/couriers/*',
-      admins: 'POST /api/uploads/admins/*',
+      partners: 'POST /api/uploads/partners/* (только изображения)',
+      couriers: 'POST /api/uploads/couriers/* (только аватары)',
+      admins: 'POST /api/uploads/admins/* (только аватары)',
       system: 'GET /api/uploads/system/*'
     }
   });
 });
 
-// ================ ПАРТНЕРСКИЕ РОУТЫ ================
+// ================ ПАРТНЕРСКИЕ РОУТЫ (ТОЛЬКО ИЗОБРАЖЕНИЯ) ================
 
 /**
  * POST /api/uploads/partners/cover/upload - Загрузка обложки ресторана/магазина
@@ -129,19 +131,7 @@ router.post('/partners/menu-item',
   PartnerFileController.addMenuItemImage
 );
 
-/**
- * POST /api/uploads/partners/documents - Загрузка документов партнера
- * Body: { profile_id, uploadType: 'partner-documents' }
- * Files: multiple PDF documents (max 5)
- */
-router.post('/partners/documents',
-  checkPartnerToken,
-  requirePartnerProfile,
-  validateUploadType,
-  uploadDocuments,
-  processDocuments,
-  PartnerFileController.uploadDocuments
-);
+// ✅ УДАЛЕНО: POST /api/uploads/partners/documents - теперь в регистрации!
 
 /**
  * DELETE /api/uploads/partners/gallery/:profile_id/:filename - Удаление из галереи
@@ -174,7 +164,7 @@ router.get('/partners/list/:uploadType',
   PartnerFileController.getFilesList
 );
 
-// ================ КУРЬЕРСКИЕ РОУТЫ ================
+// ================ КУРЬЕРСКИЕ РОУТЫ (ТОЛЬКО АВАТАРЫ) ================
 
 /**
  * POST /api/uploads/couriers/avatar/upload - Загрузка аватара курьера
@@ -204,27 +194,9 @@ router.put('/couriers/avatar/update',
   CourierFileController.updateAvatar
 );
 
-/**
- * POST /api/uploads/couriers/documents - Загрузка документов курьера
- * Body: { profile_id, uploadType: 'courier-documents' }
- * Files: multiple PDF documents (max 5)
- */
-router.post('/couriers/documents',
-  checkCourierToken,
-  validateUploadType,
-  uploadDocuments,
-  processDocuments,
-  CourierFileController.uploadDocuments
-);
-
-/**
- * DELETE /api/uploads/couriers/documents/:profile_id/:document_id/:filename - Удаление документа
- */
-router.delete('/couriers/documents/:profile_id/:document_id/:filename',
-  checkCourierToken,
-  deleteFile,
-  CourierFileController.removeDocument
-);
+// ✅ УДАЛЕНО: POST /api/uploads/couriers/documents - теперь в регистрации!
+// ✅ УДАЛЕНО: DELETE /api/uploads/couriers/documents/:profile_id/:document_id/:filename
+// ✅ УДАЛЕНО: GET /api/uploads/couriers/documents/status/:profile_id
 
 /**
  * GET /api/uploads/couriers/files/:profile_id - Получение всех файлов курьера
@@ -232,14 +204,6 @@ router.delete('/couriers/documents/:profile_id/:document_id/:filename',
 router.get('/couriers/files/:profile_id',
   checkCourierToken,
   CourierFileController.getFiles
-);
-
-/**
- * GET /api/uploads/couriers/documents/status/:profile_id - Статус документов курьера
- */
-router.get('/couriers/documents/status/:profile_id',
-  checkCourierToken,
-  CourierFileController.getDocumentStatus
 );
 
 /**
@@ -251,7 +215,7 @@ router.get('/couriers/list/:uploadType',
   CourierFileController.getFilesList
 );
 
-// ================ АДМИНСКИЕ РОУТЫ ================
+// ================ АДМИНСКИЕ РОУТЫ (ТОЛЬКО АВАТАРЫ) ================
 
 /**
  * POST /api/uploads/admins/avatar/upload - Загрузка аватара админа
@@ -289,84 +253,109 @@ router.post('/admins/create-with-avatar',
   validateUploadType,
   uploadSingleImage,
   processImages,
-  AdminFileController.createWithAvatar
+  AdminFileController.createAdminWithAvatar
 );
 
 /**
- * GET /api/uploads/admins/files/:admin_id - Получение файлов админа
+ * DELETE /api/uploads/admins/avatar/:admin_id/:filename - Удаление аватара админа
  */
-router.get('/admins/files/:admin_id',
-  checkAdminToken,
-  AdminFileController.getFiles
-);
-
-/**
- * GET /api/uploads/admins/statistics - Системная статистика файлов (только owner)
- */
-router.get('/admins/statistics',
-  checkAdminToken,
-  AdminFileController.getSystemStatistics
-);
-
-/**
- * GET /api/uploads/admins/list/:uploadType - Список файлов админов по типу
- */
-router.get('/admins/list/:uploadType',
-  checkAdminToken,
-  getFilesList,
-  AdminFileController.getFilesList
-);
-
-// ================ СИСТЕМНЫЕ РОУТЫ (ОБЩИЕ) ================
-
-/**
- * GET /api/uploads/system/statistics - Общая статистика загрузок (админы)
- */
-router.get('/system/statistics',
-  checkAdminToken,
-  CommonFileController.getUploadStats
-);
-
-/**
- * GET /api/uploads/system/folder-size/:directory - Размер конкретной папки
- */
-router.get('/system/folder-size/:directory',
-  checkAdminToken,
-  CommonFileController.getFolderSize
-);
-
-/**
- * POST /api/uploads/system/cleanup/:directory - Очистка старых файлов (только owner)
- * Body: { max_age_days }
- */
-router.post('/system/cleanup/:directory',
-  checkAdminToken,
-  CommonFileController.cleanupFiles
-);
-
-/**
- * POST /api/uploads/system/create-directories - Создание структуры папок (только owner)
- */
-router.post('/system/create-directories',
-  checkAdminToken,
-  CommonFileController.createDirectoryStructure
-);
-
-/**
- * DELETE /api/uploads/system/file/:uploadType/:filename - Удаление конкретного файла
- */
-router.delete('/system/file/:uploadType/:filename',
+router.delete('/admins/avatar/:admin_id/:filename',
   checkAdminToken,
   deleteFile,
-  CommonFileController.deleteSpecificFile
+  AdminFileController.removeAvatar
+);
+
+// ================ ОБЩИЕ СЛУЖЕБНЫЕ РОУТЫ ================
+
+/**
+ * GET /api/uploads/system/health - Проверка работоспособности файловой системы
+ */
+router.get('/system/health', CommonFileController.healthCheck);
+
+/**
+ * GET /api/uploads/system/stats - Статистика использования файлов
+ */
+router.get('/system/stats', 
+  checkAdminToken, 
+  CommonFileController.getStorageStats
 );
 
 /**
- * GET /api/uploads/system/health - Проверка состояния файловой системы (только owner)
+ * POST /api/uploads/system/cleanup - Очистка временных файлов (только owner)
  */
-router.get('/system/health',
+router.post('/system/cleanup',
   checkAdminToken,
-  CommonFileController.getSystemHealth
+  CommonFileController.cleanupTempFiles
 );
+
+// ================ ИНФОРМАЦИОННЫЕ РОУТЫ ================
+
+/**
+ * GET /api/uploads/supported-formats - Поддерживаемые форматы
+ */
+router.get('/supported-formats', (req, res) => {
+  res.json({
+    result: true,
+    message: "Поддерживаемые форматы файлов",
+    image_formats: {
+      input: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'],
+      output: 'webp (оптимизировано)',
+      max_size: '5MB',
+      processing: 'Автоматическое сжатие и оптимизация'
+    },
+    // ✅ ОБНОВЛЕНО: Убрано упоминание PDF
+    document_formats: {
+      note: "PDF документы теперь обрабатываются при регистрации",
+      registration_endpoints: [
+        "POST /api/couriers/register (PDF документы курьеров)",
+        "POST /api/partners/legal-info/:id (PDF документы партнеров)"
+      ]
+    },
+    restrictions: {
+      file_count: {
+        single_image: 1,
+        gallery: 10,
+        menu_images: "Без ограничений"
+      },
+      user_permissions: {
+        partners: "Только для созданных профилей",
+        couriers: "Только для одобренных курьеров", 
+        admins: "Полный доступ"
+      }
+    }
+  });
+});
+
+/**
+ * GET /api/uploads/migration-info - Информация о миграции
+ */
+router.get('/migration-info', (req, res) => {
+  res.json({
+    result: true,
+    message: "Информация о миграции файловой системы",
+    changes: {
+      version: "2.0.0",
+      date: new Date().toISOString(),
+      breaking_changes: [
+        "PDF документы больше не загружаются через /api/uploads/",
+        "Документы курьеров теперь загружаются при регистрации",
+        "Документы партнеров теперь загружаются при подаче легальных данных"
+      ],
+      what_remains: [
+        "Аватары курьеров (после одобрения)",
+        "Обложки ресторанов",
+        "Фото меню",
+        "Галереи партнеров",
+        "Аватары админов"
+      ],
+      migration_path: {
+        old_document_uploads: "Удалены из FileUpload API",
+        new_document_uploads: "Интегрированы в регистрацию",
+        existing_files: "Остаются без изменений",
+        new_workflow: "PDF при регистрации → Изображения после одобрения"
+      }
+    }
+  });
+});
 
 export default router;
