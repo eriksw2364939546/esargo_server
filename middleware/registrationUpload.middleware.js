@@ -1,18 +1,104 @@
-// middleware/registrationUpload.middleware.js - Адаптер для интеграции fileUpload с регистрацией
-import { uploadDocuments, processDocuments } from './fileUpload.middleware.js';
+// middleware/registrationUpload.middleware.js - ИСПРАВЛЕННЫЙ БЕЗ ДУБЛИРОВАНИЯ
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+
+/**
+ * ==================== КОНФИГУРАЦИЯ ПАПОК ДЛЯ PDF ==================== 
+ */
+const PDF_UPLOAD_CONFIGS = {
+  couriers: {
+    documents: "uploads/couriers/documentsPdf"
+  },
+  partners: {
+    documents: "uploads/partners/documentsImage"
+  }
+};
+
+/**
+ * ==================== СОЗДАНИЕ ПАПОК ====================
+ */
+const ensureDirectoryExists = (dirPath) => {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+    console.log(`📁 Created directory: ${dirPath}`);
+  }
+};
+
+// Создаем папки для PDF документов
+Object.values(PDF_UPLOAD_CONFIGS.couriers).forEach(ensureDirectoryExists);
+Object.values(PDF_UPLOAD_CONFIGS.partners).forEach(ensureDirectoryExists);
+
+/**
+ * ==================== КОНФИГУРАЦИЯ MULTER ДЛЯ PDF ====================
+ */
+const pdfStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const userRole = req.body.userRole || 'couriers'; // По умолчанию для курьеров
+    let uploadDir;
+    
+    if (userRole === 'partner') {
+      uploadDir = PDF_UPLOAD_CONFIGS.partners.documents;
+    } else {
+      uploadDir = PDF_UPLOAD_CONFIGS.couriers.documents;
+    }
+    
+    ensureDirectoryExists(uploadDir);
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    // Создаем уникальное имя файла
+    const timestamp = Date.now();
+    const random = Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    const documentType = file.fieldname; // id_card, bank_rib, etc.
+    
+    const filename = `${documentType}-${timestamp}-${random}${ext}`;
+    cb(null, filename);
+  }
+});
+
+// Фильтр для PDF файлов
+const pdfFileFilter = (req, file, cb) => {
+  // Разрешаем только PDF файлы
+  if (file.mimetype === 'application/pdf') {
+    cb(null, true);
+  } else {
+    cb(new Error(`Поле ${file.fieldname}: разрешены только PDF файлы`), false);
+  }
+};
+
+/**
+ * ==================== MULTER ДЛЯ PDF ДОКУМЕНТОВ ====================
+ */
+const uploadPdfDocuments = multer({
+  storage: pdfStorage,
+  fileFilter: pdfFileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB для PDF
+    files: 10 // До 10 файлов
+  }
+});
 
 /**
  * ================ MULTER ДЛЯ РЕГИСТРАЦИИ КУРЬЕРОВ ================
- * Переиспользует существующий uploadDocuments из fileUpload.middleware.js
- * Но с поддержкой именованных полей для каждого типа документа
  */
 export const uploadCourierRegistrationDocuments = (req, res, next) => {
-  // Устанавливаем uploadType для существующего middleware
-  req.body.uploadType = 'courier-documents';
+  // Устанавливаем роль для определения папки
   req.body.userRole = 'courier';
   
-  // Используем существующий uploadDocuments (поддерживает до 5 файлов)
-  uploadDocuments(req, res, (err) => {
+  // Поля для курьеров (в зависимости от типа транспорта)
+  const courierFields = [
+    { name: 'id_card', maxCount: 1 },
+    { name: 'bank_rib', maxCount: 1 },
+    { name: 'driver_license', maxCount: 1 },
+    { name: 'insurance', maxCount: 1 },
+    { name: 'vehicle_registration', maxCount: 1 }
+  ];
+  
+  const upload = uploadPdfDocuments.fields(courierFields);
+  
+  upload(req, res, (err) => {
     if (err) {
       return res.status(400).json({
         result: false,
@@ -20,16 +106,16 @@ export const uploadCourierRegistrationDocuments = (req, res, next) => {
       });
     }
     
-    // Проверяем что загружены обязательные документы
-    const files = req.files || [];
-    if (files.length === 0) {
+    // Проверяем что загружены файлы
+    const files = req.files;
+    if (!files || Object.keys(files).length === 0) {
       return res.status(400).json({
         result: false,
         message: "Необходимо загрузить хотя бы один документ"
       });
     }
     
-    // Проверяем обязательные документы
+    // Проверяем обязательные документы в зависимости от транспорта
     const vehicleType = req.body.vehicle_type;
     const requiredFields = ['id_card', 'bank_rib']; // Базовые для всех
     
@@ -42,7 +128,7 @@ export const uploadCourierRegistrationDocuments = (req, res, next) => {
     }
     
     // Проверяем что все обязательные документы загружены
-    const uploadedFields = files.map(file => file.fieldname);
+    const uploadedFields = Object.keys(files);
     const missingFields = requiredFields.filter(field => !uploadedFields.includes(field));
     
     if (missingFields.length > 0) {
@@ -54,21 +140,32 @@ export const uploadCourierRegistrationDocuments = (req, res, next) => {
       });
     }
     
+    console.log('📄 COURIER DOCUMENTS UPLOADED:', {
+      uploaded_fields: uploadedFields,
+      vehicle_type: vehicleType,
+      required_fields: requiredFields
+    });
+    
     next();
   });
 };
 
 /**
  * ================ MULTER ДЛЯ ПОДАЧИ ДОКУМЕНТОВ ПАРТНЕРОВ ================
- * Переиспользует существующий uploadDocuments из fileUpload.middleware.js
  */
 export const uploadPartnerLegalDocuments = (req, res, next) => {
-  // Устанавливаем uploadType для существующего middleware
-  req.body.uploadType = 'partner-documents';
+  // Устанавливаем роль для определения папки
   req.body.userRole = 'partner';
   
-  // Используем существующий uploadDocuments
-  uploadDocuments(req, res, (err) => {
+  // Поля для партнеров
+  const partnerFields = [
+    { name: 'kbis_document', maxCount: 1 },
+    { name: 'id_document', maxCount: 1 }
+  ];
+  
+  const upload = uploadPdfDocuments.fields(partnerFields);
+  
+  upload(req, res, (err) => {
     if (err) {
       return res.status(400).json({
         result: false,
@@ -76,16 +173,16 @@ export const uploadPartnerLegalDocuments = (req, res, next) => {
       });
     }
     
-    const files = req.files || [];
-    if (files.length === 0) {
+    const files = req.files;
+    if (!files || Object.keys(files).length === 0) {
       return res.status(400).json({
         result: false,
         message: "Необходимо загрузить хотя бы один документ"
       });
     }
     
-    // Проверяем что загружены обязательные документы для легальной информации
-    const uploadedFields = files.map(file => file.fieldname);
+    // Проверяем обязательные документы для легальной информации
+    const uploadedFields = Object.keys(files);
     const requiredFields = ['kbis_document', 'id_document'];
     
     const missingFields = requiredFields.filter(field => !uploadedFields.includes(field));
@@ -99,104 +196,113 @@ export const uploadPartnerLegalDocuments = (req, res, next) => {
       });
     }
     
+    console.log('📄 PARTNER DOCUMENTS UPLOADED:', {
+      uploaded_fields: uploadedFields,
+      required_fields: requiredFields
+    });
+    
     next();
   });
 };
 
 /**
- * ================ ОБРАБОТКА ДОКУМЕНТОВ РЕГИСТРАЦИИ ================
- * Переиспользует существующий processDocuments и создает URL поля
+ * ================ ОБРАБОТКА ДОКУМЕНТОВ РЕГИСТРАЦИИ КУРЬЕРОВ ================
  */
 export const processCourierRegistrationDocuments = (req, res, next) => {
-  // Используем существующий processDocuments
-  processDocuments(req, res, (err) => {
-    if (err) {
-      return next(err);
-    }
+  try {
+    const files = req.files;
     
-    // Получаем обработанные документы
-    const uploadedDocuments = req.uploadedDocuments || [];
-    
-    if (uploadedDocuments.length === 0) {
+    if (!files || Object.keys(files).length === 0) {
       return res.status(400).json({
         result: false,
-        message: "Не удалось обработать документы"
+        message: "Нет файлов для обработки"
       });
     }
     
     // ✅ ГЛАВНАЯ ЛОГИКА: Преобразуем файлы в URL поля для сервисов
-    uploadedDocuments.forEach(doc => {
-      const fieldName = `${doc.documentType}_url`;
-      req.body[fieldName] = doc.url; // Добавляем URL в req.body
+    Object.keys(files).forEach(fieldName => {
+      const fileArray = files[fieldName];
+      if (fileArray && fileArray.length > 0) {
+        const file = fileArray[0]; // Берем первый файл
+        const relativePath = path.relative(process.cwd(), file.path);
+        const url = `/${relativePath.replace(/\\/g, '/')}`; // Для Windows
+        
+        // Создаем URL поле для существующих сервисов
+        req.body[`${fieldName}_url`] = url;
+      }
     });
     
     // Логируем для отладки
+    const urlFields = Object.keys(files).map(field => `${field}_url`);
     console.log('📄 COURIER REGISTRATION DOCUMENTS PROCESSED:', {
-      uploaded_count: uploadedDocuments.length,
-      url_fields_created: uploadedDocuments.map(doc => `${doc.documentType}_url`),
+      uploaded_count: Object.keys(files).length,
+      url_fields_created: urlFields,
       vehicle_type: req.body.vehicle_type
     });
     
     next();
-  });
+    
+  } catch (error) {
+    console.error('🚨 PROCESS COURIER DOCUMENTS ERROR:', error);
+    return res.status(500).json({
+      result: false,
+      message: "Ошибка обработки документов курьера",
+      error: error.toString()
+    });
+  }
 };
 
 /**
  * ================ ОБРАБОТКА ДОКУМЕНТОВ ПАРТНЕРОВ ================
- * Переиспользует существующий processDocuments и создает URL поля
  */
 export const processPartnerLegalDocuments = (req, res, next) => {
-  // Используем существующий processDocuments
-  processDocuments(req, res, (err) => {
-    if (err) {
-      return next(err);
-    }
+  try {
+    const files = req.files;
     
-    // Получаем обработанные документы
-    const uploadedDocuments = req.uploadedDocuments || [];
-    
-    if (uploadedDocuments.length === 0) {
+    if (!files || Object.keys(files).length === 0) {
       return res.status(400).json({
         result: false,
-        message: "Не удалось обработать документы"
+        message: "Нет файлов для обработки"
       });
     }
     
     // ✅ ГЛАВНАЯ ЛОГИКА: Создаем объект documents для сервиса партнеров
     req.body.documents = {};
     
-    uploadedDocuments.forEach(doc => {
-      req.body.documents[doc.documentType] = doc.url;
+    Object.keys(files).forEach(fieldName => {
+      const fileArray = files[fieldName];
+      if (fileArray && fileArray.length > 0) {
+        const file = fileArray[0]; // Берем первый файл
+        const relativePath = path.relative(process.cwd(), file.path);
+        const url = `/${relativePath.replace(/\\/g, '/')}`; // Для Windows
+        
+        // Добавляем в объект documents
+        req.body.documents[fieldName] = url;
+      }
     });
-    
-    // Обрабатываем дополнительные документы (если есть)
-    const additionalDocs = uploadedDocuments.filter(doc => 
-      !['kbis_document', 'id_document'].includes(doc.documentType)
-    );
-    
-    if (additionalDocs.length > 0) {
-      req.body.documents.additional_documents = additionalDocs.map(doc => ({
-        name: doc.originalName,
-        url: doc.url,
-        uploaded_at: new Date()
-      }));
-    }
     
     // Логируем для отладки
     console.log('📄 PARTNER LEGAL DOCUMENTS PROCESSED:', {
-      uploaded_count: uploadedDocuments.length,
-      documents_object: Object.keys(req.body.documents),
-      additional_documents_count: additionalDocs.length
+      uploaded_count: Object.keys(files).length,
+      documents_object: Object.keys(req.body.documents)
     });
     
     next();
-  });
+    
+  } catch (error) {
+    console.error('🚨 PROCESS PARTNER DOCUMENTS ERROR:', error);
+    return res.status(500).json({
+      result: false,
+      message: "Ошибка обработки документов партнера",
+      error: error.toString()
+    });
+  }
 };
 
 /**
  * ================ ЭКСПОРТ ================
  */
-export {
+export default{
   uploadCourierRegistrationDocuments,
   uploadPartnerLegalDocuments,
   processCourierRegistrationDocuments,

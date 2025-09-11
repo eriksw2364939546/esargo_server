@@ -11,8 +11,18 @@ import {
   validateUploadType
 } from '../middleware/fileUpload.middleware.js';
 
-// Контроллеры
-import PartnerFileController from '../controllers/FileUpload/PartnerFileController.js';
+// Контроллеры - ИСПРАВЛЕН ИМПОРТ PartnerFileController
+import {
+  uploadCoverImage,
+  updateCoverImage,
+  addGalleryImages,
+  addMenuItemImage,
+  uploadDocuments,
+  removeGalleryImage,
+  getFiles,
+  getFilesList as getPartnerFilesList
+} from '../controllers/FileUpload/PartnerFileController.js';
+
 import CourierFileController from '../controllers/FileUpload/CourierFileController.js';
 import AdminFileController from '../controllers/FileUpload/AdminFileController.js';
 import CommonFileController from '../controllers/FileUpload/CommonFileController.js';
@@ -86,7 +96,7 @@ router.post('/partners/cover/upload',
   validateUploadType,
   uploadSingleImage,
   processImages,
-  PartnerFileController.uploadCoverImage
+  uploadCoverImage // ИСПРАВЛЕНО: прямой вызов функции
 );
 
 /**
@@ -100,7 +110,7 @@ router.put('/partners/cover/update',
   validateUploadType,
   uploadSingleImage,
   processImages,
-  PartnerFileController.updateCoverImage
+  updateCoverImage // ИСПРАВЛЕНО: прямой вызов функции
 );
 
 /**
@@ -114,7 +124,7 @@ router.post('/partners/gallery',
   validateUploadType,
   uploadMultipleImages,
   processImages,
-  PartnerFileController.addGalleryImages
+  addGalleryImages // ИСПРАВЛЕНО: прямой вызов функции
 );
 
 /**
@@ -128,7 +138,7 @@ router.post('/partners/menu-item',
   validateUploadType,
   uploadSingleImage,
   processImages,
-  PartnerFileController.addMenuItemImage
+  addMenuItemImage // ИСПРАВЛЕНО: прямой вызов функции
 );
 
 // ✅ УДАЛЕНО: POST /api/uploads/partners/documents - теперь в регистрации!
@@ -142,7 +152,7 @@ router.delete('/partners/gallery/:profile_id/:filename',
   checkPartnerToken,
   requirePartnerProfile,
   deleteFile,
-  PartnerFileController.removeGalleryImage
+  removeGalleryImage // ИСПРАВЛЕНО: прямой вызов функции
 );
 
 /**
@@ -151,7 +161,7 @@ router.delete('/partners/gallery/:profile_id/:filename',
 router.get('/partners/files/:profile_id',
   checkPartnerToken,
   requirePartnerProfile,
-  PartnerFileController.getFiles
+  getFiles // ИСПРАВЛЕНО: прямой вызов функции
 );
 
 /**
@@ -161,7 +171,7 @@ router.get('/partners/list/:uploadType',
   checkPartnerToken,
   requirePartnerProfile,
   getFilesList,
-  PartnerFileController.getFilesList
+  getPartnerFilesList // ИСПРАВЛЕНО: использование переименованной функции
 );
 
 // ================ КУРЬЕРСКИЕ РОУТЫ (ТОЛЬКО АВАТАРЫ) ================

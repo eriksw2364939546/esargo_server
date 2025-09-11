@@ -3,6 +3,7 @@ import {
   uploadAdminAvatar,
   updateAdminAvatar,
   createAdminWithAvatar,
+  removeAdminAvatar, // ДОБАВЛЕН ИМПОРТ
   getAdminFiles,
   validateAdminFileAccess,
   getSystemFileStatistics
@@ -145,6 +146,49 @@ export const createWithAvatar = async (req, res) => {
 };
 
 /**
+ * ================== УДАЛЕНИЕ АВАТАРА АДМИНА ==================
+ */
+export const removeAvatar = async (req, res) => {
+  try {
+    const { user, deletedFile } = req;
+    const { admin_id } = req.params;
+
+    if (!deletedFile) {
+      return res.status(400).json({
+        result: false,
+        message: "Файл не был удален из файловой системы"
+      });
+    }
+
+    // Проверяем доступ (сам админ или owner)
+    await validateAdminFileAccess(admin_id, user._id);
+
+    // Используем сервис для удаления аватара из базы данных
+    const result = await removeAdminAvatar(admin_id, user._id);
+
+    res.status(200).json({
+      result: true,
+      message: "Аватар администратора успешно удален",
+      data: {
+        ...result,
+        deleted_file: deletedFile
+      }
+    });
+
+  } catch (error) {
+    console.error('🚨 REMOVE ADMIN AVATAR Controller Error:', error);
+    
+    const statusCode = error.message.includes('не найден') ? 404 :
+                      error.message.includes('доступ') || error.message.includes('прав') ? 403 : 500;
+
+    res.status(statusCode).json({
+      result: false,
+      message: error.message || "Ошибка удаления аватара администратора"
+    });
+  }
+};
+
+/**
  * ================== ПОЛУЧЕНИЕ ФАЙЛОВ АДМИНА ==================
  */
 export const getFiles = async (req, res) => {
@@ -256,7 +300,8 @@ export const getFilesList = async (req, res) => {
 export default {
   uploadAvatar,
   updateAvatar,
-  createWithAvatar,
+  createAdminWithAvatar: createWithAvatar,
+  removeAvatar, // ДОБАВЛЕНА ФУНКЦИЯ
   getFiles,
   getSystemStatistics,
   getFilesList

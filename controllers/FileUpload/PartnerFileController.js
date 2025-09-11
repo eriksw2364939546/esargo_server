@@ -1,9 +1,9 @@
-// controllers/FileUpload/PartnerFileController.js
+// controllers/FileUpload/PartnerFileController.js - ИСПРАВЛЕННЫЙ
 import {
   uploadPartnerCoverImage,
   updatePartnerCoverImage,
   addPartnerGalleryImages,
-  addMenuItemImage,
+  addMenuItemImage as addMenuItemImageService, // ✅ ПЕРЕИМЕНОВАНО
   savePartnerDocuments,
   removePartnerGalleryImage,
   getPartnerFiles,
@@ -161,8 +161,8 @@ export const addMenuItemImage = async (req, res) => {
       });
     }
 
-    // Добавляем фото к продукту (проверка доступа внутри сервиса)
-    const result = await addMenuItemImage(product_id, uploadedFiles[0]);
+    // ✅ ИСПРАВЛЕНО: Используем переименованную функцию сервиса
+    const result = await addMenuItemImageService(product_id, uploadedFiles[0]);
 
     res.status(201).json({
       result: true,
@@ -329,16 +329,3 @@ export const getFilesList = async (req, res) => {
   }
 };
 
-/**
- * ================== ЭКСПОРТ ==================
- */
-export default {
-  uploadCoverImage,
-  updateCoverImage,
-  addGalleryImages,
-  addMenuItemImage,
-  uploadDocuments,
-  removeGalleryImage,
-  getFiles,
-  getFilesList
-};
