@@ -295,24 +295,30 @@ export const validateCustomerUpdate = (req, res, next) => {
     }
 
     // Проверка телефона (если предоставлен)
-    if (phone !== undefined && phone !== null && phone !== '') {
-      const phoneRegex = /^(?:(?:\+33|0)[1-9](?:[0-9]{8}))$/;
-      if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
-        errors.push('Неверный формат телефона (ожидается французский формат: +33XXXXXXXXX или 0XXXXXXXXX)');
+    if (phone !== undefined) {
+      if (phone.trim().length === 0) {
+        errors.push('Номер телефона не может быть пустым');
+      } else {
+        const phoneRegex = /^(?:(?:\+33|0)[1-9](?:[0-9]{8}))$/;
+        if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
+          errors.push('Неверный формат телефона (ожидается французский формат)');
+        }
       }
     }
 
-    // Проверка пароля (если изменяется)
+    // Проверка пароля (если предоставлен)
     if (password !== undefined) {
-      if (password.length < 6) {
+      if (password.trim().length === 0) {
+        errors.push('Пароль не может быть пустым');
+      } else if (password.length < 6) {
         errors.push('Пароль должен содержать минимум 6 символов');
       } else if (password.length > 128) {
         errors.push('Пароль не может быть длиннее 128 символов');
       }
 
-      // Если есть пароль, должно быть и подтверждение
+      // Если указан пароль, требуем подтверждение
       if (!confirm_password) {
-        errors.push('Подтверждение пароля обязательно при смене пароля');
+        errors.push('При смене пароля необходимо подтверждение');
       } else if (password !== confirm_password) {
         errors.push('Пароли не совпадают');
       }
@@ -326,14 +332,13 @@ export const validateCustomerUpdate = (req, res, next) => {
       });
     }
 
-    // Нормализуем данные
+    // Нормализуем данные (только если они предоставлены)
     if (first_name !== undefined) req.body.first_name = first_name.trim();
     if (last_name !== undefined) req.body.last_name = last_name.trim();
     if (email !== undefined) req.body.email = email.toLowerCase().trim();
-    if (phone !== undefined && phone !== null && phone !== '') {
-      req.body.phone = phone.replace(/\s/g, '');
-    }
-    // Убираем confirm_password из req.body
+    if (phone !== undefined) req.body.phone = phone.replace(/\s/g, '');
+    
+    // Убираем confirm_password из req.body перед передачей в контроллер
     delete req.body.confirm_password;
 
     next();
@@ -341,7 +346,7 @@ export const validateCustomerUpdate = (req, res, next) => {
     console.error('Customer update validation error:', error);
     return res.status(500).json({
       result: false,
-      message: "Ошибка валидации данных"
+      message: "Ошибка валидации данных обновления"
     });
   }
 };

@@ -1,9 +1,10 @@
 // services/FileUpload/partner.fileUpload.service.js
-import { PartnerProfile, Product } from '../../models/index.js';
+import { PartnerProfile } from '../../models/index.js';
 import { validateMongoId } from '../../utils/validation.utils.js';
-import mongoose from 'mongoose';
 
-
+/**
+ * ================== ЗАГРУЗКА ОБЛОЖКИ ПАРТНЕРА ==================
+ */
 export const uploadPartnerCoverImage = async (partnerId, imageData) => {
   try {
     if (!validateMongoId(partnerId)) {
@@ -33,13 +34,13 @@ export const uploadPartnerCoverImage = async (partnerId, imageData) => {
     };
 
   } catch (error) {
-    console.error('UPLOAD PARTNER COVER ERROR:', error);
+    console.error('UPLOAD PARTNER COVER IMAGE ERROR:', error);
     throw error;
   }
 };
 
 /**
- * ================== ОБНОВЛЕНИЕ ОБЛОЖКИ РЕСТОРАНА/МАГАЗИНА ==================
+ * ================== ОБНОВЛЕНИЕ ОБЛОЖКИ ПАРТНЕРА ==================
  */
 export const updatePartnerCoverImage = async (partnerId, imageData) => {
   try {
@@ -65,7 +66,7 @@ export const updatePartnerCoverImage = async (partnerId, imageData) => {
     };
 
   } catch (error) {
-    console.error('UPDATE PARTNER COVER ERROR:', error);
+    console.error('UPDATE PARTNER COVER IMAGE ERROR:', error);
     throw error;
   }
 };
@@ -73,7 +74,7 @@ export const updatePartnerCoverImage = async (partnerId, imageData) => {
 /**
  * ================== ДОБАВЛЕНИЕ ИЗОБРАЖЕНИЙ В ГАЛЕРЕЮ ==================
  */
-export const addPartnerGalleryImages = async (partnerId, imagesData, imageType = 'other') => {
+export const addPartnerGalleryImages = async (partnerId, imagesData) => {
   try {
     if (!validateMongoId(partnerId)) {
       throw new Error('Неверный ID партнера');
@@ -84,63 +85,78 @@ export const addPartnerGalleryImages = async (partnerId, imagesData, imageType =
       throw new Error('Профиль партнера не найден');
     }
 
-    // Проверяем лимит галереи (максимум 20 изображений)
-    if (profile.gallery.length + imagesData.length > 20) {
-      throw new Error(`Превышен лимит галереи. Максимум 20 изображений. Текущее количество: ${profile.gallery.length}`);
-    }
-
-    // Добавляем изображения в галерею
-    const newGalleryItems = imagesData.map(imageData => ({
+    // Создаем записи для галереи
+    const galleryImages = imagesData.map(imageData => ({
       url: imageData.url,
-      title: imageData.originalName || '',
-      description: '',
-      type: imageType, // 'interior', 'exterior', 'food', 'staff', 'other'
-      uploaded_at: new Date()
+      filename: imageData.filename,
+      original_name: imageData.originalName,
+      size: imageData.size,
+      uploaded_at: new Date(),
+      type: 'gallery_image'
     }));
 
-    profile.gallery.push(...newGalleryItems);
+    // Добавляем изображения в галерею
+    if (!profile.gallery) {
+      profile.gallery = [];
+    }
+
+    profile.gallery.push(...galleryImages);
     await profile.save();
 
     return {
       success: true,
       profile_id: profile._id,
       business_name: profile.business_name,
-      added_images: newGalleryItems.length,
+      uploaded_images: galleryImages.length,
       total_gallery_images: profile.gallery.length,
-      new_images: newGalleryItems
+      new_images: galleryImages
     };
 
   } catch (error) {
-    console.error('ADD PARTNER GALLERY ERROR:', error);
+    console.error('ADD PARTNER GALLERY IMAGES ERROR:', error);
     throw error;
   }
 };
 
 /**
- * ================== ДОБАВЛЕНИЕ ФОТО К ПРОДУКТУ МЕНЮ ==================
+ * ================== ДОБАВЛЕНИЕ ИЗОБРАЖЕНИЯ БЛЮДА/ТОВАРА ==================
  */
-export const addMenuItemImage = async (productId, imageData) => {
+export const addMenuItemImage = async (partnerId, imageData, menuItemId) => {
   try {
-    if (!validateMongoId(productId)) {
-      throw new Error('Неверный ID продукта');
+    if (!validateMongoId(partnerId)) {
+      throw new Error('Неверный ID партнера');
     }
 
-    const product = await Product.findById(productId).populate('partner_id', 'business_name');
-    if (!product) {
-      throw new Error('Продукт не найден');
+    const profile = await PartnerProfile.findById(partnerId);
+    if (!profile) {
+      throw new Error('Профиль партнера не найден');
     }
 
-    // Обновляем изображение продукта
-    product.image_url = imageData.url;
-    await product.save();
+    // Создаем запись изображения блюда
+    const menuImage = {
+      url: imageData.url,
+      filename: imageData.filename,
+      original_name: imageData.originalName,
+      size: imageData.size,
+      uploaded_at: new Date(),
+      type: 'menu_item_image',
+      menu_item_id: menuItemId || null
+    };
+
+    // Добавляем в галерею (с пометкой что это блюдо)
+    if (!profile.gallery) {
+      profile.gallery = [];
+    }
+
+    profile.gallery.push(menuImage);
+    await profile.save();
 
     return {
       success: true,
-      product_id: product._id,
-      product_name: product.name,
-      partner_name: product.partner_id.business_name,
-      image_url: product.image_url,
-      updated_at: new Date()
+      profile_id: profile._id,
+      business_name: profile.business_name,
+      menu_image: menuImage,
+      total_gallery_images: profile.gallery.length
     };
 
   } catch (error) {
@@ -174,9 +190,8 @@ export const savePartnerDocuments = async (partnerId, documentsData) => {
       status: 'pending_review'
     }));
 
-    // Сохраняем документы (можно расширить модель PartnerProfile или создать отдельную модель)
-    // Пока сохраняем в поле documents (если оно есть) или создаем временное решение
-        if (!profile.additional_documents) {
+    // ✅ ИСПРАВЛЕНО: Используем additional_documents
+    if (!profile.additional_documents) {
       profile.additional_documents = [];
     }
     
@@ -259,11 +274,11 @@ export const getPartnerFiles = async (partnerId) => {
       files: {
         cover_image: profile.cover_image_url || null,
         gallery: profile.gallery || [],
-        additional_documents: profile.additional_documents || [] // ✅ ИСПРАВЛЕНО
+        additional_documents: profile.additional_documents || []
       },
       statistics: {
         total_gallery_images: profile.gallery?.length || 0,
-        total_additional_documents: profile.additional_documents?.length || 0, // ✅ ИСПРАВЛЕНО
+        total_additional_documents: profile.additional_documents?.length || 0,
         has_cover_image: !!profile.cover_image_url
       }
     };

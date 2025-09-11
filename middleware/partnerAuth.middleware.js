@@ -124,78 +124,92 @@ const validateLegalInfoData = (req, res, next) => {
         console.log('🔍 VALIDATE LEGAL DATA - Start:', {
             has_siret: !!data.legal_data?.siret_number,
             has_iban: !!data.bank_details?.iban,
-            legal_form: data.legal_data?.legal_form
+            has_legal_name: !!data.legal_data?.legal_name
         });
 
-        // Проверка структуры данных
-        if (!data.legal_data || !data.bank_details || !data.legal_contact) {
+        // Проверка наличия основных секций
+        if (!data.legal_data) {
             return res.status(400).json({
                 result: false,
-                message: "Требуются секции: legal_data, bank_details, legal_contact"
+                message: "Юридические данные обязательны"
             });
         }
 
-        // Проверка обязательных полей в legal_data
-        const requiredLegalFields = ['legal_name', 'siret_number', 'legal_address', 'legal_representative'];
+        if (!data.bank_details) {
+            return res.status(400).json({
+                result: false,
+                message: "Банковские данные обязательны"
+            });
+        }
+
+        if (!data.legal_contact) {
+            return res.status(400).json({
+                result: false,
+                message: "Контактные данные юридического лица обязательны"
+            });
+        }
+
+        // Валидация обязательных полей юридических данных
+        const requiredLegalFields = ['legal_name', 'siret_number', 'legal_form', 'legal_address', 'legal_representative'];
         const missingLegalFields = requiredLegalFields.filter(field => !data.legal_data[field]);
         
         if (missingLegalFields.length > 0) {
             return res.status(400).json({
                 result: false,
-                message: `Обязательные юридические поля: ${missingLegalFields.join(', ')}`
+                message: `Обязательные юридические поля отсутствуют: ${missingLegalFields.join(', ')}`
             });
         }
 
-        // Проверка обязательных полей в bank_details
+        // Валидация обязательных банковских полей
         const requiredBankFields = ['iban', 'bic'];
         const missingBankFields = requiredBankFields.filter(field => !data.bank_details[field]);
         
         if (missingBankFields.length > 0) {
             return res.status(400).json({
                 result: false,
-                message: `Обязательные банковские поля: ${missingBankFields.join(', ')}`
+                message: `Обязательные банковские поля отсутствуют: ${missingBankFields.join(', ')}`
             });
         }
 
-        // Проверка обязательных полей в legal_contact
+        // Валидация обязательных контактных полей
         const requiredContactFields = ['email', 'phone'];
         const missingContactFields = requiredContactFields.filter(field => !data.legal_contact[field]);
         
         if (missingContactFields.length > 0) {
             return res.status(400).json({
                 result: false,
-                message: `Обязательные контактные поля юр.лица: ${missingContactFields.join(', ')}`
+                message: `Обязательные контактные поля отсутствуют: ${missingContactFields.join(', ')}`
             });
         }
 
-        // Валидация SIRET
+        // Валидация SIRET номера
         if (!validateSiret(data.legal_data.siret_number)) {
             return res.status(400).json({
                 result: false,
-                message: "SIRET должен содержать 14 цифр",
-                example: "123 456 789 00014"
+                message: "Некорректный SIRET номер",
+                format: "14 цифр, например: 12345678901234"
             });
         }
 
-        // Валидация IBAN
+        // Валидация французского IBAN
         if (!validateFrenchIban(data.bank_details.iban)) {
             return res.status(400).json({
                 result: false,
-                message: "IBAN должен быть французским",
-                example: "FR76 3000 6000 0112 3456 7890 189"
+                message: "Некорректный французский IBAN",
+                format: "Должен начинаться с FR, например: FR1420041010050500013M02606"
             });
         }
 
-        // Валидация TVA (если указан)
+        // Валидация TVA номера (если указан)
         if (data.legal_data.tva_number && !validateFrenchTva(data.legal_data.tva_number)) {
             return res.status(400).json({
                 result: false,
-                message: "TVA должен быть французским форматом",
-                example: "FR12 345678912"
+                message: "Некорректный TVA номер",
+                format: "Формат: FR + 11 цифр, например: FR12345678901"
             });
         }
 
-        // Валидация email юр. лица
+        // Валидация email юридического лица
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(data.legal_contact.email)) {
             return res.status(400).json({

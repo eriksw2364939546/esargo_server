@@ -2,7 +2,9 @@
 import { CourierProfile } from '../../models/index.js';
 import { validateMongoId } from '../../utils/validation.utils.js';
 
-
+/**
+ * ================== ЗАГРУЗКА АВАТАРА КУРЬЕРА ==================
+ */
 export const uploadCourierAvatar = async (courierId, imageData) => {
   try {
     if (!validateMongoId(courierId)) {
@@ -96,13 +98,13 @@ export const saveCourierDocuments = async (courierId, documentsData) => {
     }));
 
     // Обновляем документы в профиле курьера
-       if (!profile.additional_documents) {
-       profile.additional_documents = [];
-     }
+    if (!profile.additional_documents) {
+      profile.additional_documents = [];
+    }
 
     // Проверяем лимит документов (максимум 10)
-    if (profile.documents.length + documentRecords.length > 10) {
-      throw new Error(`Превышен лимит документов. Максимум 10 документов. Текущее количество: ${profile.documents.length}`);
+    if (profile.additional_documents.length + documentRecords.length > 10) {
+      throw new Error(`Превышен лимит документов. Максимум 10 документов. Текущее количество: ${profile.additional_documents.length}`);
     }
 
     profile.additional_documents.push(...documentRecords);
@@ -161,7 +163,7 @@ export const getCourierFiles = async (courierId) => {
         additional_documents: additionalDocumentsByType
       },
       statistics: {
-        total_additional_documents: profile.additional_documents?.length || 0, // ✅ ИСПРАВЛЕНО
+        total_additional_documents: profile.additional_documents?.length || 0,
         has_avatar: !!profile.avatar_url,
         document_status: profile.documents_status || 'not_required',
         required_documents: getRequiredDocuments(profile.vehicle_type),
@@ -207,7 +209,7 @@ export const removeCourierDocument = async (courierId, documentId) => {
       success: true,
       profile_id: profile._id,
       removed_document: removedDocument,
-      remaining_documents: profile.additional_documents.length, // ✅ ИСПРАВЛЕНО
+      remaining_documents: profile.additional_documents.length,
       document_status: profile.documents_status
     };
 
