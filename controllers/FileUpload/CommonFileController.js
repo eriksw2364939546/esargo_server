@@ -1,4 +1,5 @@
 // controllers/FileUpload/CommonFileController.js - Общие файловые операции
+import fs from 'fs'; // ДОБАВЛЕН ИМПОРТ
 import {
   getUploadStatistics,
   cleanupOldFiles,
@@ -170,6 +171,48 @@ export const cleanupFiles = async (req, res) => {
 };
 
 /**
+ * ================== ОЧИСТКА ВРЕМЕННЫХ ФАЙЛОВ (ДЛЯ РОУТА) ==================
+ */
+export const cleanupTempFiles = async (req, res) => {
+  try {
+    const { user } = req;
+
+    // Проверка прав (только owner)
+    if (user.role !== 'owner') {
+      return res.status(403).json({
+        result: false,
+        message: "Недостаточно прав: только owner может очищать файлы"
+      });
+    }
+
+    // Очищаем старые файлы (вызываем сервис без параметров для общей очистки)
+    const result = await cleanupOldFiles();
+
+    if (!result.success) {
+      return res.status(500).json({
+        result: false,
+        message: result.reason === 'directory_not_found' ? 
+                'Папка не найдена' : 'Ошибка очистки'
+      });
+    }
+
+    res.status(200).json({
+      result: true,
+      message: `Очистка завершена: удалено ${result.cleanup_summary?.files_deleted || 0} файлов`,
+      data: result
+    });
+
+  } catch (error) {
+    console.error('🚨 CLEANUP TEMP FILES Controller Error:', error);
+    res.status(500).json({
+      result: false,
+      message: "Ошибка очистки временных файлов",
+      error: error.message
+    });
+  }
+};
+
+/**
  * ================== СОЗДАНИЕ СТРУКТУРЫ ПАПОК ==================
  */
 export const createDirectoryStructure = async (req, res) => {
@@ -332,13 +375,161 @@ export const getSystemHealth = async (req, res) => {
 };
 
 /**
+ * ================== ПРОВЕРКА РАБОТОСПОСОБНОСТИ ФАЙЛОВОЙ СИСТЕМЫ ==================
+ */
+export const healthCheck = async (req, res) => {
+  try {
+    // Проверяем существование основных папок
+    const directories = [
+      'uploads/partners/partnersImage',
+      'uploads/partners/menusImage',
+      'uploads/couriers/avatarsImage',
+      'uploads/admins/avatarsImage'
+    ];
+
+    const directoryStatus = {};
+    
+    for (const dir of directories) {
+      try {
+        await fs.promises.access(dir, fs.constants.F_OK);
+        directoryStatus[dir] = 'exists';
+      } catch (error) {
+        directoryStatus[dir] = 'missing';
+      }
+    }
+
+    const allDirectoriesExist = Object.values(directoryStatus).every(status => status === 'exists');
+
+    res.status(200).json({
+      result: true,
+      message: "Проверка файловой системы завершена",
+      system_status: allDirectoriesExist ? 'healthy' : 'partial',
+      timestamp: new Date().toISOString(),
+      directories: directoryStatus,
+      version: '2.0.0',
+      features: {
+        image_upload: 'enabled',
+        pdf_registration: 'enabled',
+        file_processing: 'enabled'
+      }
+    });
+
+  } catch (error) {
+    console.error('🚨 HEALTH CHECK Controller Error:', error);
+    res.status(500).json({
+      result: false,
+      message: "Ошибка проверки файловой системы",
+      system_status: 'error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * ================== СТАТИСТИКА ХРАНИЛИЩА (ALIAS ДЛЯ getUploadStats) ==================
+ */
+export const getStorageStats = async (req, res) => {
+  // Используем существующую функцию getUploadStats
+  return await getUploadStats(req, res);
+};
+
+/**
+ * ================== ПОЛУЧЕНИЕ СИСТЕМНОЙ СТАТИСТИКИ ФАЙЛОВ ==================
+ */
+export const getSystemFilesList = async (req, res) => {
+  try {
+    const { user } = req;
+
+    // Проверка прав (только owner)
+    if (user.role !== 'owner') {
+      return res.status(403).json({
+        result: false,
+        message: "Недостаточно прав для просмотра системных файлов"
+      });
+    }
+
+    // Получаем статистику всех папок
+    const uploadStats = await getUploadStatistics();
+    
+    if (!uploadStats.success) {
+      return res.status(500).json({
+        result: false,
+        message: "Ошибка получения системной статистики файлов"
+      });
+    }
+
+    res.status(200).json({
+      result: true,
+      message: "Системная статистика файлов получена",
+      data: uploadStats
+    });
+
+  } catch (error) {
+    console.error('🚨 GET SYSTEM FILES LIST Controller Error:', error);
+    res.status(500).json({
+      result: false,
+      message: "Ошибка получения системной статистики файлов",
+      error: error.message
+    });
+  }
+};
+
+/**
+ * ================== УДАЛЕНИЕ СИСТЕМНОГО ФАЙЛА ==================
+ */
+export const deleteSystemFile = async (req, res) => {
+  try {
+    const { user, deletedFile } = req;
+
+    // Проверка прав (только owner)
+    if (user.role !== 'owner') {
+      return res.status(403).json({
+        result: false,
+        message: "Недостаточно прав для удаления системных файлов"
+      });
+    }
+
+    if (!deletedFile) {
+      return res.status(400).json({
+        result: false,
+        message: "Файл не был удален из файловой системы"
+      });
+    }
+
+    res.status(200).json({
+      result: true,
+      message: "Системный файл успешно удален",
+      data: {
+        deleted_file: deletedFile,
+        deleted_by: user._id,
+        deleted_at: new Date(),
+        operation: 'system_file_deletion'
+      }
+    });
+
+  } catch (error) {
+    console.error('🚨 DELETE SYSTEM FILE Controller Error:', error);
+    res.status(500).json({
+      result: false,
+      message: "Ошибка удаления системного файла",
+      error: error.message
+    });
+  }
+};
+
+/**
  * ================== ЭКСПОРТ ==================
  */
 export default {
   getUploadStats,
   getFolderSize,
   cleanupFiles,
+  cleanupTempFiles,
   createDirectoryStructure,
   deleteSpecificFile,
-  getSystemHealth
+  getSystemHealth,
+  healthCheck,
+  getStorageStats,
+  getSystemFilesList,
+  deleteSystemFile
 };
