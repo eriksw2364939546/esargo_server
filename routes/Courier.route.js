@@ -25,12 +25,14 @@ import {
   processCourierRegistrationDocuments 
 } from '../middleware/registrationUpload.middleware.js';
 
+import { authFieldsSanitizer } from '../middleware/security.middleware.js';
+
 const router = express.Router();
 
 // ================ ПУБЛИЧНЫЕ РОУТЫ ================
 
 // ✅ ОБНОВЛЕННЫЙ РОУТ: POST /api/couriers/register - Регистрация курьера с PDF документами
-router.post('/register', 
+router.post('/register', authFieldsSanitizer,
   // ✅ НОВЫЕ MIDDLEWARE для загрузки PDF файлов
   uploadCourierRegistrationDocuments,    // Multer для PDF документов (заменяет URL поля)
   processCourierRegistrationDocuments,   // Обработка файлов и создание URL полей в req.body
@@ -41,7 +43,7 @@ router.post('/register',
 );
 
 // POST /api/couriers/login - Авторизация курьера
-router.post('/login', loginCourierController);
+router.post('/login', authFieldsSanitizer, loginCourierController);
 
 // ================ ЗАЩИЩЕННЫЕ РОУТЫ (базовая проверка токена) ================
 

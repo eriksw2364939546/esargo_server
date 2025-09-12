@@ -26,6 +26,8 @@ import {
     processPartnerLegalDocuments 
 } from '../middleware/registrationUpload.middleware.js';
 
+import { authFieldsSanitizer } from '../middleware/security.middleware.js';
+
 const router = express.Router();
 
 // ================ ПУБЛИЧНЫЕ РОУТЫ ================
@@ -34,7 +36,7 @@ const router = express.Router();
  * POST /api/partners/register - Регистрация партнера
  * Этап 1: Создание InitialPartnerRequest со статусом 'pending'
  */
-router.post('/register', 
+router.post('/register', authFieldsSanitizer,
     validatePartnerRegistrationData,  // Валидация французских данных
     registerPartner
 );
@@ -42,7 +44,7 @@ router.post('/register',
 /**
  * POST /api/partners/login - Авторизация партнера
  */
-router.post('/login', loginPartnerController);
+router.post('/login', authFieldsSanitizer, loginPartnerController);
 
 // ================ ЗАЩИЩЕННЫЕ РОУТЫ (базовая проверка токена) ================
 

@@ -30,6 +30,8 @@ import {
   validateCustomerUpdate
 } from '../middleware/customerAuth.middleware.js';
 
+import { authFieldsSanitizer } from '../middleware/security.middleware.js';
+
 const router = express.Router();
 
 // ================ ПУБЛИЧНЫЕ РОУТЫ (без middleware) ================
@@ -38,7 +40,7 @@ const router = express.Router();
  * POST /api/customers/register - Регистрация клиента
  * Middleware: validateCustomerRegistration (валидация данных + подтверждение пароля)
  */
-router.post('/register', 
+router.post('/register', authFieldsSanitizer, 
   validateCustomerRegistration,
   register
 );
@@ -47,7 +49,7 @@ router.post('/register',
  * POST /api/customers/login - Авторизация пользователя
  * Middleware: нет (публичный endpoint)
  */
-router.post('/login', login);
+router.post('/login', authFieldsSanitizer, login);
 
 /**
  * GET /api/customers/health - Проверка работы роутов

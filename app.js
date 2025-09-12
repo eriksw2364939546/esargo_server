@@ -21,6 +21,8 @@ import { errorHandler, notFound } from './middleware/errorHandler.js';
 import routes from './routes/index.js';
 import initOwnerAccount from './services/initOwner.service.js';
 
+import { securitySanitizer, authFieldsSanitizer, headersSecurity, securityLogger  } from './middleware/security.middleware.js';
+
 const app = express();
 
 // 🧹 ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ И ИНИЦИАЛИЗАЦИЯ АВТООЧИСТКИ
@@ -56,31 +58,12 @@ connectDB().then(async () => {
   }
 });
 
-// 🆕 НАСТРОЙКА СЕССИЙ ДЛЯ КОРЗИНЫ
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'esargo-session-secret-key-2024',
-  name: 'esargo.session', // Имя cookie
-  resave: false,
-  saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: config.MONGODB_URI,
-    collectionName: 'sessions',
-    ttl: 24 * 60 * 60, // 24 часа в секундах
-    touchAfter: 24 * 3600, // Обновлять сессию раз в 24 часа если не изменялась
-  }),
-  cookie: {
-    secure: config.isProduction(), // HTTPS только в продакшене
-    httpOnly: true, // Защита от XSS
-    maxAge: 24 * 60 * 60 * 1000, // 24 часа в миллисекундах
-    sameSite: 'lax' // CSRF защита
-  },
-  rolling: true // Обновлять время жизни при каждом запросе
-}));
-
-startupLogger('✅ Express sessions configured with MongoStore for shopping cart');
-
 // Trust proxy для работы за load balancer
 app.set('trust proxy', 1);
+
+// 🔐 СИСТЕМА БЕЗОПАСНОСТИ - ПЕРВАЯ ЛИНИЯ ЗАЩИТЫ
+app.use(headersSecurity);        // Защита заголовков от инъекций
+app.use(securityLogger);         // Логирование подозрительных запросов
 
 // Безопасность - Helmet
 if (config.HELMET_ENABLED) {
@@ -145,8 +128,34 @@ app.use(
   })
 );
 
-// Защита от NoSQL инъекций
+// 🔐 ОСНОВНАЯ СИСТЕМА БЕЗОПАСНОСТИ - ПОСЛЕ ПАРСИНГА ДАННЫХ
+app.use(securitySanitizer);      // Глубокая санитизация всех входных данных
+
+// Защита от NoSQL инъекций (дополнительная к securitySanitizer)
 app.use(mongoSanitize());
+
+// 🆕 НАСТРОЙКА СЕССИЙ ДЛЯ КОРЗИНЫ
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'esargo-session-secret-key-2024',
+  name: 'esargo.session', // Имя cookie
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: config.MONGODB_URI,
+    collectionName: 'sessions',
+    ttl: 24 * 60 * 60, // 24 часа в секундах
+    touchAfter: 24 * 3600, // Обновлять сессию раз в 24 часа если не изменялась
+  }),
+  cookie: {
+    secure: config.isProduction(), // HTTPS только в продакшене
+    httpOnly: true, // Защита от XSS
+    maxAge: 24 * 60 * 60 * 1000, // 24 часа в миллисекундах
+    sameSite: 'lax' // CSRF защита
+  },
+  rolling: true // Обновлять время жизни при каждом запросе
+}));
+
+startupLogger('✅ Express sessions configured with MongoStore for shopping cart');
 
 // Логирование запросов
 app.use(requestLogger);
@@ -165,7 +174,8 @@ app.get('/health', (req, res) => {
       public_catalog: 'enabled',
       payment_stub: 'enabled',
       sessions: 'enabled',
-      auto_cleanup: 'enabled' // ✅ ДОБАВЛЕНО
+      auto_cleanup: 'enabled', // ✅ ДОБАВЛЕНО
+      security_protection: 'enabled' // 🔐 НОВАЯ ЗАЩИТА
     },
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
@@ -228,7 +238,7 @@ app.get('/', (req, res) => {
     message: 'ESARGO API Server - UberEats Style Food Delivery Platform',
     version: '2.1.0',
     environment: config.NODE_ENV,
-    architecture: 'Service Layer + Meta Security Model + Full Order Management System + Auto Cleanup',
+    architecture: 'Service Layer + Meta Security Model + Full Order Management System + Auto Cleanup + Security Protection',
     
     // 🆕 ПОЛНАЯ ИНФОРМАЦИЯ О СИСТЕМЕ ЗАКАЗОВ
     order_system: {
@@ -254,6 +264,19 @@ app.get('/', (req, res) => {
         'Expired shopping carts (>24h)',
         'Pending orders (>30min)',
         'Old reservation history (>30 days)'
+      ]
+    },
+    
+    // 🔐 ИНФОРМАЦИЯ О СИСТЕМЕ БЕЗОПАСНОСТИ
+    security_system: {
+      status: 'active',
+      protection: [
+        'SQL injection prevention',
+        'NoSQL injection prevention', 
+        'XSS attack prevention',
+        'System command blocking',
+        'Suspicious request logging',
+        'Header security validation'
       ]
     },
     
@@ -339,6 +362,7 @@ app.listen(PORT, () => {
   startupLogger(`🛒 Shopping cart sessions: enabled`);
   startupLogger(`📦 Order management system: fully operational`);
   startupLogger(`🧹 Auto-cleanup system: active (every 30 min)`);
+  startupLogger(`🔐 Security protection: active (injection prevention)`);
   
   if (config.NODE_ENV === 'development') {
     startupLogger(`📖 API Documentation: http://localhost:${PORT}`);
