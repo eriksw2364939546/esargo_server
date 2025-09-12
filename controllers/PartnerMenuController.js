@@ -31,17 +31,27 @@ export const getMenuCategories = async (req, res) => {
         res.status(200).json({
             result: true,
             message: "Категории меню получены",
-            categories: result.categories,
+            categories: result.categories.map(cat => ({
+                id: cat._id,
+                name: cat.name,
+                slug: cat.slug,                    // ✅ ВАЖНО: включаем slug в каждую категорию
+                description: cat.description,
+                image_url: cat.image_url,
+                sort_order: cat.sort_order,
+                is_active: cat.is_active,
+                products_count: cat.products_count || 0,
+                created_at: cat.created_at
+            })),
             total_categories: result.total_categories,
             business_info: result.business_info
         });
 
     } catch (error) {
         console.error('🚨 GET MENU CATEGORIES - Controller Error:', error);
-        
+
         // ✅ ИСПРАВЛЕНО: Определяем статус по типу ошибки
         const statusCode = error.message.includes('не найден') ? 404 : 500;
-        
+
         res.status(statusCode).json({
             result: false,
             message: error.message || "Ошибка получения категорий меню"
@@ -64,13 +74,28 @@ export const addMenuCategory = async (req, res) => {
         res.status(201).json({
             result: true,
             message: "Категория меню добавлена",
-            category: result.category,
-            total_categories: result.total_categories
+            category: {
+                id: result.category.id,
+                name: result.category.name,
+                slug: result.category.slug,          // ✅ ВАЖНО: включаем slug в ответ
+                description: result.category.description,
+                image_url: result.category.image_url,
+                sort_order: result.category.sort_order,
+                is_active: result.category.is_active,
+                products_count: result.category.products_count || 0,
+                created_at: result.category.created_at
+            },
+            total_categories: result.total_categories,
+            // ✅ ДОБАВЛЯЕМ отладочную информацию:
+            debug_info: {
+                slug_created: result.category.slug,
+                use_this_slug_for_products: `"subcategory": "${result.category.slug}"`
+            }
         });
 
     } catch (error) {
         console.error('🚨 ADD MENU CATEGORY - Controller Error:', error);
-        
+
         // ✅ ИСПРАВЛЕНО: Более точное определение статуса
         let statusCode = 500;
         if (error.message.includes('не найден')) {
@@ -80,7 +105,7 @@ export const addMenuCategory = async (req, res) => {
         } else if (error.message.includes('обязателен')) {
             statusCode = 400;
         }
-        
+
         res.status(statusCode).json({
             result: false,
             message: error.message || "Ошибка добавления категории"
@@ -109,10 +134,10 @@ export const updateMenuCategoryController = async (req, res) => {
 
     } catch (error) {
         console.error('🚨 UPDATE MENU CATEGORY - Controller Error:', error);
-        
+
         // ✅ ИСПРАВЛЕНО: Более точное определение статуса
         const statusCode = error.message.includes('не найден') ? 404 : 500;
-        
+
         res.status(statusCode).json({
             result: false,
             message: error.message || "Ошибка обновления категории"
@@ -140,7 +165,7 @@ export const deleteMenuCategoryController = async (req, res) => {
 
     } catch (error) {
         console.error('🚨 DELETE MENU CATEGORY - Controller Error:', error);
-        
+
         // ✅ ИСПРАВЛЕНО: Более точное определение статуса
         let statusCode = 500;
         if (error.message.includes('не найден')) {
@@ -148,7 +173,7 @@ export const deleteMenuCategoryController = async (req, res) => {
         } else if (error.message.includes('Невозможно удалить')) {
             statusCode = 400; // Bad Request - есть связанные продукты
         }
-        
+
         res.status(statusCode).json({
             result: false,
             message: error.message || "Ошибка удаления категории"
@@ -183,9 +208,9 @@ export const getProducts = async (req, res) => {
 
     } catch (error) {
         console.error('🚨 GET PRODUCTS - Controller Error:', error);
-        
+
         const statusCode = error.message.includes('не найден') ? 404 : 500;
-        
+
         res.status(statusCode).json({
             result: false,
             message: error.message || "Ошибка получения продуктов"
@@ -215,17 +240,17 @@ export const addProduct = async (req, res) => {
 
     } catch (error) {
         console.error('🚨 ADD PRODUCT - Controller Error:', error);
-        
+
         // ✅ ИСПРАВЛЕНО: Более точное определение статуса
         let statusCode = 500;
         if (error.message.includes('не найден')) {
             statusCode = 404;
-        } else if (error.message.includes('обязателен') || 
-                   error.message.includes('больше нуля') ||
-                   error.message.includes('не могут добавлять')) {
+        } else if (error.message.includes('обязателен') ||
+            error.message.includes('больше нуля') ||
+            error.message.includes('не могут добавлять')) {
             statusCode = 400;
         }
-        
+
         res.status(statusCode).json({
             result: false,
             message: error.message || "Ошибка добавления продукта"
@@ -255,17 +280,17 @@ export const updateProduct = async (req, res) => {
 
     } catch (error) {
         console.error('🚨 UPDATE PRODUCT - Controller Error:', error);
-        
+
         // ✅ ИСПРАВЛЕНО: Более точное определение статуса
         let statusCode = 500;
         if (error.message.includes('не найден')) {
             statusCode = 404;
         } else if (error.message.includes('больше нуля') ||
-                   error.message.includes('не могут изменять') ||
-                   error.message.includes('обязательны')) {
+            error.message.includes('не могут изменять') ||
+            error.message.includes('обязательны')) {
             statusCode = 400;
         }
-        
+
         res.status(statusCode).json({
             result: false,
             message: error.message || "Ошибка обновления продукта"
@@ -294,9 +319,9 @@ export const deleteProduct = async (req, res) => {
 
     } catch (error) {
         console.error('🚨 DELETE PRODUCT - Controller Error:', error);
-        
+
         const statusCode = error.message.includes('не найден') ? 404 : 500;
-        
+
         res.status(statusCode).json({
             result: false,
             message: error.message || "Ошибка удаления продукта"
@@ -328,9 +353,9 @@ export const getMenuStats = async (req, res) => {
 
     } catch (error) {
         console.error('🚨 GET MENU STATS - Controller Error:', error);
-        
+
         const statusCode = error.message.includes('не найден') ? 404 : 500;
-        
+
         res.status(statusCode).json({
             result: false,
             message: error.message || "Ошибка получения статистики меню"
@@ -347,13 +372,13 @@ export default {
     addMenuCategory,
     updateMenuCategory: updateMenuCategoryController,
     deleteMenuCategory: deleteMenuCategoryController,
-    
+
     // Продукты
     getProducts,
     addProduct,
     updateProduct,
     deleteProduct,
-    
+
     // Статистика
     getMenuStats
 };

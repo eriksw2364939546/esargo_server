@@ -1,4 +1,5 @@
-// services/FileUpload/partner.fileUpload.service.js
+// services/FileUpload/partner.fileUpload.service.js - ИСПРАВЛЕННЫЙ
+import mongoose from 'mongoose';
 import { PartnerProfile } from '../../models/index.js';
 import { validateMongoId } from '../../utils/validation.utils.js';
 
@@ -121,18 +122,24 @@ export const addPartnerGalleryImages = async (partnerId, imagesData) => {
 /**
  * ================== ДОБАВЛЕНИЕ ИЗОБРАЖЕНИЯ БЛЮДА/ТОВАРА ==================
  */
-export const addMenuItemImage = async (partnerId, imageData, menuItemId) => {
+export const addMenuItemImage = async (product_id, imageData) => {
   try {
-    if (!validateMongoId(partnerId)) {
-      throw new Error('Неверный ID партнера');
+    // 1. Найти продукт по product_id
+    const Product = mongoose.model('Product');
+    const product = await Product.findById(product_id);
+    
+    if (!product) {
+      throw new Error('Продукт не найден');
     }
-
-    const profile = await PartnerProfile.findById(partnerId);
+    
+    // 2. Найти профиль партнера через partner_id из продукта
+    const profile = await PartnerProfile.findById(product.partner_id);
+    
     if (!profile) {
       throw new Error('Профиль партнера не найден');
     }
-
-    // Создаем запись изображения блюда
+    
+    // 3. Создаем запись изображения блюда
     const menuImage = {
       url: imageData.url,
       filename: imageData.filename,
@@ -140,25 +147,31 @@ export const addMenuItemImage = async (partnerId, imageData, menuItemId) => {
       size: imageData.size,
       uploaded_at: new Date(),
       type: 'menu_item_image',
-      menu_item_id: menuItemId || null
+      menu_item_id: product_id
     };
-
-    // Добавляем в галерею (с пометкой что это блюдо)
+    
+    // 4. Добавляем в галерею
     if (!profile.gallery) {
       profile.gallery = [];
     }
-
+    
     profile.gallery.push(menuImage);
     await profile.save();
-
+    
+    // 5. Обновить product с URL изображения
+    product.image_url = imageData.url;
+    await product.save();
+    
     return {
       success: true,
       profile_id: profile._id,
       business_name: profile.business_name,
-      menu_image: menuImage,
-      total_gallery_images: profile.gallery.length
+      product_id: product._id,
+      product_title: product.title,
+      image_url: imageData.url,
+      filename: imageData.filename
     };
-
+    
   } catch (error) {
     console.error('ADD MENU ITEM IMAGE ERROR:', error);
     throw error;
@@ -190,7 +203,7 @@ export const savePartnerDocuments = async (partnerId, documentsData) => {
       status: 'pending_review'
     }));
 
-    // ✅ ИСПРАВЛЕНО: Используем additional_documents
+    // Используем additional_documents
     if (!profile.additional_documents) {
       profile.additional_documents = [];
     }

@@ -1,9 +1,9 @@
-// controllers/FileUpload/PartnerFileController.js - ИСПРАВЛЕННЫЙ
+
 import {
   uploadPartnerCoverImage,
   updatePartnerCoverImage,
   addPartnerGalleryImages,
-  addMenuItemImage as addMenuItemImageService, // ✅ ПЕРЕИМЕНОВАНО
+  addMenuItemImage as addMenuItemImageService,
   savePartnerDocuments,
   removePartnerGalleryImage,
   getPartnerFiles,
@@ -15,17 +15,17 @@ import {
  */
 export const uploadCoverImage = async (req, res) => {
   try {
-    const { user, uploadedFiles } = req;
+    const { user, uploadedImages } = req; // ✅ ИСПРАВЛЕНО: uploadedImages вместо uploadedFiles
     const { profile_id } = req.body;
 
-    if (!uploadedFiles || uploadedFiles.length === 0) {
+    if (!uploadedImages || uploadedImages.length === 0) {
       return res.status(400).json({
         result: false,
         message: "Файл обложки не загружен"
       });
     }
 
-    if (uploadedFiles.length > 1) {
+    if (uploadedImages.length > 1) {
       return res.status(400).json({
         result: false,
         message: "Можно загрузить только одну обложку"
@@ -36,7 +36,7 @@ export const uploadCoverImage = async (req, res) => {
     await validatePartnerFileAccess(profile_id, user._id);
 
     // Загружаем обложку
-    const result = await uploadPartnerCoverImage(profile_id, uploadedFiles[0]);
+    const result = await uploadPartnerCoverImage(profile_id, uploadedImages[0]); // ✅ ИСПРАВЛЕНО
 
     res.status(201).json({
       result: true,
@@ -46,10 +46,10 @@ export const uploadCoverImage = async (req, res) => {
 
   } catch (error) {
     console.error('🚨 UPLOAD COVER IMAGE Controller Error:', error);
-    
+
     const statusCode = error.message.includes('не найден') ? 404 :
-                      error.message.includes('доступ') ? 403 :
-                      error.message.includes('уже загружена') ? 409 : 500;
+      error.message.includes('доступ') ? 403 :
+        error.message.includes('уже загружена') ? 409 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -63,10 +63,10 @@ export const uploadCoverImage = async (req, res) => {
  */
 export const updateCoverImage = async (req, res) => {
   try {
-    const { user, uploadedFiles } = req;
+    const { user, uploadedImages } = req; // ✅ ИСПРАВЛЕНО: uploadedImages вместо uploadedFiles
     const { profile_id } = req.body;
 
-    if (!uploadedFiles || uploadedFiles.length === 0) {
+    if (!uploadedImages || uploadedImages.length === 0) {
       return res.status(400).json({
         result: false,
         message: "Файл обложки не загружен"
@@ -77,7 +77,7 @@ export const updateCoverImage = async (req, res) => {
     await validatePartnerFileAccess(profile_id, user._id);
 
     // Обновляем обложку
-    const result = await updatePartnerCoverImage(profile_id, uploadedFiles[0]);
+    const result = await updatePartnerCoverImage(profile_id, uploadedImages[0]); // ✅ ИСПРАВЛЕНО
 
     res.status(200).json({
       result: true,
@@ -87,9 +87,9 @@ export const updateCoverImage = async (req, res) => {
 
   } catch (error) {
     console.error('🚨 UPDATE COVER IMAGE Controller Error:', error);
-    
+
     const statusCode = error.message.includes('не найден') ? 404 :
-                      error.message.includes('доступ') ? 403 : 500;
+      error.message.includes('доступ') ? 403 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -103,10 +103,10 @@ export const updateCoverImage = async (req, res) => {
  */
 export const addGalleryImages = async (req, res) => {
   try {
-    const { user, uploadedFiles } = req;
+    const { user, uploadedImages } = req; // ✅ ИСПРАВЛЕНО: uploadedImages вместо uploadedFiles
     const { profile_id, image_type = 'other' } = req.body;
 
-    if (!uploadedFiles || uploadedFiles.length === 0) {
+    if (!uploadedImages || uploadedImages.length === 0) {
       return res.status(400).json({
         result: false,
         message: "Изображения не загружены"
@@ -117,20 +117,20 @@ export const addGalleryImages = async (req, res) => {
     await validatePartnerFileAccess(profile_id, user._id);
 
     // Добавляем в галерею
-    const result = await addPartnerGalleryImages(profile_id, uploadedFiles, image_type);
+    const result = await addPartnerGalleryImages(profile_id, uploadedImages, image_type); // ✅ ИСПРАВЛЕНО
 
     res.status(201).json({
       result: true,
-      message: `Добавлено ${result.added_images} изображений в галерею`,
+      message: `Добавлено ${result.uploaded_images} изображений в галерею`,
       data: result
     });
 
   } catch (error) {
     console.error('🚨 ADD GALLERY IMAGES Controller Error:', error);
-    
+
     const statusCode = error.message.includes('не найден') ? 404 :
-                      error.message.includes('доступ') ? 403 :
-                      error.message.includes('лимит') ? 422 : 500;
+      error.message.includes('доступ') ? 403 :
+        error.message.includes('лимит') ? 422 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -144,17 +144,17 @@ export const addGalleryImages = async (req, res) => {
  */
 export const addMenuItemImage = async (req, res) => {
   try {
-    const { user, uploadedFiles } = req;
+    const { user, uploadedImages } = req; // ✅ ИСПРАВЛЕНО: uploadedImages вместо uploadedFiles
     const { product_id } = req.body;
 
-    if (!uploadedFiles || uploadedFiles.length === 0) {
+    if (!uploadedImages || uploadedImages.length === 0) {
       return res.status(400).json({
         result: false,
         message: "Изображение продукта не загружено"
       });
     }
 
-    if (uploadedFiles.length > 1) {
+    if (uploadedImages.length > 1) {
       return res.status(400).json({
         result: false,
         message: "Можно загрузить только одно изображение для продукта"
@@ -162,7 +162,7 @@ export const addMenuItemImage = async (req, res) => {
     }
 
     // ✅ ИСПРАВЛЕНО: Используем переименованную функцию сервиса
-    const result = await addMenuItemImageService(product_id, uploadedFiles[0]);
+    const result = await addMenuItemImageService(product_id, uploadedImages[0]); // ✅ ИСПРАВЛЕНО
 
     res.status(201).json({
       result: true,
@@ -212,9 +212,9 @@ export const uploadDocuments = async (req, res) => {
 
   } catch (error) {
     console.error('🚨 UPLOAD DOCUMENTS Controller Error:', error);
-    
+
     const statusCode = error.message.includes('не найден') ? 404 :
-                      error.message.includes('доступ') ? 403 : 500;
+      error.message.includes('доступ') ? 403 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -256,9 +256,9 @@ export const removeGalleryImage = async (req, res) => {
 
   } catch (error) {
     console.error('🚨 REMOVE GALLERY IMAGE Controller Error:', error);
-    
+
     const statusCode = error.message.includes('не найден') ? 404 :
-                      error.message.includes('доступ') ? 403 : 500;
+      error.message.includes('доступ') ? 403 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -289,9 +289,9 @@ export const getFiles = async (req, res) => {
 
   } catch (error) {
     console.error('🚨 GET PARTNER FILES Controller Error:', error);
-    
+
     const statusCode = error.message.includes('не найден') ? 404 :
-                      error.message.includes('доступ') ? 403 : 500;
+      error.message.includes('доступ') ? 403 : 500;
 
     res.status(statusCode).json({
       result: false,
@@ -328,4 +328,3 @@ export const getFilesList = async (req, res) => {
     });
   }
 };
-

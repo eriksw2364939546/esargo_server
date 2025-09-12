@@ -131,13 +131,17 @@ const partnerProfileSchema = new mongoose.Schema({
   }],
   
   // КАТЕГОРИИ МЕНЮ
-  menu_categories: [{
-    name: { type: String, required: true, trim: true, maxlength: 50 },
-    description: { type: String, trim: true, maxlength: 200 },
-    sort_order: { type: Number, default: 0 },
-    is_active: { type: Boolean, default: true },
-    created_at: { type: Date, default: Date.now }
-  }],
+menu_categories: [{
+  name: { type: String, required: true, trim: true, maxlength: 50 },
+  slug: { type: String, required: true, trim: true, maxlength: 100 }, // ✅ ДОБАВЬ ЭТУ СТРОКУ
+  description: { type: String, trim: true, maxlength: 200 },
+  image_url: { type: String, trim: true },
+  sort_order: { type: Number, default: 0 },
+  is_active: { type: Boolean, default: true },
+  products_count: { type: Number, default: 0 }, // ✅ ДОБАВЬ ЭТУ СТРОКУ тоже
+  created_at: { type: Date, default: Date.now },
+  updated_at: { type: Date, default: Date.now }  // ✅ И ЭТУ СТРОКУ
+}],
   
   // ВРЕМЯ РАБОТЫ
   working_hours: {
@@ -500,9 +504,44 @@ partnerProfileSchema.methods.updateBusinessStats = function() {
   return this.save();
 };
 
+
+
 // Проверка может ли партнер принимать заказы
 partnerProfileSchema.methods.canAcceptOrders = function() {
   return this.is_approved && this.is_active && this.is_public && this.is_currently_open;
+};
+
+partnerProfileSchema.methods.updateProductStats = async function() {
+  try {
+    const Product = mongoose.model('Product');
+    
+    // Подсчитываем продукты
+    const totalProducts = await Product.countDocuments({ partner_id: this._id });
+    const activeProducts = await Product.countDocuments({ 
+      partner_id: this._id, 
+      is_active: true, 
+      is_available: true 
+    });
+    
+    // Обновляем статистику
+    this.business_stats.total_products = totalProducts;
+    this.business_stats.active_products = activeProducts;
+    this.business_stats.last_stats_update = new Date();
+    
+    // Обновляем счетчики категорий
+    for (const category of this.menu_categories) {
+      const categoryProducts = await Product.countDocuments({ 
+        partner_id: this._id, 
+        subcategory: category.slug 
+      });
+      category.products_count = categoryProducts;
+    }
+    
+    return this.save();
+  } catch (error) {
+    console.error('Ошибка обновления статистики продуктов:', error);
+    throw error;
+  }
 };
 
 // СТАТИЧЕСКИЕ МЕТОДЫ

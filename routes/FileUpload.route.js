@@ -93,8 +93,8 @@ router.get('/', (req, res) => {
 router.post('/partners/cover/upload',
   checkPartnerToken,
   requirePartnerProfile,
-  validateUploadType,
   uploadSingleImage,
+  validateUploadType,
   processImages,
   uploadCoverImage // ИСПРАВЛЕНО: прямой вызов функции
 );
@@ -107,8 +107,8 @@ router.post('/partners/cover/upload',
 router.put('/partners/cover/update',
   checkPartnerToken,
   requirePartnerProfile,
-  validateUploadType,
   uploadSingleImage,
+  validateUploadType,
   processImages,
   updateCoverImage // ИСПРАВЛЕНО: прямой вызов функции
 );
@@ -121,8 +121,8 @@ router.put('/partners/cover/update',
 router.post('/partners/gallery',
   checkPartnerToken,
   requirePartnerProfile,
-  validateUploadType,
   uploadMultipleImages,
+  validateUploadType,
   processImages,
   addGalleryImages // ИСПРАВЛЕНО: прямой вызов функции
 );
@@ -135,8 +135,8 @@ router.post('/partners/gallery',
 router.post('/partners/menu-item',
   checkPartnerToken,
   requirePartnerProfile,
-  validateUploadType,
   uploadSingleImage,
+  validateUploadType,
   processImages,
   addMenuItemImage // ИСПРАВЛЕНО: прямой вызов функции
 );

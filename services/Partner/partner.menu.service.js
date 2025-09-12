@@ -534,7 +534,16 @@ const addPartnerProduct = async (partnerId, productData) => {
         // Проверяем существование категории
         const category = partner.menu_categories.find(cat => cat.slug === subcategory);
         if (!category) {
-            throw new Error('Категория меню не найдена');
+    // Дополнительная отладочная информация
+    console.log('🔍 CATEGORY SEARCH DEBUG:', {
+        looking_for_slug: subcategory,
+        available_categories: partner.menu_categories.map(cat => ({
+            name: cat.name,
+            slug: cat.slug || 'NO_SLUG',
+            id: cat._id
+        }))
+    });
+    throw new Error(`Категория с slug "${subcategory}" не найдена`);
         }
 
         // ✅ БИЗНЕС-ЛОГИКА: Обработка по типу заведения
