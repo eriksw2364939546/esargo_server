@@ -267,15 +267,24 @@ const validateCourierRegistration = (req, res, next) => {
       });
     }
 
-    // Валидация согласий
-    const consents = {
-      terms_accepted,
-      privacy_policy_accepted,
-      data_processing_accepted,
-      background_check_accepted
+    // ✅ КОНВЕРТАЦИЯ СТРОК В BOOLEAN для form-data
+    const convertToBoolean = (value) => {
+      if (typeof value === 'string') {
+        return value.toLowerCase() === 'true';
+      }
+      return Boolean(value);
     };
 
-    const notAccepted = Object.entries(consents)
+    // Конвертируем согласия из строк в boolean
+    const convertedConsents = {
+      terms_accepted: convertToBoolean(terms_accepted),
+      privacy_policy_accepted: convertToBoolean(privacy_policy_accepted), 
+      data_processing_accepted: convertToBoolean(data_processing_accepted),
+      background_check_accepted: convertToBoolean(background_check_accepted)
+    };
+
+    // Валидация согласий (используем конвертированные значения)
+    const notAccepted = Object.entries(convertedConsents)
       .filter(([key, value]) => value !== true)
       .map(([key]) => key);
 
@@ -292,6 +301,13 @@ const validateCourierRegistration = (req, res, next) => {
     req.body.last_name = last_name.trim();
     req.body.email = email.toLowerCase().trim();
     req.body.phone = cleanPhone;
+    
+    // ✅ ОБНОВЛЯЕМ req.body с конвертированными согласиями
+    req.body.terms_accepted = convertedConsents.terms_accepted;
+    req.body.privacy_policy_accepted = convertedConsents.privacy_policy_accepted;
+    req.body.data_processing_accepted = convertedConsents.data_processing_accepted;
+    req.body.background_check_accepted = convertedConsents.background_check_accepted;
+    
     delete req.body.confirm_password; // УДАЛЯЕМ confirm_password перед передачей в сервис
 
     next();

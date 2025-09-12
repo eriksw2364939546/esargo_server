@@ -1,4 +1,4 @@
-// controllers/FileUpload/CourierFileController.js
+// controllers/FileUpload/CourierFileController.js - ИСПРАВЛЕННЫЙ
 import {
   uploadCourierAvatar,
   updateCourierAvatar,
@@ -13,17 +13,17 @@ import {
  */
 export const uploadAvatar = async (req, res) => {
   try {
-    const { user, uploadedFiles } = req;
+    const { user, uploadedImages } = req; // ✅ ИСПРАВЛЕНО: uploadedImages вместо uploadedFiles
     const { profile_id } = req.body;
 
-    if (!uploadedFiles || uploadedFiles.length === 0) {
+    if (!uploadedImages || uploadedImages.length === 0) {
       return res.status(400).json({
         result: false,
         message: "Файл аватара не загружен"
       });
     }
 
-    if (uploadedFiles.length > 1) {
+    if (uploadedImages.length > 1) {
       return res.status(400).json({
         result: false,
         message: "Можно загрузить только один аватар"
@@ -34,7 +34,7 @@ export const uploadAvatar = async (req, res) => {
     await validateCourierFileAccess(profile_id, user._id);
 
     // Загружаем аватар
-    const result = await uploadCourierAvatar(profile_id, uploadedFiles[0]);
+    const result = await uploadCourierAvatar(profile_id, uploadedImages[0]); // ✅ ИСПРАВЛЕНО
 
     res.status(201).json({
       result: true,
@@ -61,10 +61,10 @@ export const uploadAvatar = async (req, res) => {
  */
 export const updateAvatar = async (req, res) => {
   try {
-    const { user, uploadedFiles } = req;
+    const { user, uploadedImages } = req; // ✅ ИСПРАВЛЕНО: uploadedImages вместо uploadedFiles
     const { profile_id } = req.body;
 
-    if (!uploadedFiles || uploadedFiles.length === 0) {
+    if (!uploadedImages || uploadedImages.length === 0) {
       return res.status(400).json({
         result: false,
         message: "Файл аватара не загружен"
@@ -75,7 +75,7 @@ export const updateAvatar = async (req, res) => {
     await validateCourierFileAccess(profile_id, user._id);
 
     // Обновляем аватар
-    const result = await updateCourierAvatar(profile_id, uploadedFiles[0]);
+    const result = await updateCourierAvatar(profile_id, uploadedImages[0]); // ✅ ИСПРАВЛЕНО
 
     res.status(200).json({
       result: true,

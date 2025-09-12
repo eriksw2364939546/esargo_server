@@ -1,4 +1,4 @@
-// services/FileUpload/courier.fileUpload.service.js
+// services/FileUpload/courier.fileUpload.service.js - ИСПРАВЛЕННЫЙ
 import { CourierProfile } from '../../models/index.js';
 import { validateMongoId } from '../../utils/validation.utils.js';
 
@@ -62,6 +62,7 @@ export const updateCourierAvatar = async (courierId, imageData) => {
       profile_id: profile._id,
       courier_name: `${profile.first_name} ${profile.last_name}`,
       avatar_url: profile.avatar_url,
+      action: 'updated',
       updated_at: new Date()
     };
 
@@ -97,7 +98,7 @@ export const saveCourierDocuments = async (courierId, documentsData) => {
       document_category: getDocumentCategory(docData.documentType)
     }));
 
-    // Обновляем документы в профиле курьера
+    // Инициализируем массив документов если его нет
     if (!profile.additional_documents) {
       profile.additional_documents = [];
     }
@@ -107,9 +108,10 @@ export const saveCourierDocuments = async (courierId, documentsData) => {
       throw new Error(`Превышен лимит документов. Максимум 10 документов. Текущее количество: ${profile.additional_documents.length}`);
     }
 
+    // Добавляем новые документы
     profile.additional_documents.push(...documentRecords);
     
-    // Обновляем статус документов в зависимости от типа
+    // Обновляем статус документов
     updateDocumentStatus(profile);
     
     await profile.save();
@@ -147,7 +149,7 @@ export const getCourierFiles = async (courierId) => {
       throw new Error('Профиль курьера не найден');
     }
 
-    // ✅ ИСПРАВЛЕНО: Группируем additional_documents по типам
+    // Группируем additional_documents по типам
     const additionalDocumentsByType = groupDocumentsByType(profile.additional_documents || []);
 
     return {
@@ -158,12 +160,12 @@ export const getCourierFiles = async (courierId) => {
       application_status: profile.application_status,
       files: {
         avatar: profile.avatar_url || null,
-        // ✅ РАЗДЕЛЕНИЕ: registration_documents (из заявки) и additional_documents (загруженные после)
+        // Разделение: registration_documents (из заявки) и additional_documents (загруженные после)
         registration_documents: profile.registration_documents || {},
         additional_documents: additionalDocumentsByType
       },
       statistics: {
-        total_additional_documents: profile.additional_documents?.length || 0,
+        total_documents: profile.additional_documents?.length || 0,
         has_avatar: !!profile.avatar_url,
         document_status: profile.documents_status || 'not_required',
         required_documents: getRequiredDocuments(profile.vehicle_type),
@@ -191,7 +193,7 @@ export const removeCourierDocument = async (courierId, documentId) => {
       throw new Error('Профиль курьера не найден');
     }
 
-    // ✅ ИСПРАВЛЕНО: Ищем в additional_documents
+    // Ищем документ в additional_documents
     const documentIndex = profile.additional_documents.findIndex(doc => doc._id.toString() === documentId);
     if (documentIndex === -1) {
       throw new Error('Документ не найден');

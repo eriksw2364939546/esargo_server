@@ -184,8 +184,8 @@ router.get('/partners/list/:uploadType',
 router.post('/couriers/avatar/upload',
   checkCourierToken,
   requireApprovedCourier,
-  validateUploadType,
   uploadSingleImage,
+  validateUploadType,
   processImages,
   CourierFileController.uploadAvatar
 );
