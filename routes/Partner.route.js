@@ -27,6 +27,7 @@ import {
 } from '../middleware/registrationUpload.middleware.js';
 
 import { authFieldsSanitizer } from '../middleware/security.middleware.js';
+import { parseNestedFormData } from '../services/parseForAuth.service.js';
 
 const router = express.Router();
 
@@ -74,6 +75,7 @@ router.post('/legal-info/:request_id',
     processPartnerLegalDocuments,         // Обработка файлов и создание объекта documents в req.body
     
     // ✅ СУЩЕСТВУЮЩИЕ MIDDLEWARE остаются без изменений
+    parseNestedFormData,
     validateLegalInfoData,                // Валидация SIRET, IBAN, TVA и др. (проверяет documents объект)
     submitLegalInfo                       // Создание PartnerLegalInfo (получает documents в req.body)
 );

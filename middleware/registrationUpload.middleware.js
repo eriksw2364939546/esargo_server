@@ -11,7 +11,7 @@ const PDF_UPLOAD_CONFIGS = {
     documents: "uploads/couriers/documentsPdf"
   },
   partners: {
-    documents: "uploads/partners/documentsImage"
+    documents: "uploads/partners/documentsPdf"
   }
 };
 
@@ -34,15 +34,21 @@ Object.values(PDF_UPLOAD_CONFIGS.partners).forEach(ensureDirectoryExists);
  */
 const pdfStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const userRole = req.body.userRole || 'couriers'; // По умолчанию для курьеров
-    let uploadDir;
+    // Определяем роль по URL запроса
+    let userRole = 'couriers'; // по умолчанию
     
+    if (req.originalUrl && req.originalUrl.includes('/partners/')) {
+      userRole = 'partner';
+    } else if (req.originalUrl && req.originalUrl.includes('/couriers/')) {
+      userRole = 'courier';
+    }
+    let uploadDir;
     if (userRole === 'partner') {
       uploadDir = PDF_UPLOAD_CONFIGS.partners.documents;
     } else {
       uploadDir = PDF_UPLOAD_CONFIGS.couriers.documents;
     }
-    
+    console.log(`📁 MULTER DESTINATION: ${userRole} -> ${uploadDir}`);
     ensureDirectoryExists(uploadDir);
     cb(null, uploadDir);
   },

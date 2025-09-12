@@ -6,6 +6,102 @@ import { verifyPartnerToken } from '../services/Partner/partner.auth.service.js'
 import { validateFrenchPhone, validateSiret, validateFrenchIban, validateFrenchTva } from '../utils/validation.utils.js';
 
 /**
+ * ================== СТРОГАЯ ВАЛИДАЦИЯ EMAIL ==================
+ */
+const validateStrictEmail = (email) => {
+    if (!email || typeof email !== 'string') {
+        return { valid: false, message: "Email обязателен" };
+    }
+
+    // 1. Базовая проверка длины
+    if (email.length < 5 || email.length > 254) {
+        return { valid: false, message: "Email должен быть от 5 до 254 символов" };
+    }
+
+    // 2. Строгий regex для email (RFC 5322 compliant)
+    const strictEmailRegex = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])*@[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])*\.[a-zA-Z]{2,}$/;
+    
+    if (!strictEmailRegex.test(email)) {
+        return { valid: false, message: "Некорректный формат email. Используйте формат: name@domain.com" };
+    }
+
+    // 3. Проверка на недопустимые символы и последовательности
+    const forbiddenPatterns = [
+        /\{\{.*?\}\}/, // Template переменные {{...}}
+        /\$\{.*?\}/, // JavaScript template literals ${...}
+        /<%.*?%>/, // Template tags <%...%>
+        /\[.*?\]/, // Квадратные скобки [...]
+        /\s/, // Пробелы
+        /[<>()[\]\\,;:"]/, // Специальные символы
+        /\.\./, // Двойные точки
+        /^\./, // Начинается с точки
+        /\.$/, // Заканчивается точкой
+        /@\./, // @ сразу после точки
+        /\.@/, // Точка сразу перед @
+        /@@/, // Двойные @
+        /__{2,}/, // Множественные подчеркивания
+        /--{2,}/, // Множественные дефисы
+        /\.{2,}/ // Множественные точки
+    ];
+
+    for (const pattern of forbiddenPatterns) {
+        if (pattern.test(email)) {
+            if (pattern.toString().includes('{{')) {
+                return { valid: false, message: "Email не может содержать template переменные типа {{timestamp}}" };
+            } else if (pattern.toString().includes('$')) {
+                return { valid: false, message: "Email не может содержать JavaScript template переменные" };
+            } else if (pattern.toString().includes('<')) {
+                return { valid: false, message: "Email не может содержать HTML теги или специальные символы" };
+            } else {
+                return { valid: false, message: "Email содержит недопустимые символы или последовательности" };
+            }
+        }
+    }
+
+    // 4. Проверка частей email
+    const [localPart, domainPart] = email.split('@');
+    
+    if (!localPart || !domainPart) {
+        return { valid: false, message: "Email должен содержать локальную часть и домен, разделенные @" };
+    }
+
+    if (localPart.length > 64) {
+        return { valid: false, message: "Локальная часть email слишком длинная (максимум 64 символа)" };
+    }
+
+    if (domainPart.length > 255) {
+        return { valid: false, message: "Доменная часть email слишком длинная (максимум 255 символов)" };
+    }
+
+    // 4.1. Дополнительная проверка локальной части на подозрительные паттерны
+    const suspiciousLocalPartPatterns = [
+        /\d{10,}/, // Длинные числа (автогенерированные timestamp)
+        /timestamp/i, // Слово timestamp
+        /random/i, // Слово random
+        /guid/i, // Слово guid
+        /uuid/i, // Слово uuid
+        /temp/i, // Слово temp
+        /test\d+/i, // test + числа
+        /user\d{5,}/i, // user + длинные числа
+        /\d{4,}\.\d{4,}/, // Паттерн чисел через точку
+    ];
+
+    for (const pattern of suspiciousLocalPartPatterns) {
+        if (pattern.test(localPart)) {
+            return { valid: false, message: "Email содержит подозрительные автогенерированные элементы. Используйте реальный email" };
+        }
+    }
+
+    // 5. Проверка домена
+    const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])*(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])*)*\.[a-zA-Z]{2,}$/;
+    if (!domainRegex.test(domainPart)) {
+        return { valid: false, message: "Некорректный формат домена в email" };
+    }
+
+    return { valid: true, message: "Email корректен" };
+};
+
+/**
  * ================== ВАЛИДАЦИЯ ДАННЫХ РЕГИСТРАЦИИ ПАРТНЕРА ==================
  */
 const validatePartnerRegistrationData = (req, res, next) => {
@@ -13,6 +109,7 @@ const validatePartnerRegistrationData = (req, res, next) => {
         const data = req.body;
 
         console.log('🔍 VALIDATE PARTNER DATA - Start:', {
+            email: data.email,
             has_phone: !!data.phone,
             has_brand_name: !!data.brand_name,
             has_password: !!data.password,
@@ -31,12 +128,18 @@ const validatePartnerRegistrationData = (req, res, next) => {
             });
         }
 
-        // Валидация email
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(data.email)) {
+        // Строгая валидация email
+        const emailValidation = validateStrictEmail(data.email);
+        if (!emailValidation.valid) {
             return res.status(400).json({
                 result: false,
-                message: "Некорректный формат email"
+                message: emailValidation.message,
+                field: 'email',
+                examples: [
+                    'pierre@gmail.com',
+                    'restaurant.owner@hotmail.fr',
+                    'business123@yahoo.com'
+                ]
             });
         }
 
@@ -124,61 +227,36 @@ const validateLegalInfoData = (req, res, next) => {
         console.log('🔍 VALIDATE LEGAL DATA - Start:', {
             has_siret: !!data.legal_data?.siret_number,
             has_iban: !!data.bank_details?.iban,
-            has_legal_name: !!data.legal_data?.legal_name
+            has_legal_name: !!data.legal_data?.legal_name,
+            has_legal_form: !!data.legal_data?.legal_form,
+            has_documents: !!data.documents
         });
 
-        // Проверка наличия основных секций
-        if (!data.legal_data) {
-            return res.status(400).json({
-                result: false,
-                message: "Юридические данные обязательны"
-            });
+        // Проверка обязательных полей
+        const requiredFields = {
+            'legal_data.legal_name': 'Название юридического лица',
+            'legal_data.siret_number': 'SIRET номер',
+            'legal_data.legal_form': 'Форма юридического лица',
+            'legal_data.legal_address': 'Юридический адрес',
+            'legal_data.legal_representative': 'Представитель юридического лица',
+            'bank_details.iban': 'IBAN',
+            'bank_details.bic': 'BIC код',
+            'legal_contact.email': 'Email юридического лица',
+            'legal_contact.phone': 'Телефон юридического лица'
+        };
+
+        const missingFields = [];
+        for (const [fieldPath, fieldName] of Object.entries(requiredFields)) {
+            const value = fieldPath.split('.').reduce((obj, key) => obj?.[key], data);
+            if (!value || (typeof value === 'string' && value.trim().length === 0)) {
+                missingFields.push(fieldName);
+            }
         }
 
-        if (!data.bank_details) {
+        if (missingFields.length > 0) {
             return res.status(400).json({
                 result: false,
-                message: "Банковские данные обязательны"
-            });
-        }
-
-        if (!data.legal_contact) {
-            return res.status(400).json({
-                result: false,
-                message: "Контактные данные юридического лица обязательны"
-            });
-        }
-
-        // Валидация обязательных полей юридических данных
-        const requiredLegalFields = ['legal_name', 'siret_number', 'legal_form', 'legal_address', 'legal_representative'];
-        const missingLegalFields = requiredLegalFields.filter(field => !data.legal_data[field]);
-        
-        if (missingLegalFields.length > 0) {
-            return res.status(400).json({
-                result: false,
-                message: `Обязательные юридические поля отсутствуют: ${missingLegalFields.join(', ')}`
-            });
-        }
-
-        // Валидация обязательных банковских полей
-        const requiredBankFields = ['iban', 'bic'];
-        const missingBankFields = requiredBankFields.filter(field => !data.bank_details[field]);
-        
-        if (missingBankFields.length > 0) {
-            return res.status(400).json({
-                result: false,
-                message: `Обязательные банковские поля отсутствуют: ${missingBankFields.join(', ')}`
-            });
-        }
-
-        // Валидация обязательных контактных полей
-        const requiredContactFields = ['email', 'phone'];
-        const missingContactFields = requiredContactFields.filter(field => !data.legal_contact[field]);
-        
-        if (missingContactFields.length > 0) {
-            return res.status(400).json({
-                result: false,
-                message: `Обязательные контактные поля отсутствуют: ${missingContactFields.join(', ')}`
+                message: `Обязательные поля отсутствуют: ${missingFields.join(', ')}`
             });
         }
 
@@ -210,11 +288,11 @@ const validateLegalInfoData = (req, res, next) => {
         }
 
         // Валидация email юридического лица
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(data.legal_contact.email)) {
+        const emailValidation = validateStrictEmail(data.legal_contact.email);
+        if (!emailValidation.valid) {
             return res.status(400).json({
                 result: false,
-                message: "Некорректный email юридического лица"
+                message: "Некорректный email юридического лица: " + emailValidation.message
             });
         }
 
